@@ -535,6 +535,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         Ok(())
     }
 
+    // Brecht: Builds actual block
     #[allow(clippy::too_many_arguments)]
     pub fn finalize<DB: reth_db::database::Database + Clone + 'static>(
         self,
@@ -601,6 +602,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             .block_logs_bloom(block_number)
             .expect("Number is in range");
 
+        // Brecht: state root calculation
         let state_root = calculate_state_root(
             provider_factory,
             ctx.attributes.parent,

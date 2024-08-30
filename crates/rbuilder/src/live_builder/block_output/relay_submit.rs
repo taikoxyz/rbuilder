@@ -133,6 +133,7 @@ async fn run_submit_to_relays_job(
     cancel: CancellationToken,
     slot_bidder: Arc<dyn SlotBidder>,
 ) -> Option<BuiltBlockInfo> {
+    // Brecht: block submission
     let mut res = None;
     // first, sleep to slot time - slot_delta_to_start_submits
     {

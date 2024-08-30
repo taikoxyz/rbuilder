@@ -95,6 +95,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
         input: SlotOrderSimResults,
         cancel: CancellationToken,
     ) {
+        // Brecht: start building
         let builder_sink = self.sink_factory.create_sink(slot_data, cancel.clone());
         let (broadcast_input, _) = broadcast::channel(10_000);
 

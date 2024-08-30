@@ -93,6 +93,8 @@ impl MevBoostRelay {
         })
     }
 
+    // Brecht: Can make a proposeBlock call here to L1 with the given block
+    // Can implement a custom "relay" for gwyneth that has this behaviour
     pub async fn submit_block(&self, data: &SubmitBlockRequest) -> Result<(), SubmitBlockErr> {
         self.client
             .submit_block(data, self.use_ssz_for_submit, self.use_gzip_for_submit)

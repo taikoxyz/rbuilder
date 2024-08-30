@@ -148,6 +148,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
             .unwrap_or_default();
         let mut partial_block = PartialBlock::new(discard_txs, enforce_sorting)
             .with_tracer(GasUsedSimulationTracer::default());
+        // Brecht: create local state for block building on top of latest blockchain state
         let mut block_state =
             BlockState::new(state_provider).with_cached_reads(cached_reads.unwrap_or_default());
         partial_block
@@ -303,6 +304,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         }
     }
 
+    // Brecht: finalize
     fn finalize_block(
         mut self: Box<Self>,
         payout_tx_value: Option<U256>,

@@ -380,6 +380,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         Ok(res)
     }
 
+    // Brecht: Apply tx to state
     /// The state is updated ONLY when we return Ok(Ok)
     pub fn commit_tx(
         &mut self,
