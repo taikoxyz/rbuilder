@@ -26,7 +26,7 @@ pub async fn subscribe_to_txpool_with_blobs(
 ) -> eyre::Result<JoinHandle<()>> {
     let ipc = IpcConnect::new(config.ipc_path);
     let provider = ProviderBuilder::new().on_ipc(ipc).await?;
-
+    println!("Dani debug: ipc subscription");
     let handle = tokio::spawn(async move {
         info!("Subscribe to txpool with blobs: started");
 
