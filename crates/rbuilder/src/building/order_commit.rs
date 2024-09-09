@@ -31,7 +31,7 @@ use revm::{
 use crate::building::evm_inspector::{RBuilderEVMInspector, UsedStateTrace};
 use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
-use tracing::info
+use tracing::info;
 
 #[derive(Clone)]
 pub struct BlockState {
