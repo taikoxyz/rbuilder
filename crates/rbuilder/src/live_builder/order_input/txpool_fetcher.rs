@@ -51,10 +51,12 @@ pub async fn subscribe_to_txpool_with_blobs(
                     tx_with_blobs
                 },
                 Ok(None) => {
+                    println!("Dani debug: tx not found in tx pool");
                     trace!(?tx_hash, "tx not found in tx pool");
                     continue;
                 }
                 Err(err) => {
+                    println!("Dani debug: Failed to get tx pool");
                     error!(?tx_hash, ?err, "Failed to get tx pool");
                     continue;
                 }
@@ -111,11 +113,13 @@ async fn get_tx_with_blobs(
 
     println!("Dani debug: get_tx_with_blobs_2");
     let raw_tx = if let Some(raw_tx) = raw_tx {
+
+        println!("Dani debug: get_tx_with_blobs_3_1");
         raw_tx
     } else {
+        println!("Dani debug: get_tx_with_blobs_3_2");
         return Ok(None);
       
-    println!("Dani debug: get_tx_with_blobs_3");
     };
 
     println!("Dani debug: get_tx_with_blobs_4");
