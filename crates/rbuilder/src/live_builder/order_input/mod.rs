@@ -185,6 +185,7 @@ pub async fn start_orderpool_jobs<DB: Database + Clone + 'static>(
     extra_rpc: RpcModule<()>,
     global_cancel: CancellationToken,
 ) -> eyre::Result<(JoinHandle<()>, OrderPoolSubscriber)> {
+    println!("Dani debug: start_orderpool_jobs");
     if config.ignore_cancellable_orders {
         warn!("ignore_cancellable_orders is set to true, some order input is ignored");
     }
@@ -234,6 +235,7 @@ pub async fn start_orderpool_jobs<DB: Database + Clone + 'static>(
                     if n == 0 {
                         break;
                     }
+                    println!("Dani debug: Received {} new commands", n);
                 },
             };
 
@@ -270,7 +272,9 @@ pub async fn start_orderpool_jobs<DB: Database + Clone + 'static>(
 
             {
                 let mut orderpool = orderpool.lock().unwrap();
+                println!("Dani debug: Processing {} commands in OrderPool", new_commands.len());
                 orderpool.process_commands(new_commands.clone());
+                println!("Dani debug: Finished processing commands in OrderPool");
             }
             new_commands.clear();
         }
