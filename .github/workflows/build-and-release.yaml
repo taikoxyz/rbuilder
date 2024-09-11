@@ -2,9 +2,9 @@ name: Build and Release Binary
 
 on:
   push:
-    branches: [ gwyneth ]
+    branches: [ gwyneth ]  # Trigger on push to main branch
   pull_request:
-    branches: [ gwyneth ]
+    branches: [ gwyneth ]  # Trigger on PR to main branch
   workflow_dispatch:    # Allow manual trigger
 
 jobs:
@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-22.04  # This ensures we build on Ubuntu 22.04
     
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     
     - name: Set up Rust
       uses: actions-rs/toolchain@v1
@@ -24,7 +24,7 @@ jobs:
       run: cargo build --release
     
     - name: Upload artifact
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v4
       with:
         name: rbuilder
         path: target/release/rbuilder
@@ -35,7 +35,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
     steps:
-    - uses: actions/download-artifact@v2
+    - uses: actions/download-artifact@v4
       with:
         name: rbuilder
     
