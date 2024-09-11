@@ -63,11 +63,13 @@ pub async fn subscribe_to_txpool_with_blobs(
             let tx = MempoolTx::new(tx_with_blobs);
 
             let order = Order::Tx(tx);
+            let order_id = order.id();
+
             let parse_duration = start.elapsed();
             trace!(order = ?order.id(), parse_duration_mus = parse_duration.as_micros(), "Mempool transaction received with blobs");
        
             add_txfetcher_time_to_query(parse_duration);
-            println!("Dani debug: About to send order to results channel. Order ID: {:?}", order.id());
+            println!("Dani debug: About to send order to results channel. Order ID: {:?}", order_id);
             match results
                 .send_timeout(
                     ReplaceableOrderPoolCommand::Order(order),
@@ -83,7 +85,7 @@ pub async fn subscribe_to_txpool_with_blobs(
                     break;
                 }
             }
-            println!("Dani debug: Successfully sent order to results channel. Order ID: {:?}", order.id());
+            println!("Dani debug: Successfully sent order to results channel. Order ID: {:?}", order_id);
         }
 
         // stream is closed, cancelling token because builder can't work without this stream
