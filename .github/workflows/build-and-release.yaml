@@ -1,0 +1,61 @@
+name: Build and Release Binary
+
+on:
+  push:
+    branches: [ gwyneth ]
+  pull_request:
+    branches: [ gwyneth ]
+  workflow_dispatch:    # Allow manual trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04  # This ensures we build on Ubuntu 22.04
+    
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+    
+    - name: Build
+      run: cargo build --release
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: rbuilder
+        path: target/release/rbuilder
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/download-artifact@v2
+      with:
+        name: rbuilder
+    
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.sha }}
+        release_name: Release ${{ github.sha }}
+        draft: false
+        prerelease: false
+    
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./rbuilder
+        asset_name: rbuilder
+        asset_content_type: application/octet-stream
