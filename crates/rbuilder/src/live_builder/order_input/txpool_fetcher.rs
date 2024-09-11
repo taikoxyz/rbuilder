@@ -106,6 +106,8 @@ async fn get_tx_with_blobs(
     // TODO: Use https://github.com/alloy-rs/alloy/pull/1168 when it gets cut
     // in a release
     println!("Dani debug: get_tx_with_blobs_1");
+    let string_representation = format!("{:x}", bytes);
+    println!("tx hash: {:?}", string_representation);
     let raw_tx: Option<String> = provider
         .client()
         .request("eth_getRawTransactionByHash", vec![tx_hash])
