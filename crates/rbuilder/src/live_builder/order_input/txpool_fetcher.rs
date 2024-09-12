@@ -121,7 +121,6 @@ async fn get_tx_with_blobs(
     } else {
         println!("Dani debug: get_tx_with_blobs_3_2");
         return Ok(None);
-      
     };
 
     println!("Dani debug: get_tx_with_blobs_4");

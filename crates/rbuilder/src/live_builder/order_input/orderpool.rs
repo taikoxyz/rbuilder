@@ -3,6 +3,9 @@ use crate::primitives::{
     ShareBundleReplacementKey,
 };
 use ahash::HashMap;
+use alloy_primitives::Address;
+use alloy_provider::Provider;
+use alloy_transport_http::Http;
 use lru::LruCache;
 use reth::{primitives::constants::SLOT_DURATION, providers::StateProviderBox};
 use std::{
@@ -18,20 +21,53 @@ use super::{
     replaceable_order_sink::ReplaceableOrderSink,
     ReplaceableOrderPoolCommand,
 };
+use ethers::{
+    prelude::*,
+    types::{Bytes, H256, U256},
+};
+
+use web3::{
+    Web3,
+    contract::{Contract, Options},
+};
+use url::Url;
 
 const BLOCKS_TO_KEEP_TXS: u32 = 5;
 const TIME_TO_KEEP_TXS: Duration = SLOT_DURATION.saturating_mul(BLOCKS_TO_KEEP_TXS);
 
 const TIME_TO_KEEP_BUNDLE_CANCELLATIONS: Duration = Duration::from_secs(60);
-/// Push to pull for OrderSink. Just poll de UnboundedReceiver to get the orders.
+
+// For testing Gwyneth
+const MEMPOOL_TX_THRESHOLD: usize = 1;
+// Constants for L1 RPC URL and TaikoL1 address
+const L1_RPC_URL: &str = "http://your_l1_rpc_url";
+const TAIKO_L1_ADDRESS: &str = "your_taiko_l1_address_here";
+
+#[derive(Clone, Debug)]
+struct BlockMetadata {
+    block_hash: H256,
+    parent_block_hash: H256,
+    parent_meta_hash: H256,
+    l1_hash: H256,
+    difficulty: U256,
+    blob_hash: H256,
+    extra_data: H256,
+    coinbase: Address,
+    l2_block_number: u64,
+    gas_limit: u32,
+    l1_state_block_number: u32,
+    timestamp: u64,
+    tx_list_byte_offset: u32,
+    tx_list_byte_size: u32,
+    blob_used: bool,
+}
+
 #[derive(Debug)]
 pub struct OrdersForBlock {
     pub new_order_sub: mpsc::UnboundedReceiver<OrderPoolCommand>,
 }
 
 impl OrdersForBlock {
-    /// Helper to create a OrdersForBlock "wrapped" with a OrderSender2OrderSink.
-    /// Give this OrdersForBlock to an order pull stage and push on the returned OrderSender2OrderSink
     pub fn new_with_sink() -> (Self, OrderSender2OrderSink) {
         let (sink, sender) = OrderSender2OrderSink::new();
         (
@@ -43,10 +79,8 @@ impl OrdersForBlock {
     }
 }
 
-/// Events (orders/cancellations) for a single block
 #[derive(Debug, Default)]
 struct BundleBlockStore {
-    /// Bundles and SharedBundles
     bundles: Vec<Order>,
     cancelled_sbundles: Vec<ShareBundleReplacementKey>,
 }
@@ -57,19 +91,12 @@ struct SinkSubscription {
     block_number: u64,
 }
 
-/// returned by add_sink to be used on remove_sink
 #[derive(Debug, Eq, Hash, PartialEq, Clone)]
 pub struct OrderPoolSubscriptionId(u64);
 
-/// Repository of ALL orders and cancellations that arrives us via process_commands. No processing is done here.
-/// The idea is that OrderPool is alive from the start of the universe and we can ask for the
-/// events (Orders and cancellations) for a particular block even if the orders arrived in the past.
-/// Since by infra restrictions bundle cancellations don't have an associated block so we store them for a while and asume
-/// they are valid for all in progress sinks
 #[derive(Debug)]
 pub struct OrderPool {
     mempool_txs: Vec<(Order, Instant)>,
-    /// cancelled bundle, cancellation arrival time
     bundle_cancellations: VecDeque<(BundleReplacementKey, Instant)>,
     bundles_by_target_block: HashMap<u64, BundleBlockStore>,
     known_orders: LruCache<(OrderId, u64), ()>,
@@ -95,13 +122,66 @@ impl OrderPool {
         }
     }
 
-    pub fn process_commands(&mut self, commands: Vec<ReplaceableOrderPoolCommand>) {
+    pub async fn process_commands(&mut self, commands: Vec<ReplaceableOrderPoolCommand>) {
         println!("Dani debug: OrderPool received {} commands to process", commands.len());
-        commands.into_iter().for_each(|oc| self.process_command(oc));
+        for command in commands {
+            self.process_command(command).await;
+        }
         println!("Dani debug: OrderPool finished processing commands");
     }
 
-    fn process_order(&mut self, order: &Order) {
+    async fn process_command(&mut self, command: ReplaceableOrderPoolCommand) {
+        match &command {
+            ReplaceableOrderPoolCommand::Order(order) => {
+                println!("Dani debug: Processing order: {:?}", order.id());
+                self.process_order(order).await;
+            },
+            ReplaceableOrderPoolCommand::CancelShareBundle(c) => {
+                println!("Dani debug: Processing cancel share bundle: {:?}", c.key);
+                self.process_remove_sbundle(c);
+            },
+            ReplaceableOrderPoolCommand::CancelBundle(key) => {
+                println!("Dani debug: Processing cancel bundle: {:?}", key);
+                self.process_remove_bundle(key);
+            },
+        }
+        
+        let target_block = command.target_block();
+        println!("Dani debug: Command target block: {:?}", target_block);
+        
+        let initial_sink_count = self.sinks.len();
+        self.sinks.retain(|_, sub| {
+            if !sub.sink.is_alive() {
+                println!("Dani debug: Removing dead sink");
+                return false;
+            }
+            if target_block.is_none() || target_block == Some(sub.block_number) {
+                let send_ok = match command.clone() {
+                    ReplaceableOrderPoolCommand::Order(o) => {
+                        println!("Dani debug: Inserting order into sink");
+                        sub.sink.insert_order(o)
+                    },
+                    ReplaceableOrderPoolCommand::CancelShareBundle(cancel) => {
+                        println!("Dani debug: Removing share bundle from sink");
+                        sub.sink.remove_bundle(OrderReplacementKey::ShareBundle(cancel.key))
+                    },
+                    ReplaceableOrderPoolCommand::CancelBundle(key) => {
+                        println!("Dani debug: Removing bundle from sink");
+                        sub.sink.remove_bundle(OrderReplacementKey::Bundle(key))
+                    }
+                };
+                if !send_ok {
+                    println!("Dani debug: Failed to send to sink, removing sink");
+                    return false;
+                }
+            }
+            true
+        });
+        let final_sink_count = self.sinks.len();
+        println!("Dani debug: Sink count changed from {} to {}", initial_sink_count, final_sink_count);
+    }
+
+    async fn process_order(&mut self, order: &Order) {
         let target_block = order.target_block();
         let order_id = order.id();
         if self
@@ -115,7 +195,15 @@ impl OrderPool {
 
         let (order, target_block) = match &order {
             Order::Tx(..) => {
+                println!("Dani debug: Order TX to mempool");
                 self.mempool_txs.push((order.clone(), Instant::now()));
+
+                if self.mempool_txs.len() >= MEMPOOL_TX_THRESHOLD {
+                    if let Err(e) = self.propose_block().await {
+                        error!("Failed to propose block: {:?}", e);
+                    }
+                }
+
                 (order, None)
             }
             Order::Bundle(bundle) => {
@@ -153,55 +241,93 @@ impl OrderPool {
         self.bundle_cancellations.push_back((*key, Instant::now()));
     }
 
-    fn process_command(&mut self, command: ReplaceableOrderPoolCommand) {
-        match &command {
-            ReplaceableOrderPoolCommand::Order(order) => {
-                println!("Dani debug: Processing order: {:?}", order.id());
-                self.process_order(order)
-            },
-            ReplaceableOrderPoolCommand::CancelShareBundle(c) => {
-                println!("Dani debug: Processing cancel share bundle: {:?}", c.key);
-                self.process_remove_sbundle(c)
-            },
-            ReplaceableOrderPoolCommand::CancelBundle(key) => {
-                println!("Dani debug: Processing cancel bundle: {:?}", key);
-                self.process_remove_bundle(key)
-            },
+    async fn propose_block(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // ALl i need is:
+        //RPC connection to localhost port 8545 and submit to the L1 Taiko contract:
+
+        // let url = Url::parse(L1_RPC_URL)?;
+        // let transport = Http::new(url);
+
+        //let provider = Provider::<Http>::try_from("L1_RPC_URL").unwrap();
+        // let provider = Provider::new(RpcClient::new(transport));
+
+        // let tx_lists: Vec<Bytes> = self.mempool_txs.iter()
+        //     .map(|(order, _)| Bytes::from(order.rlp_bytes()))
+        //     .collect();
+
+        // let tx_list_hash = web3::signing::keccak256(&rlp::encode_list(&tx_lists));
+
+        // let meta = self.create_block_metadata(H256::from_slice(&tx_list_hash), tx_lists[0].len() as u32);
+        // let meta_encoded = ethabi::encode(&[ethabi::Token::Tuple(vec![
+        //     ethabi::Token::FixedBytes(meta.block_hash.as_bytes().to_vec()),
+        //     ethabi::Token::FixedBytes(meta.parent_block_hash.as_bytes().to_vec()),
+        //     ethabi::Token::FixedBytes(meta.parent_meta_hash.as_bytes().to_vec()),
+        //     ethabi::Token::FixedBytes(meta.l1_hash.as_bytes().to_vec()),
+        //     ethabi::Token::Uint(meta.difficulty.into()),
+        //     ethabi::Token::FixedBytes(meta.blob_hash.as_bytes().to_vec()),
+        //     ethabi::Token::FixedBytes(meta.extra_data.as_bytes().to_vec()),
+        //     ethabi::Token::Address(meta.coinbase.into()),
+        //     ethabi::Token::Uint(meta.l2_block_number.into()),
+        //     ethabi::Token::Uint(meta.gas_limit.into()),
+        //     ethabi::Token::Uint(meta.l1_state_block_number.into()),
+        //     ethabi::Token::Uint(meta.timestamp.into()),
+        //     ethabi::Token::Uint(meta.tx_list_byte_offset.into()),
+        //     ethabi::Token::Uint(meta.tx_list_byte_size.into()),
+        //     ethabi::Token::Bool(meta.blob_used),
+        // ])]);
+
+        // let function = ethabi::Function {
+        //     name: "proposeBlock".to_string(),
+        //     inputs: vec![
+        //         ethabi::Param { name: "params".to_string(), kind: ethabi::ParamType::Array(Box::new(ethabi::ParamType::Bytes)) },
+        //         ethabi::Param { name: "txList".to_string(), kind: ethabi::ParamType::Array(Box::new(ethabi::ParamType::Bytes)) },
+        //     ],
+        //     outputs: vec![],
+        //     constant: false,
+        //     state_mutability: ethabi::StateMutability::NonPayable,
+        // };
+
+        // let data = function.encode_input(&[
+        //     ethabi::Token::Array(vec![ethabi::Token::Bytes(meta_encoded)]),
+        //     ethabi::Token::Array(tx_lists.into_iter().map(|b| ethabi::Token::Bytes(b.0)).collect()),
+        // ])?;
+
+        // let tx_object = TransactionRequest {
+        //     to: Some(TAIKO_L1_ADDRESS.parse()?),
+        //     data: Some(Bytes(data)),
+        //     ..Default::default()
+        // };
+
+        // let accounts = web3.eth().accounts().await?;
+        // let tx_hash = web3.eth().send_transaction(tx_object).await?;
+
+        // println!("Block proposed successfully. Transaction hash: {:?}", tx_hash);
+        // self.mempool_txs.clear();
+
+        Ok(())
+    }
+
+    fn create_block_metadata(&self, tx_list_hash: H256, tx_list_byte_size: u32) -> BlockMetadata {
+        BlockMetadata {
+            block_hash: H256::random(),
+            parent_block_hash: H256::zero(),
+            parent_meta_hash: H256::zero(),
+            l1_hash: H256::zero(),
+            difficulty: U256::zero(),
+            blob_hash: tx_list_hash,
+            extra_data: H256::zero(),
+            coinbase: Address::random(),
+            l2_block_number: 0,
+            gas_limit: 15_000_000,
+            l1_state_block_number: 0,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as u64,
+            tx_list_byte_offset: 0,
+            tx_list_byte_size,
+            blob_used: false,
         }
-        
-        let target_block = command.target_block();
-        println!("Dani debug: Command target block: {:?}", target_block);
-        
-        let initial_sink_count = self.sinks.len();
-        self.sinks.retain(|_, sub| {
-            if !sub.sink.is_alive() {
-                println!("Dani debug: Removing dead sink");
-                return false;
-            }
-            if target_block.is_none() || target_block == Some(sub.block_number) {
-                let send_ok = match command.clone() {
-                    ReplaceableOrderPoolCommand::Order(o) => {
-                        println!("Dani debug: Inserting order into sink");
-                        sub.sink.insert_order(o)
-                    },
-                    ReplaceableOrderPoolCommand::CancelShareBundle(cancel) => {
-                        println!("Dani debug: Removing share bundle from sink");
-                        sub.sink.remove_bundle(OrderReplacementKey::ShareBundle(cancel.key))
-                    },
-                    ReplaceableOrderPoolCommand::CancelBundle(key) => {
-                        println!("Dani debug: Removing bundle from sink");
-                        sub.sink.remove_bundle(OrderReplacementKey::Bundle(key))
-                    }
-                };
-                if !send_ok {
-                    println!("Dani debug: Failed to send to sink, removing sink");
-                    return false;
-                }
-            }
-            true
-        });
-        let final_sink_count = self.sinks.len();
-        println!("Dani debug: Sink count changed from {} to {}", initial_sink_count, final_sink_count);
     }
 
     /// Adds a sink and pushes the current state for the block
