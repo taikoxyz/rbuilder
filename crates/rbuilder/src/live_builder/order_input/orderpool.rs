@@ -42,8 +42,8 @@ const TIME_TO_KEEP_BUNDLE_CANCELLATIONS: Duration = Duration::from_secs(60);
 // For testing Gwyneth
 const MEMPOOL_TX_THRESHOLD: usize = 1;
 // Constants for L1 RPC URL and TaikoL1 address
-const L1_RPC_URL: &str = "http://your_l1_rpc_url";
-const TAIKO_L1_ADDRESS: &str = "your_taiko_l1_address_here";
+const L1_RPC_URL: &str = "http://localhost:8545";
+const TAIKO_L1_ADDRESS: &str = "0x9fCF7D13d10dEdF17d0f24C62f0cf4ED462f65b7";
 
 #[derive(Clone, Debug)]
 struct BlockMetadata {
