@@ -191,12 +191,27 @@ impl OrderPool {
     }
 
     async fn process_order(&mut self, order: &Order) {
+
+        /* FOR TESTING PURPOSES SEND IT TO TAIKOL1 */
+        println!("Dani debug: sending tests starts");
+        self.mempool_txs.push((order.clone(), Instant::now()));
+
+        if self.mempool_txs.len() >= MEMPOOL_TX_THRESHOLD {
+            if let Err(e) = self.propose_block().await {
+                error!("Failed to propose block: {:?}", e);
+            }
+        }
+
+        println!("Dani debug: sending tests ends");
+
+        println!("Dani debug: process order entry");
         let target_block = order.target_block();
         let order_id = order.id();
         if self
             .known_orders
             .contains(&(order_id, target_block.unwrap_or_default()))
         {
+            println!("Dani debug:Order known ?");
             trace!(?order_id, "Order known, dropping");
             return;
         }
