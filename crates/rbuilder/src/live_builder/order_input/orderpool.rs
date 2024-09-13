@@ -21,9 +21,11 @@ use super::{
     replaceable_order_sink::ReplaceableOrderSink,
     ReplaceableOrderPoolCommand,
 };
+
 use ethers::{
-    prelude::*,
-    types::{Bytes, H256, U256},
+    prelude::{abigen, Abigen},
+    providers::{Http as EthersHttp, Provider as EthersProvider},
+    types::{Bytes, H256, U256, Address as EthersAddress},
 };
 
 use web3::{
@@ -31,6 +33,7 @@ use web3::{
     contract::{Contract, Options},
 };
 use url::Url;
+use std::sync::Arc;
 
 const BLOCKS_TO_KEEP_TXS: u32 = 5;
 const TIME_TO_KEEP_TXS: Duration = SLOT_DURATION.saturating_mul(BLOCKS_TO_KEEP_TXS);
@@ -61,6 +64,7 @@ struct BlockMetadata {
     tx_list_byte_size: u32,
     blob_used: bool,
 }
+
 
 #[derive(Debug)]
 pub struct OrdersForBlock {
@@ -242,6 +246,50 @@ impl OrderPool {
     }
 
     async fn propose_block(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        abigen!(
+            TaikoL1,
+            r#"[
+                function proposeBlock(bytes[] calldata inputs, bytes[] calldata extraData) external payable returns (BlockMetadata[] memory meta)
+            ]"#,
+        );
+
+        const RPC_URL: &str = "https://eth.llamarpc.com";
+        const TAIKOL1_ADDRESS: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+    
+        let provider = EthersProvider::<EthersHttp>::try_from(RPC_URL)?;
+        let client = Arc::new(provider);
+        let address: EthersAddress = TAIKOL1_ADDRESS.parse()?;
+        let contract = TaikoL1::new(address, client);
+    
+        // Prepare the arguments for proposeBlock
+        let inputs: Vec<Vec<u8>> = vec![]; // Fill this with your input data
+        let tx_lists: Vec<Vec<u8>> = vec![]; // Fill this with your extra data
+
+        match contract.propose_block(inputs, tx_lists).call().await {
+            Ok(block_metadata) => {
+                println!("Blocks proposed successfully. Number of blocks: {}", block_metadata.len());
+                for (index, meta) in block_metadata.iter().enumerate() {
+                    println!("Block {}:", index);
+                    println!("  Block Hash: 0x{}", hex::encode(meta.block_hash));
+                    println!("  Parent Block Hash: 0x{}", hex::encode(meta.parent_block_hash));
+                    println!("  L2 Block Number: {}", meta.l2_block_number);
+                    println!("  Timestamp: {}", meta.timestamp);
+                    println!("  Gas Limit: {}", meta.gas_limit);
+                    println!("  Coinbase: {}", meta.coinbase);
+                    println!("  Blob Used: {}", meta.blob_used);
+                    // Print other fields as needed
+                }
+            },
+            Err(e) => {
+                println!("Error proposing block: {:?}", e);
+            }
+        }
+
+        // let transport = web3::transports::Http::new("http://localhost:8545")?;
+        // let web3 = web3::Web3::new(transport);
+
+        // // now create an instance of an interface to the contract
+        // let instance = TaikoL1::deployed(web3).await?;
         // ALl i need is:
         //RPC connection to localhost port 8545 and submit to the L1 Taiko contract:
 

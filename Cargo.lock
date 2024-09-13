@@ -2701,6 +2701,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "curl"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e2161dd6eba090ff1594084e95fd67aeccf04382ffea77999ea94ed42ec67b6"
+dependencies = [
+ "curl-sys",
+ "libc",
+ "openssl-probe",
+ "openssl-sys",
+ "schannel",
+ "socket2 0.5.7",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "curl-sys"
+version = "0.4.75+curl-8.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a4fd752d337342e4314717c0d9b6586b059a120c80029ebe4d49b11fec7875e"
+dependencies = [
+ "cc",
+ "libc",
+ "libz-sys",
+ "openssl-sys",
+ "pkg-config",
+ "vcpkg",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "curve25519-dalek"
 version = "4.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3417,6 +3447,76 @@ dependencies = [
  "impl-serde 0.4.0",
  "scale-info",
  "tiny-keccak",
+]
+
+[[package]]
+name = "ethcontract"
+version = "0.25.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de7f5ab3529a815a6f637e6ed6e62335cdeb535dce0dabd805941bfbfbd22e3f"
+dependencies = [
+ "arrayvec",
+ "ethcontract-common",
+ "ethcontract-derive",
+ "futures",
+ "futures-timer",
+ "hex",
+ "jsonrpc-core",
+ "lazy_static",
+ "primitive-types 0.12.2",
+ "secp256k1 0.27.0",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uint",
+ "web3 0.19.0",
+ "zeroize",
+]
+
+[[package]]
+name = "ethcontract-common"
+version = "0.25.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acb731ef73bc8837d0002887263f43641786e34853f438779444293813f24992"
+dependencies = [
+ "ethabi 18.0.0",
+ "hex",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "thiserror",
+ "tiny-keccak",
+ "web3 0.19.0",
+]
+
+[[package]]
+name = "ethcontract-derive"
+version = "0.25.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21e8f1e55f0f1c341859821a045d33867323fe8b778944bbf60cff883574cca1"
+dependencies = [
+ "anyhow",
+ "ethcontract-common",
+ "ethcontract-generate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.72",
+]
+
+[[package]]
+name = "ethcontract-generate"
+version = "0.25.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc0983a5bc8284b4e7ac33a2818d63315cd19b3ca59ce90fea5a6837c1d65081"
+dependencies = [
+ "Inflector",
+ "anyhow",
+ "curl",
+ "ethcontract-common",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.72",
+ "url",
 ]
 
 [[package]]
@@ -8252,6 +8352,7 @@ dependencies = [
  "crossbeam-queue",
  "csv",
  "derivative",
+ "ethcontract",
  "ethereum-consensus",
  "ethereum_ssz",
  "ethereum_ssz_derive",
@@ -8262,6 +8363,7 @@ dependencies = [
  "flume",
  "futures",
  "governor",
+ "hex",
  "humantime",
  "hyper 1.4.1",
  "integer-encoding",
@@ -8323,7 +8425,7 @@ dependencies = [
  "url",
  "uuid 1.10.0",
  "warp",
- "web3",
+ "web3 0.18.0",
  "zip",
 ]
 
@@ -11233,6 +11335,15 @@ dependencies = [
 
 [[package]]
 name = "secp256k1"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25996b82292a7a57ed3508f052cfff8640d38d32018784acd714758b43da9c8f"
+dependencies = [
+ "secp256k1-sys 0.8.1",
+]
+
+[[package]]
+name = "secp256k1"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e0cc0f1cf93f4969faf3ea1c7d8a9faed25918d96affa959720823dfe86d4f3"
@@ -11247,6 +11358,15 @@ name = "secp256k1-sys"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "957da2573cde917463ece3570eab4a0b3f19de6f1646cde62e6fd3868f566036"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "secp256k1-sys"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70a129b9e9efbfb223753b9163c4ab3b13cff7fd9c7f010fbac25ab4099fa07e"
 dependencies = [
  "cc",
 ]
@@ -13626,6 +13746,41 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util 0.6.10",
+ "url",
+ "web3-async-native-tls",
+]
+
+[[package]]
+name = "web3"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5388522c899d1e1c96a4c307e3797e0f697ba7c77dd8e0e625ecba9dd0342937"
+dependencies = [
+ "arrayvec",
+ "base64 0.21.7",
+ "bytes",
+ "derive_more",
+ "ethabi 18.0.0",
+ "ethereum-types 0.14.1",
+ "futures",
+ "futures-timer",
+ "headers",
+ "hex",
+ "idna 0.4.0",
+ "jsonrpc-core",
+ "log",
+ "once_cell",
+ "parking_lot 0.12.3",
+ "pin-project",
+ "reqwest 0.11.27",
+ "rlp",
+ "secp256k1 0.27.0",
+ "serde",
+ "serde_json",
+ "soketto 0.7.1",
+ "tiny-keccak",
+ "tokio",
+ "tokio-util 0.7.11",
  "url",
  "web3-async-native-tls",
 ]
