@@ -4,7 +4,7 @@ use crate::primitives::{
 };
 use ahash::HashMap;
 use alloy_primitives::Address;
-use alloy_provider::Provider;
+use alloy_provider::{Provider, ReqwestProvider};
 use alloy_transport_http::Http;
 use lru::LruCache;
 use reth::{primitives::constants::SLOT_DURATION, providers::StateProviderBox};
@@ -26,11 +26,12 @@ use ethers::{
     types::{Bytes, H256, U256},
 };
 
-use web3::{
-    Web3,
-    contract::{Contract, Options},
-};
 use url::Url;
+use web3::{
+    contract::{Contract, Options},
+    ethabi::{self, Uint},
+    Web3,
+};
 
 const BLOCKS_TO_KEEP_TXS: u32 = 5;
 const TIME_TO_KEEP_TXS: Duration = SLOT_DURATION.saturating_mul(BLOCKS_TO_KEEP_TXS);
@@ -123,7 +124,10 @@ impl OrderPool {
     }
 
     pub async fn process_commands(&mut self, commands: Vec<ReplaceableOrderPoolCommand>) {
-        println!("Dani debug: OrderPool received {} commands to process", commands.len());
+        println!(
+            "Dani debug: OrderPool received {} commands to process",
+            commands.len()
+        );
         for command in commands {
             self.process_command(command).await;
         }
@@ -135,20 +139,20 @@ impl OrderPool {
             ReplaceableOrderPoolCommand::Order(order) => {
                 println!("Dani debug: Processing order: {:?}", order.id());
                 self.process_order(order).await;
-            },
+            }
             ReplaceableOrderPoolCommand::CancelShareBundle(c) => {
                 println!("Dani debug: Processing cancel share bundle: {:?}", c.key);
                 self.process_remove_sbundle(c);
-            },
+            }
             ReplaceableOrderPoolCommand::CancelBundle(key) => {
                 println!("Dani debug: Processing cancel bundle: {:?}", key);
                 self.process_remove_bundle(key);
-            },
+            }
         }
-        
+
         let target_block = command.target_block();
         println!("Dani debug: Command target block: {:?}", target_block);
-        
+
         let initial_sink_count = self.sinks.len();
         self.sinks.retain(|_, sub| {
             if !sub.sink.is_alive() {
@@ -160,11 +164,12 @@ impl OrderPool {
                     ReplaceableOrderPoolCommand::Order(o) => {
                         println!("Dani debug: Inserting order into sink");
                         sub.sink.insert_order(o)
-                    },
+                    }
                     ReplaceableOrderPoolCommand::CancelShareBundle(cancel) => {
                         println!("Dani debug: Removing share bundle from sink");
-                        sub.sink.remove_bundle(OrderReplacementKey::ShareBundle(cancel.key))
-                    },
+                        sub.sink
+                            .remove_bundle(OrderReplacementKey::ShareBundle(cancel.key))
+                    }
                     ReplaceableOrderPoolCommand::CancelBundle(key) => {
                         println!("Dani debug: Removing bundle from sink");
                         sub.sink.remove_bundle(OrderReplacementKey::Bundle(key))
@@ -178,7 +183,10 @@ impl OrderPool {
             true
         });
         let final_sink_count = self.sinks.len();
-        println!("Dani debug: Sink count changed from {} to {}", initial_sink_count, final_sink_count);
+        println!(
+            "Dani debug: Sink count changed from {} to {}",
+            initial_sink_count, final_sink_count
+        );
     }
 
     async fn process_order(&mut self, order: &Order) {
@@ -245,64 +253,81 @@ impl OrderPool {
         // ALl i need is:
         //RPC connection to localhost port 8545 and submit to the L1 Taiko contract:
 
-        // let url = Url::parse(L1_RPC_URL)?;
-        // let transport = Http::new(url);
+        let provider = ReqwestProvider::new_http(L1_RPC_URL.parse()?);
 
-        //let provider = Provider::<Http>::try_from("L1_RPC_URL").unwrap();
-        // let provider = Provider::new(RpcClient::new(transport));
+        let tx_lists: Vec<Bytes> = self
+            .mempool_txs
+            .iter()
+            .map(|(order, _)| Bytes::from(order.rlp_bytes()))
+            .collect();
 
-        // let tx_lists: Vec<Bytes> = self.mempool_txs.iter()
-        //     .map(|(order, _)| Bytes::from(order.rlp_bytes()))
-        //     .collect();
+        let tx_list_hash = web3::signing::keccak256(&rlp::encode_list(&tx_lists));
 
-        // let tx_list_hash = web3::signing::keccak256(&rlp::encode_list(&tx_lists));
+        let meta =
+            self.create_block_metadata(H256::from_slice(&tx_list_hash), tx_lists[0].len() as u32);
+        let mut bytes = [0u8; 32];
+        meta.difficulty.to_big_endian(&mut bytes);
+        let meta_encoded = ethabi::encode(&[ethabi::Token::Tuple(vec![
+            ethabi::Token::FixedBytes(meta.block_hash.as_bytes().to_vec()),
+            ethabi::Token::FixedBytes(meta.parent_block_hash.as_bytes().to_vec()),
+            ethabi::Token::FixedBytes(meta.parent_meta_hash.as_bytes().to_vec()),
+            ethabi::Token::FixedBytes(meta.l1_hash.as_bytes().to_vec()),
+            ethabi::Token::Uint(web3::types::U256::from_big_endian(&bytes)),
+            ethabi::Token::FixedBytes(meta.blob_hash.as_bytes().to_vec()),
+            ethabi::Token::FixedBytes(meta.extra_data.as_bytes().to_vec()),
+            ethabi::Token::Address(web3::types::H160::from_slice(meta.coinbase.as_slice())),
+            ethabi::Token::Uint(meta.l2_block_number.into()),
+            ethabi::Token::Uint(meta.gas_limit.into()),
+            ethabi::Token::Uint(meta.l1_state_block_number.into()),
+            ethabi::Token::Uint(meta.timestamp.into()),
+            ethabi::Token::Uint(meta.tx_list_byte_offset.into()),
+            ethabi::Token::Uint(meta.tx_list_byte_size.into()),
+            ethabi::Token::Bool(meta.blob_used),
+        ])]);
 
-        // let meta = self.create_block_metadata(H256::from_slice(&tx_list_hash), tx_lists[0].len() as u32);
-        // let meta_encoded = ethabi::encode(&[ethabi::Token::Tuple(vec![
-        //     ethabi::Token::FixedBytes(meta.block_hash.as_bytes().to_vec()),
-        //     ethabi::Token::FixedBytes(meta.parent_block_hash.as_bytes().to_vec()),
-        //     ethabi::Token::FixedBytes(meta.parent_meta_hash.as_bytes().to_vec()),
-        //     ethabi::Token::FixedBytes(meta.l1_hash.as_bytes().to_vec()),
-        //     ethabi::Token::Uint(meta.difficulty.into()),
-        //     ethabi::Token::FixedBytes(meta.blob_hash.as_bytes().to_vec()),
-        //     ethabi::Token::FixedBytes(meta.extra_data.as_bytes().to_vec()),
-        //     ethabi::Token::Address(meta.coinbase.into()),
-        //     ethabi::Token::Uint(meta.l2_block_number.into()),
-        //     ethabi::Token::Uint(meta.gas_limit.into()),
-        //     ethabi::Token::Uint(meta.l1_state_block_number.into()),
-        //     ethabi::Token::Uint(meta.timestamp.into()),
-        //     ethabi::Token::Uint(meta.tx_list_byte_offset.into()),
-        //     ethabi::Token::Uint(meta.tx_list_byte_size.into()),
-        //     ethabi::Token::Bool(meta.blob_used),
-        // ])]);
+        let function = ethabi::Function {
+            name: "proposeBlock".to_string(),
+            inputs: vec![
+                ethabi::Param {
+                    name: "params".to_string(),
+                    kind: ethabi::ParamType::Array(Box::new(ethabi::ParamType::Bytes)),
+                    internal_type: None,
+                },
+                ethabi::Param {
+                    name: "txList".to_string(),
+                    kind: ethabi::ParamType::Array(Box::new(ethabi::ParamType::Bytes)),
+                    internal_type: None,
+                },
+            ],
+            outputs: vec![],
+            constant: false,
+            state_mutability: ethabi::StateMutability::NonPayable,
+        };
 
-        // let function = ethabi::Function {
-        //     name: "proposeBlock".to_string(),
-        //     inputs: vec![
-        //         ethabi::Param { name: "params".to_string(), kind: ethabi::ParamType::Array(Box::new(ethabi::ParamType::Bytes)) },
-        //         ethabi::Param { name: "txList".to_string(), kind: ethabi::ParamType::Array(Box::new(ethabi::ParamType::Bytes)) },
-        //     ],
-        //     outputs: vec![],
-        //     constant: false,
-        //     state_mutability: ethabi::StateMutability::NonPayable,
-        // };
+        let data = function.encode_input(&[
+            ethabi::Token::Array(vec![ethabi::Token::Bytes(meta_encoded)]),
+            ethabi::Token::Array(
+                tx_lists
+                    .into_iter()
+                    .map(|b| ethabi::Token::Bytes(b.to_vec()))
+                    .collect(),
+            ),
+        ])?;
 
-        // let data = function.encode_input(&[
-        //     ethabi::Token::Array(vec![ethabi::Token::Bytes(meta_encoded)]),
-        //     ethabi::Token::Array(tx_lists.into_iter().map(|b| ethabi::Token::Bytes(b.0)).collect()),
-        // ])?;
+        let tx_object = TransactionRequest {
+            to: Some(TAIKO_L1_ADDRESS.parse()?),
+            data: Some(Bytes::from_iter(data.iter())),
+            ..Default::default()
+        };
 
-        // let tx_object = TransactionRequest {
-        //     to: Some(TAIKO_L1_ADDRESS.parse()?),
-        //     data: Some(Bytes(data)),
-        //     ..Default::default()
-        // };
+        let accounts = provider.get_accounts().await?;
+        let tx_hash = provider.send_transaction(tx_object).await?;
 
-        // let accounts = web3.eth().accounts().await?;
-        // let tx_hash = web3.eth().send_transaction(tx_object).await?;
-
-        // println!("Block proposed successfully. Transaction hash: {:?}", tx_hash);
-        // self.mempool_txs.clear();
+        println!(
+            "Block proposed successfully. Transaction hash: {:?}",
+            tx_hash
+        );
+        self.mempool_txs.clear();
 
         Ok(())
     }
