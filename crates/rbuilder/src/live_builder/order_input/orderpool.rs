@@ -23,7 +23,8 @@ use super::{
 };
 use ethers::{
     prelude::*,
-    types::{Bytes, H256, U256},
+    types::{Bytes, H256, U256, Address as EthersAddress},
+    providers::{Http as EthersHttp, Provider as EthersProvider},
 };
 
 use url::Url;
@@ -253,15 +254,23 @@ impl OrderPool {
         // ALl i need is:
         //RPC connection to localhost port 8545 and submit to the L1 Taiko contract:
 
-        let provider = ReqwestProvider::new_http(L1_RPC_URL.parse()?);
+        println!(
+            "Trying to propse blocks"
+        );
+        //let provider = ReqwestProvider::new_http(L1_RPC_URL.parse()?);
+        let provider = EthersProvider::<EthersHttp>::try_from(L1_RPC_URL)?;
+        // let tx_lists: Vec<Bytes> = self
+        //     .mempool_txs
+        //     .iter()
+        //     .map(|(order, _)| Bytes::from(order.rlp_bytes()))
+        //     .collect();
 
-        let tx_lists: Vec<Bytes> = self
-            .mempool_txs
-            .iter()
-            .map(|(order, _)| Bytes::from(order.rlp_bytes()))
-            .collect();
+        //Currently has 3 (rlp encoded) transactions in theh block. See PropseBlock.s.sol
+        let tx_lists: Vec<Bytes> = vec![Bytes::from(hex::decode("f90171b87902f87683028c6280843b9aca00847735940083030d4094f93ee4cf8c6c40b329b0c0626f28333c132cf241880de0b6b3a764000080c080a07f983645ddf8365d14e5fb4e3b07c19fe31e23edd9ee4a737388acc2da7e64a3a072a56043512806a6de5f66f28bb659236eea41c9d66db8493f436804c42723d3b87902f87683028c6280843b9aca00847735940083030d4094f93ee4cf8c6c40b329b0c0626f28333c132cf241880de0b6b3a764000080c001a030911ab2ebf76f1e1bfe00d721207d929053efb051d50708a10dd9f66f84bacba07705a7cdb86ff00aa8c131ef3c4cb2ea2f2f4730d93308f1afbb94a04c1c9ae9b87902f87683028c6280843b9aca00847735940083030d4094f93ee4cf8c6c40b329b0c0626f28333c132cf241880de0b6b3a764000080c001a07da8dfb5bc3b7b353f9614bcd83733168500d1e06f2bcdac761cc54c85847e6aa03b041b0605e86aa379ff0f58a60743da411dfd1a9d4f1d18422a862f67a57fee").expect("Invalid hex string"))];
 
-        let tx_list_hash = web3::signing::keccak256(&rlp::encode_list(&tx_lists));
+        //let tx_list_hash = web3::signing::keccak256(&rlp::encode_list(&tx_lists));
+
+        let tx_list_hash = web3::signing::keccak256(&tx_lists[0]);
 
         let meta =
             self.create_block_metadata(H256::from_slice(&tx_list_hash), tx_lists[0].len() as u32);
@@ -320,8 +329,18 @@ impl OrderPool {
             ..Default::default()
         };
 
-        let accounts = provider.get_accounts().await?;
-        let tx_hash = provider.send_transaction(tx_object).await?;
+        let chain_id = provider.get_chainid().await?;
+
+        // define the signer
+        // for simplicity replace the private key (without 0x), ofc it always recommended to load it from an .env file or external vault
+        let wallet: LocalWallet = "39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d" // Safe to use this dev pk
+            .parse::<LocalWallet>()?
+            .with_chain_id(chain_id.as_u64());
+    
+        // connect the wallet to the provider
+        let client = SignerMiddleware::new(provider, wallet);
+
+        let tx_hash = client.send_transaction(tx_object, None).await?;
 
         println!(
             "Block proposed successfully. Transaction hash: {:?}",
