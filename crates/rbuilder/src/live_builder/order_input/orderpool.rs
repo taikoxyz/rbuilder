@@ -255,7 +255,7 @@ impl OrderPool {
         //RPC connection to localhost port 8545 and submit to the L1 Taiko contract:
 
         println!(
-            "Trying to propse blocks"
+            "Trying to propose blocks"
         );
         //let provider = ReqwestProvider::new_http(L1_RPC_URL.parse()?);
         let provider = EthersProvider::<EthersHttp>::try_from(L1_RPC_URL)?;
@@ -293,6 +293,10 @@ impl OrderPool {
             ethabi::Token::Uint(meta.tx_list_byte_size.into()),
             ethabi::Token::Bool(meta.blob_used),
         ])]);
+
+        println!(
+            "Putting calldata together"
+        );
 
         let function = ethabi::Function {
             name: "proposeBlock".to_string(),
@@ -339,6 +343,10 @@ impl OrderPool {
     
         // connect the wallet to the provider
         let client = SignerMiddleware::new(provider, wallet);
+
+        println!(
+            "Send it!"
+        );
 
         let tx_hash = client.send_transaction(tx_object, None).await?;
 
