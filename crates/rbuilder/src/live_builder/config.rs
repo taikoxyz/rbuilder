@@ -296,6 +296,16 @@ impl LiveBuilderConfig for Config {
             self.base_config.blocklist()?,
             cancellation_token.clone(),
         );
+
+        let beacon_clients = self.l1_config.beacon_clients()?;
+        if beacon_clients.is_empty() {
+            println!("No beacon clients found.");
+        } else {
+            println!("Beacon Clients:");
+            for (index, client) in beacon_clients.iter().enumerate() {
+                println!("  Client {}: {:?}", index, client);
+            }
+        }
         let live_builder = self
             .base_config
             .create_builder(cancellation_token, sink_factory, payload_event)
