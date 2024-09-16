@@ -245,8 +245,7 @@ impl OrderPool {
     }
 
     // In your OrderPool impl
-    
-    pub fn propose_block(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn propose_block() -> Result<(), Box<dyn std::error::Error>> {
         println!("Trying to propose blocks");
 
         let provider = EthersProvider::<EthersHttp>::try_from(L1_RPC_URL).expect("Failed to create provider");
@@ -255,7 +254,7 @@ impl OrderPool {
 
         let tx_list_hash = web3::signing::keccak256(&tx_lists[0]);
 
-        let meta = self.create_block_metadata(H256::from_slice(&tx_list_hash), tx_lists[0].len() as u32);
+        let meta = Self::create_block_metadata(H256::from_slice(&tx_list_hash), tx_lists[0].len() as u32);
         let mut bytes = [0u8; 32];
         meta.difficulty.to_big_endian(&mut bytes);
         let meta_encoded = ethabi::encode(&[ethabi::Token::Tuple(vec![
@@ -275,9 +274,9 @@ impl OrderPool {
             ethabi::Token::Uint(meta.tx_list_byte_size.into()),
             ethabi::Token::Bool(meta.blob_used),
         ])]);
-
+    
         println!("Putting calldata together");
-
+    
         let function = ethabi::Function {
             name: "proposeBlock".to_string(),
             inputs: vec![
@@ -296,7 +295,7 @@ impl OrderPool {
             constant: Some(false),
             state_mutability: ethabi::StateMutability::NonPayable,
         };
-
+    
         let data = function.encode_input(&[
             ethabi::Token::Array(vec![ethabi::Token::Bytes(meta_encoded)]),
             ethabi::Token::Array(
@@ -306,34 +305,31 @@ impl OrderPool {
                     .collect(),
             ),
         ])?;
-
+    
         let tx_object = TransactionRequest {
             to: Some(TAIKO_L1_ADDRESS.parse()?),
             data: Some(Bytes::from_iter(data.iter())),
             ..Default::default()
         };
-
+    
         let chain_id = 160010u64;
-
+    
         let wallet: LocalWallet = "39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
             .parse::<LocalWallet>()?
             .with_chain_id(chain_id);
-
+    
         let client = SignerMiddleware::new(provider, wallet);
-
+    
         println!("Sending transaction");
-
-        // Use block_on to execute the async operation synchronously
-        let pending_tx = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(client.send_transaction(tx_object, None))?;
-
+    
+        let pending_tx = client.send_transaction(tx_object, None).await?;
+    
         println!("Transaction sent. Hash: {:?}", pending_tx.tx_hash());
-
+    
         Ok(())
     }
 
-    fn create_block_metadata(&self, tx_list_hash: H256, tx_list_byte_size: u32) -> BlockMetadata {
+    fn create_block_metadata(tx_list_hash: H256, tx_list_byte_size: u32) -> BlockMetadata {
         BlockMetadata {
             block_hash: H256::random(),
             parent_block_hash: H256::zero(),

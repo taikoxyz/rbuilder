@@ -271,21 +271,23 @@ pub async fn start_orderpool_jobs<DB: Database + Clone + 'static>(
             }
 
             {
-                let mut orderpool = orderpool.lock().unwrap();
-                println!("Dani debug: Processing {} commands in OrderPool", new_commands.len());
-                orderpool.process_commands(new_commands.clone());
-
-                println!("Dani debug: proposeBlock");
-                match orderpool.propose_block() {
-                    Ok(_) => println!("Block proposed successfully."),
-                    Err(e) => eprintln!("Failed to propose block: {:?}", e),
+                let mut should_propose_block = false;
+                {
+                    let mut orderpool = orderpool.lock().unwrap();
+                    println!("Dani debug: Processing {} commands in OrderPool", new_commands.len());
+                    orderpool.process_commands(new_commands.clone());
+                    should_propose_block = true; // Or some condition based on the processed commands
                 }
-                //orderpool.propose_block();
-                // let propose_block_future = orderpool.propose_block();
-                // match propose_block_future.await {
-                //     Ok(tx_hash) => println!("Block proposed successfully. Transaction hash: {:?}", tx_hash),
-                //     Err(e) => eprintln!("Failed to propose block: {:?}", e),
-                // }
+
+                if should_propose_block {
+                    println!("Dani debug: proposeBlock");
+                    let result = OrderPool::propose_block().await;
+                    match result {
+                        Ok(_) => println!("Block proposed successfully."),
+                        Err(e) => eprintln!("Failed to propose block: {:?}", e),
+                    }
+                }
+
                 println!("Dani debug: Finished processing commands in OrderPool");
             }
             new_commands.clear();
