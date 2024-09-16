@@ -3,12 +3,13 @@ use crate::primitives::{
     ShareBundleReplacementKey,
 };
 use ahash::HashMap;
+use futures::Future;
 use lru::LruCache;
 use reth::{primitives::constants::SLOT_DURATION, providers::StateProviderBox};
 use std::{
     collections::VecDeque,
     num::NonZeroUsize,
-    time::{Duration, Instant},
+    time::{Duration, Instant}, sync::Arc,
 };
 use tokio::sync::mpsc::{self};
 use tracing::{error, trace};
@@ -18,11 +19,50 @@ use super::{
     replaceable_order_sink::ReplaceableOrderSink,
     ReplaceableOrderPoolCommand,
 };
+use ethers::{
+    prelude::*,
+    types::{Bytes, H256, U256, Address as EthersAddress},
+    providers::{Http as EthersHttp, Provider as EthersProvider},
+};
+
+use url::Url;
+use web3::{
+    contract::{Contract, Options},
+    ethabi::{self, Uint},
+    Web3,
+};
 
 const BLOCKS_TO_KEEP_TXS: u32 = 5;
 const TIME_TO_KEEP_TXS: Duration = SLOT_DURATION.saturating_mul(BLOCKS_TO_KEEP_TXS);
 
 const TIME_TO_KEEP_BUNDLE_CANCELLATIONS: Duration = Duration::from_secs(60);
+
+// For testing Gwyneth
+const MEMPOOL_TX_THRESHOLD: usize = 1;
+// Constants for L1 RPC URL and TaikoL1 address
+const L1_RPC_URL: &str = "http://localhost:8545";
+const TAIKO_L1_ADDRESS: &str = "0x9fCF7D13d10dEdF17d0f24C62f0cf4ED462f65b7";
+
+
+#[derive(Clone, Debug)]
+struct BlockMetadata {
+    block_hash: H256,
+    parent_block_hash: H256,
+    parent_meta_hash: H256,
+    l1_hash: H256,
+    difficulty: U256,
+    blob_hash: H256,
+    extra_data: H256,
+    coinbase: Address,
+    l2_block_number: u64,
+    gas_limit: u32,
+    l1_state_block_number: u32,
+    timestamp: u64,
+    tx_list_byte_offset: u32,
+    tx_list_byte_size: u32,
+    blob_used: bool,
+}
+
 /// Push to pull for OrderSink. Just poll de UnboundedReceiver to get the orders.
 #[derive(Debug)]
 pub struct OrdersForBlock {
@@ -202,6 +242,118 @@ impl OrderPool {
         });
         let final_sink_count = self.sinks.len();
         println!("Dani debug: Sink count changed from {} to {}", initial_sink_count, final_sink_count);
+    }
+
+    // In your OrderPool impl
+    
+    pub fn propose_block(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        println!("Trying to propose blocks");
+
+        let provider = EthersProvider::<EthersHttp>::try_from(L1_RPC_URL).expect("Failed to create provider");
+
+        let tx_lists = vec![Bytes::from(hex::decode("f90171b87902f87683028c6280843b9aca00847735940083030d4094f93ee4cf8c6c40b329b0c0626f28333c132cf241880de0b6b3a764000080c080a07f983645ddf8365d14e5fb4e3b07c19fe31e23edd9ee4a737388acc2da7e64a3a072a56043512806a6de5f66f28bb659236eea41c9d66db8493f436804c42723d3b87902f87683028c6280843b9aca00847735940083030d4094f93ee4cf8c6c40b329b0c0626f28333c132cf241880de0b6b3a764000080c001a030911ab2ebf76f1e1bfe00d721207d929053efb051d50708a10dd9f66f84bacba07705a7cdb86ff00aa8c131ef3c4cb2ea2f2f4730d93308f1afbb94a04c1c9ae9b87902f87683028c6280843b9aca00847735940083030d4094f93ee4cf8c6c40b329b0c0626f28333c132cf241880de0b6b3a764000080c001a07da8dfb5bc3b7b353f9614bcd83733168500d1e06f2bcdac761cc54c85847e6aa03b041b0605e86aa379ff0f58a60743da411dfd1a9d4f1d18422a862f67a57fee").expect("Invalid hex string"))];
+
+        let tx_list_hash = web3::signing::keccak256(&tx_lists[0]);
+
+        let meta = self.create_block_metadata(H256::from_slice(&tx_list_hash), tx_lists[0].len() as u32);
+        let mut bytes = [0u8; 32];
+        meta.difficulty.to_big_endian(&mut bytes);
+        let meta_encoded = ethabi::encode(&[ethabi::Token::Tuple(vec![
+            ethabi::Token::FixedBytes(meta.block_hash.as_bytes().to_vec()),
+            ethabi::Token::FixedBytes(meta.parent_block_hash.as_bytes().to_vec()),
+            ethabi::Token::FixedBytes(meta.parent_meta_hash.as_bytes().to_vec()),
+            ethabi::Token::FixedBytes(meta.l1_hash.as_bytes().to_vec()),
+            ethabi::Token::Uint(web3::types::U256::from_big_endian(&bytes)),
+            ethabi::Token::FixedBytes(meta.blob_hash.as_bytes().to_vec()),
+            ethabi::Token::FixedBytes(meta.extra_data.as_bytes().to_vec()),
+            ethabi::Token::Address(web3::types::H160::from_slice(meta.coinbase.0.as_slice())),
+            ethabi::Token::Uint(meta.l2_block_number.into()),
+            ethabi::Token::Uint(meta.gas_limit.into()),
+            ethabi::Token::Uint(meta.l1_state_block_number.into()),
+            ethabi::Token::Uint(meta.timestamp.into()),
+            ethabi::Token::Uint(meta.tx_list_byte_offset.into()),
+            ethabi::Token::Uint(meta.tx_list_byte_size.into()),
+            ethabi::Token::Bool(meta.blob_used),
+        ])]);
+
+        println!("Putting calldata together");
+
+        let function = ethabi::Function {
+            name: "proposeBlock".to_string(),
+            inputs: vec![
+                ethabi::Param {
+                    name: "params".to_string(),
+                    kind: ethabi::ParamType::Array(Box::new(ethabi::ParamType::Bytes)),
+                    internal_type: None,
+                },
+                ethabi::Param {
+                    name: "txList".to_string(),
+                    kind: ethabi::ParamType::Array(Box::new(ethabi::ParamType::Bytes)),
+                    internal_type: None,
+                },
+            ],
+            outputs: vec![],
+            constant: Some(false),
+            state_mutability: ethabi::StateMutability::NonPayable,
+        };
+
+        let data = function.encode_input(&[
+            ethabi::Token::Array(vec![ethabi::Token::Bytes(meta_encoded)]),
+            ethabi::Token::Array(
+                tx_lists
+                    .into_iter()
+                    .map(|b| ethabi::Token::Bytes(b.to_vec()))
+                    .collect(),
+            ),
+        ])?;
+
+        let tx_object = TransactionRequest {
+            to: Some(TAIKO_L1_ADDRESS.parse()?),
+            data: Some(Bytes::from_iter(data.iter())),
+            ..Default::default()
+        };
+
+        let chain_id = 160010u64;
+
+        let wallet: LocalWallet = "39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
+            .parse::<LocalWallet>()?
+            .with_chain_id(chain_id);
+
+        let client = SignerMiddleware::new(provider, wallet);
+
+        println!("Sending transaction");
+
+        // Use block_on to execute the async operation synchronously
+        let pending_tx = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(client.send_transaction(tx_object, None))?;
+
+        println!("Transaction sent. Hash: {:?}", pending_tx.tx_hash());
+
+        Ok(())
+    }
+
+    fn create_block_metadata(&self, tx_list_hash: H256, tx_list_byte_size: u32) -> BlockMetadata {
+        BlockMetadata {
+            block_hash: H256::random(),
+            parent_block_hash: H256::zero(),
+            parent_meta_hash: H256::zero(),
+            l1_hash: H256::zero(),
+            difficulty: U256::zero(),
+            blob_hash: tx_list_hash,
+            extra_data: H256::zero(),
+            coinbase: Address::random(),
+            l2_block_number: 0,
+            gas_limit: 15_000_000,
+            l1_state_block_number: 0,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as u64,
+            tx_list_byte_offset: 0,
+            tx_list_byte_size,
+            blob_used: false,
+        }
     }
 
     /// Adds a sink and pushes the current state for the block
