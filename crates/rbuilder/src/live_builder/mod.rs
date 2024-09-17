@@ -133,7 +133,10 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
         let watchdog_sender = spawn_watchdog_thread(self.watchdog_timeout)?;
 
+        println!("Dani debug: Waiting for payload_attributes events");
         while let Some(payload) = payload_events_channel.recv().await {
+
+            println!("Dani debug: payload_attributes event received");
             if self.blocklist.contains(&payload.fee_recipient()) {
                 warn!(
                     slot = payload.slot(),

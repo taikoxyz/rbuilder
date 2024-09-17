@@ -9,7 +9,7 @@ use super::{
     },
 };
 use crate::{
-    beacon_api_client::Client,
+    beacon_api_client::{Client, PayloadAttributesTopic},
     building::{
         builders::{
             ordering_builder::{OrderingBuilderConfig, OrderingBuildingAlgorithm},
@@ -305,7 +305,19 @@ impl LiveBuilderConfig for Config {
             println!("Beacon Clients:");
             for (index, client) in beacon_clients.iter().enumerate() {
                 println!("  Client {}: {:?}", index, client);
-                println!("  Client spec: {:?}", client.get_spec());
+                    // Try to get the spec
+                match client.get_spec().await {
+                    Ok(spec) => {
+                        println!("  Spec:");
+                        for (key, value) in spec {
+                            println!("    {}: {}", key, value);
+                        }
+                    },
+                    Err(e) => println!("  Failed to get spec: {:?}", e),
+                }
+
+                // We can't print much about the events stream directly, but we can show it's accessible
+                println!("  Can get events stream: {}", client.get_events::<PayloadAttributesTopic>().await.is_ok());
             }
         }
 
