@@ -147,6 +147,7 @@ impl L1Config {
         self.cl_node_url
             .iter()
             .map(|url| {
+                println!("cl_node_url: {:?} {:?}", url, url.value());
                 let url = Url::parse(&url.value()?)?;
                 Ok(Client::new(url))
             })
