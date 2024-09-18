@@ -139,7 +139,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         while let Some(payload) = payload_events_channel.recv().await {
             println!("Dani debug: payload_attributes event received");
             println!("Dani debug: get latest l2 block info");
-            self::get_layer2_infos;
+            get_layer2_infos();
             if self.blocklist.contains(&payload.fee_recipient()) {
                 warn!(
                     slot = payload.slot(),
