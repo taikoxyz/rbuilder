@@ -253,7 +253,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
 async fn get_layer2_infos() -> Result<(), Box<dyn std::error::Error>> {
     let urls = vec![
-        "http://localhost:10111".to_string(),
+        "http://localhost:10110".to_string(),
     ];
 
     let layer2_info = Layer2Info::new(urls).await?;
