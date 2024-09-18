@@ -167,6 +167,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             let parent_header = {
                 // @Nicer
                 let parent_block = payload.parent_block_hash();
+                println!("Parent block's hash: {:?}", parent_block);
                 let timestamp = payload.timestamp();
                 let provider_factory = self.provider_factory.provider_factory_unchecked();
                 match wait_for_block_header(parent_block, timestamp, &provider_factory).await {

@@ -315,6 +315,9 @@ impl LiveBuilderConfig for Config {
             root_hash_task_pool,
             self.base_config.sbundle_mergeabe_signers(),
         );
+
+        println!("Dani debug: reth_datadir is: {:?}",self.base_config.reth_datadir);
+        
         Ok(live_builder.with_builders(builders))
     }
 
