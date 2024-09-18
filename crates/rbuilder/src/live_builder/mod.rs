@@ -133,7 +133,9 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
         let watchdog_sender = spawn_watchdog_thread(self.watchdog_timeout)?;
 
+        println!("Dani debug: Waiting for payload_attributes events");
         while let Some(payload) = payload_events_channel.recv().await {
+            println!("Dani debug: payload_attributes event received");
             if self.blocklist.contains(&payload.fee_recipient()) {
                 warn!(
                     slot = payload.slot(),
@@ -161,6 +163,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 continue;
             };
 
+            println!("Dani debug: gather parent header");
             let parent_header = {
                 // @Nicer
                 let parent_block = payload.parent_block_hash();
@@ -175,6 +178,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 }
             };
 
+            println!("Dani debug: gather blopvk hashes");
             {
                 let provider_factory = self.provider_factory.clone();
                 let block = payload.block();
@@ -204,6 +208,8 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
             inc_active_slots();
 
+
+            println!("Dani debug: build block context");
             let block_ctx = BlockBuildingContext::from_attributes(
                 payload.payload_attributes_event.clone(),
                 &parent_header,
@@ -215,6 +221,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 None,
             );
 
+            println!("Dani debug: start building");
             builder_pool.start_block_building(
                 payload,
                 block_ctx,
