@@ -139,7 +139,9 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         while let Some(payload) = payload_events_channel.recv().await {
             println!("Dani debug: payload_attributes event received");
             println!("Dani debug: get latest l2 block info");
-            get_layer2_infos().await;
+            if let Err(e) = get_layer2_infos().await {
+                eprintln!("Error occurred: {:?}", e);
+            }
             if self.blocklist.contains(&payload.fee_recipient()) {
                 warn!(
                     slot = payload.slot(),
@@ -258,10 +260,10 @@ async fn get_layer2_infos() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example: Get the latest block from Gwyneth Exexe (chain ID 167010)
     let gwyneth_chain_id = U256::from(167010);
-    if let Some(latest_block) = layer2_info.get_latest_block(gwyneth_chain_id).await? {
-        println!("Latest gwyneth block: {:?}", latest_block);
-    } else {
-        println!("Chain ID not found");
+    println!("Dani debug: before get_latest_block");
+    match layer2_info.get_latest_block(gwyneth_chain_id).await? {
+        Some(latest_block) => println!("Latest Gwyneth block: {:?}", latest_block),
+        None => println!("Chain ID not found"),
     }
 
     Ok(())

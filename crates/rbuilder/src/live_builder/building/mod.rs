@@ -172,7 +172,9 @@ impl Layer2Info {
     pub async fn get_latest_block(&self, chain_id: U256) -> Result<Option<Block<H256>>, Box<dyn std::error::Error>> {
         if let Some(url) = self.rpc_urls.get(&chain_id) {
             let provider = EthersProvider::<EthersHttp>::try_from(url.as_str())?;
+            println!("Dani debug: in get_latest_block before get_block");
             let latest_block = provider.get_block(BlockNumber::Latest).await?;
+            println!("Dani debug: in get_latest_block after get_block");
             Ok(latest_block)
         } else {
             Ok(None)
