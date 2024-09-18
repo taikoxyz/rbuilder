@@ -11,7 +11,7 @@ mod watchdog;
 use crate::{
     building::{
         builders::{BlockBuildingAlgorithm, UnfinishedBlockBuildingSinkFactory},
-        BlockBuildingContext,
+        BlockBuildingContext
     },
     live_builder::{
         order_input::{start_orderpool_jobs, OrderInputConfig},
@@ -27,6 +27,7 @@ use building::BlockBuildingPool;
 use eyre::Context;
 use jsonrpsee::RpcModule;
 use payload_events::MevBoostSlotData;
+use primitive_types::U256;
 use reth::{
     primitives::Header,
     providers::{HeaderProvider, ProviderFactory},
@@ -38,6 +39,7 @@ use time::OffsetDateTime;
 use tokio::{sync::mpsc, task::spawn_blocking};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+use building::Layer2Info;
 
 /// Time the proposer have to propose a block from the beginning of the slot (https://www.paradigm.xyz/2023/04/mev-boost-ethereum-consensus Slot anatomy)
 const SLOT_PROPOSAL_DURATION: std::time::Duration = Duration::from_secs(4);
@@ -136,6 +138,8 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         println!("Dani debug: Waiting for payload_attributes events");
         while let Some(payload) = payload_events_channel.recv().await {
             println!("Dani debug: payload_attributes event received");
+            println!("Dani debug: get latest l2 block info");
+            self::get_layer2_infos;
             if self.blocklist.contains(&payload.fee_recipient()) {
                 warn!(
                     slot = payload.slot(),
@@ -243,6 +247,24 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         }
         Ok(())
     }
+}
+
+async fn get_layer2_infos() -> Result<(), Box<dyn std::error::Error>> {
+    let urls = vec![
+        "https://localhost:10111".to_string(),
+    ];
+
+    let layer2_info = Layer2Info::new(urls).await?;
+
+    // Example: Get the latest block from Gwyneth Exexe (chain ID 160010)
+    let gwyneth_chain_id = U256::from(160010);
+    if let Some(latest_block) = layer2_info.get_latest_block(gwyneth_chain_id).await? {
+        println!("Latest gwyneth block: {:?}", latest_block);
+    } else {
+        println!("Chain ID not found");
+    }
+
+    Ok(())
 }
 
 /// May fail if we wait too much (see [BLOCK_HEADER_DEAD_LINE_DELTA])

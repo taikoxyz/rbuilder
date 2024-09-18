@@ -23,6 +23,13 @@ use super::{
     simulation::OrderSimulationPool,
 };
 
+use std::collections::HashMap;
+use ethers::{
+    prelude::*,
+    types::{Bytes, H256, U256, Address as EthersAddress},
+    providers::{Http as EthersHttp, Provider as EthersProvider},
+};
+
 #[derive(Debug)]
 pub struct BlockBuildingPool<DB> {
     provider_factory: ProviderFactoryReopener<DB>,
@@ -141,4 +148,34 @@ async fn multiplex_job<T>(mut input: mpsc::Receiver<T>, sender: broadcast::Sende
         }
     }
     trace!("Cancelling multiplex job");
+}
+
+pub struct Layer2Info {
+    // chain_id to rpc_url mapping
+    // Later can be reconfigured to use unix ipc socket
+    rpc_urls: HashMap<U256, String>,
+}
+
+impl Layer2Info {
+    pub async fn new(urls: Vec<String>) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut rpc_urls = HashMap::new();
+
+        for url in urls {
+            let provider = EthersProvider::<EthersHttp>::try_from(url.as_str())?;
+            let chain_id = provider.get_chainid().await?;
+            rpc_urls.insert(chain_id, url);
+        }
+
+        Ok(Self { rpc_urls })
+    }
+
+    pub async fn get_latest_block(&self, chain_id: U256) -> Result<Option<Block<H256>>, Box<dyn std::error::Error>> {
+        if let Some(url) = self.rpc_urls.get(&chain_id) {
+            let provider = EthersProvider::<EthersHttp>::try_from(url.as_str())?;
+            let latest_block = provider.get_block(BlockNumber::Latest).await?;
+            Ok(latest_block)
+        } else {
+            Ok(None)
+        }
+    }
 }
