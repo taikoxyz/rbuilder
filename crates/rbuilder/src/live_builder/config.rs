@@ -122,8 +122,11 @@ pub struct L1Config {
 
 impl Default for L1Config {
     fn default() -> Self {
+        let gwyneth_relay_config = RelayConfig::default().
+            with_url("https://0xac6e77dfe25ecd6110b8e780608cce0dab71fdd5ebea22a16c0205200f2f8e2e3ad3b71d3499c54ad14d6c21b41a37ae@boost-relay.flashbots.net").
+            with_name("gwyneth");
         Self {
-            relays: vec![],
+            relays: vec![gwyneth_relay_config],
             dry_run: false,
             dry_run_validation_url: vec![],
             relay_secret_key: "".into(),
