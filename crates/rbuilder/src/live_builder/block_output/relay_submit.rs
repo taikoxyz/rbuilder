@@ -533,6 +533,8 @@ impl BuilderSinkFactory for RelaySubmitSinkFactory {
     ) -> Box<dyn BlockBuildingSink> {
         let best_bid = BestBlockCell::default();
 
+        println!("builder relays: {:?}", self.relays);
+
         let relays = slot_data
             .relays
             .iter()
