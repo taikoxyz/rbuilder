@@ -138,8 +138,10 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         println!("Dani debug: Waiting for payload_attributes events");
         while let Some(payload) = payload_events_channel.recv().await {
             println!("Dani debug: payload_attributes event received");
-            println!("Dani debug: get latest l2 block info");
-            if let Err(e) = get_layer2_infos().await {
+
+            // Example: Get the latest block from Gwyneth Exexe (chain ID 167010)
+            let gwyneth_chain_id = U256::from(167010);
+            if let Err(e) = get_layer2_infos(gwyneth_chain_id).await {
                 eprintln!("Error occurred: {:?}", e);
             }
             if self.blocklist.contains(&payload.fee_recipient()) {
@@ -251,18 +253,17 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
     }
 }
 
-async fn get_layer2_infos() -> Result<(), Box<dyn std::error::Error>> {
+async fn get_layer2_infos(chain_id: U256) -> Result<(), Box<dyn std::error::Error>> {
+    // Let's just pretend this info is already set up somewhere as Layer2Info but for now
+    // i'm just constructing it here.
     let urls = vec![
         "http://localhost:10110".to_string(),
     ];
 
     let layer2_info = Layer2Info::new(urls).await?;
 
-    // Example: Get the latest block from Gwyneth Exexe (chain ID 167010)
-    let gwyneth_chain_id = U256::from(167010);
-    println!("Dani debug: before get_latest_block");
-    match layer2_info.get_latest_block(gwyneth_chain_id).await? {
-        Some(latest_block) => println!("Latest Gwyneth block: {:?}", latest_block),
+    match layer2_info.get_latest_block(chain_id).await? {
+        Some(latest_block) => println!("Latest block: {:?}", latest_block),
         None => println!("Chain ID not found"),
     }
 
