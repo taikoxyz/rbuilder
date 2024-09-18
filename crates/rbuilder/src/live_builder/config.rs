@@ -297,7 +297,8 @@ impl LiveBuilderConfig for Config {
             with_name("gwyneth");
         let gwyneth_relay = MevBoostRelay::from_config(&gwyneth_relay_config)?;
 
-        relays.clone().push(gwyneth_relay);
+        let mut relays = relays;
+        relays.push(gwyneth_relay);
 
         let payload_event = MevBoostSlotDataGenerator::new(
             self.l1_config.beacon_clients()?,
