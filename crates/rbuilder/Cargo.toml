@@ -7,7 +7,8 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethers = { version = "2.0", features = ["ws", "rustls"] }
+ethers = { version = "2.0", features = ["ws", "rustls", "ipc"] }
+ethers-providers = { version = "2.0", features = ["ipc"] }
 tokio = "1.38.0"
 serde = "1.0.188"
 serde_json = "1.0.105"

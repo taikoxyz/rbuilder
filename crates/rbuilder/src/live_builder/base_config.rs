@@ -8,7 +8,7 @@ use crate::{
 };
 use ahash::HashSet;
 use alloy_primitives::{Address, B256};
-use eyre::{eyre, Context};
+use eyre::{eyre, Context, Result};
 use jsonrpsee::RpcModule;
 use lazy_static::lazy_static;
 use reth::tasks::pool::BlockingTaskPool;
@@ -33,6 +33,8 @@ use tracing::warn;
 
 use super::SlotSource;
 
+use crate::live_builder::Layer2Info;
+
 /// Prefix for env variables in config
 const ENV_PREFIX: &str = "env:";
 
@@ -56,7 +58,6 @@ pub struct BaseConfig {
     pub flashbots_db: Option<EnvOrValue<String>>,
 
     pub el_node_ipc_path: PathBuf,
-    pub l2_el_node_ipc_path: PathBuf,
     pub jsonrpc_server_port: u16,
     pub jsonrpc_server_ip: Option<String>,
 
@@ -65,7 +66,6 @@ pub struct BaseConfig {
 
     pub chain: String,
     pub reth_datadir: Option<PathBuf>,
-    pub l2_reth_datadir: Option<PathBuf>,
     pub reth_db_path: Option<PathBuf>,
     pub reth_static_files_path: Option<PathBuf>,
 
@@ -94,6 +94,16 @@ pub struct BaseConfig {
     pub backtest_builders: Vec<String>,
     pub backtest_results_store_path: PathBuf,
     pub backtest_protect_bundle_signers: Vec<Address>,
+
+    // Layer2 related
+    #[serde_as(as = "Vec<EnvOrValue<String>>")]
+    pub l2_el_node_ipc_paths: Vec<EnvOrValue<String>>,
+
+    #[serde_as(as = "Vec<EnvOrValue<String>>")]
+    pub l2_reth_datadirs: Vec<EnvOrValue<String>>,
+
+    #[serde(skip)]
+    pub layer2_info: Option<Layer2Info>,
 }
 
 lazy_static! {
@@ -195,6 +205,7 @@ impl BaseConfig {
             extra_rpc: RpcModule::new(()),
             sink_factory,
             builders: Vec::new(),
+            layer2_info: self.layer2_info.clone(),
         })
     }
 
@@ -284,6 +295,24 @@ impl BaseConfig {
 
         Ok(path_expanded.parse()?)
     }
+
+    pub fn resolve_l2_paths(&self) -> eyre::Result<(Vec<String>, Vec<String>)> {
+        let ipc_paths = resolve_env_or_values(&self.l2_el_node_ipc_paths)?;
+        let data_dirs = resolve_env_or_values(&self.l2_reth_datadirs)?;
+        
+        if ipc_paths.len() != data_dirs.len() {
+            return Err(eyre::eyre!("Number of L2 IPC paths and data directories must match"));
+        }
+
+        Ok((ipc_paths, data_dirs))
+    }
+
+    pub async fn initialize_layer2_info(&mut self) -> eyre::Result<()> {
+        let (ipc_paths, data_dirs) = self.resolve_l2_paths()?;
+        self.layer2_info = Some(Layer2Info::new(ipc_paths, data_dirs).await?);
+        Ok(())
+    }
+
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -377,14 +406,12 @@ impl Default for BaseConfig {
             coinbase_secret_key: "".into(),
             flashbots_db: None,
             el_node_ipc_path: "/tmp/reth.ipc".parse().unwrap(),
-            l2_el_node_ipc_path: "/tmp/reth.ipc".parse().unwrap(),
             jsonrpc_server_port: DEFAULT_INCOMING_BUNDLES_PORT,
             jsonrpc_server_ip: None,
             ignore_cancellable_orders: true,
             ignore_blobs: false,
             chain: "mainnet".to_string(),
             reth_datadir: Some(DEFAULT_RETH_DB_PATH.parse().unwrap()),
-            l2_reth_datadir: Some(DEFAULT_RETH_DB_PATH.parse().unwrap()),
             reth_db_path: None,
             reth_static_files_path: None,
             blocklist_file_path: None,
@@ -401,9 +428,16 @@ impl Default for BaseConfig {
             live_builders: vec!["mgp-ordering".to_string(), "mp-ordering".to_string()],
             simulation_threads: 1,
             sbundle_mergeabe_signers: None,
+            //L2 related
+            l2_el_node_ipc_paths: vec!["/tmp/reth.ipc".into()],
+            l2_reth_datadirs: vec![DEFAULT_RETH_DB_PATH.into()],
+            // Initialize layer2_info as None
+            layer2_info: None,
         }
     }
 }
+
+
 
 /// Open reth db and DB should be opened once per process but it can be cloned and moved to different threads.
 pub fn create_provider_factory(

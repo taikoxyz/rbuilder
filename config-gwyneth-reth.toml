@@ -6,7 +6,8 @@ telemetry_ip = "0.0.0.0"
 chain = "/network-configs/genesis.json"
 # This shall be something like: "/tmp/reth-test-mjcfsdgE/"
 reth_datadir = ""
-l2_reth_datadir = ""
+# We can have multiple, separated by comma
+l2_reth_datadirs = [""]
 relay_secret_key = "5eae315483f028b5cdd5d1090ff0c7618b18737ea9bf3c35047189db22835c48"
 coinbase_secret_key = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
@@ -17,7 +18,8 @@ jsonrpc_server_port = 9646
 jsonrpc_server_ip = "0.0.0.0"
 # Not exactly the same because the random postfix is generated every time, but something like: "/tmp/reth.ipc-3ZTH1DJ4"
 el_node_ipc_path = ""
-l2_el_node_ipc_path = ""
+# We can have multiple, separated by comma
+l2_el_node_ipc_paths = [""]
 extra_data = "⚡🤖"
 
 dry_run = false

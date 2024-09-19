@@ -40,7 +40,7 @@ pub trait LiveBuilderConfig: std::fmt::Debug + serde::de::DeserializeOwned {
     fn version_for_telemetry(&self) -> Version;
     /// Desugared from async to future to keep clippy happy
     fn create_builder(
-        &self,
+        &mut self,
         cancellation_token: CancellationToken,
     ) -> impl std::future::Future<
         Output = eyre::Result<LiveBuilder<Arc<DatabaseEnv>, MevBoostSlotDataGenerator>>,
@@ -75,7 +75,7 @@ pub async fn run<ConfigType: LiveBuilderConfig>(
         }
     };
 
-    let config: ConfigType = load_config_toml_and_env(cli.config)?;
+    let mut config: ConfigType = load_config_toml_and_env(cli.config)?;
     config.base_config().setup_tracing_subsriber()?;
 
     let cancel = CancellationToken::new();
@@ -85,7 +85,7 @@ pub async fn run<ConfigType: LiveBuilderConfig>(
         config.version_for_telemetry(),
     )
     .await?;
-    let builder = config.create_builder(cancel.clone()).await?;
+    let mut builder = config.create_builder(cancel.clone()).await?;
 
     let ctrlc = tokio::spawn(async move {
         ctrl_c().await.unwrap_or_default();

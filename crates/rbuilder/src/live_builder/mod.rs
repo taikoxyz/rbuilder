@@ -1,4 +1,5 @@
 pub mod base_config;
+pub mod layer2_info; 
 pub mod block_output;
 pub mod building;
 pub mod cli;
@@ -39,7 +40,8 @@ use time::OffsetDateTime;
 use tokio::{sync::mpsc, task::spawn_blocking};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-use building::Layer2Info;
+
+use layer2_info::Layer2Info;
 
 /// Time the proposer have to propose a block from the beginning of the slot (https://www.paradigm.xyz/2023/04/mev-boost-ethereum-consensus Slot anatomy)
 const SLOT_PROPOSAL_DURATION: std::time::Duration = Duration::from_secs(4);
@@ -78,6 +80,7 @@ pub struct LiveBuilder<DB, BlocksSourceType: SlotSource> {
     pub sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
     pub builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>,
     pub extra_rpc: RpcModule<()>,
+    pub layer2_info: Option<Layer2Info>,
 }
 
 impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
@@ -87,8 +90,8 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         Self { extra_rpc, ..self }
     }
 
-    pub fn with_builders(self, builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>) -> Self {
-        Self { builders, ..self }
+    pub fn with_builders_and_layer2_info(self, builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>, layer2_info: Option<Layer2Info>,) -> Self {
+        Self { builders,layer2_info, ..self }
     }
 
     pub async fn run(self) -> eyre::Result<()> {
@@ -140,10 +143,19 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             println!("Dani debug: payload_attributes event received");
 
             // Example: Get the latest block from Gwyneth Exexe (chain ID 167010)
+            // ACCESS GWYNETH DATA BEGINS
             let gwyneth_chain_id = U256::from(167010);
-            if let Err(e) = get_layer2_infos(gwyneth_chain_id).await {
-                eprintln!("Error occurred: {:?}", e);
+            if let Some(layer2_info) = &self.layer2_info {
+                match layer2_info.get_latest_block(gwyneth_chain_id).await {
+                    Ok(Some(latest_block)) => println!("Latest Gwyneth block: {:?}", latest_block),
+                    Ok(None) => println!("No block found for Gwyneth"),
+                    Err(e) => eprintln!("Error getting Gwyneth block: {:?}", e),
+                }
+            } else {
+                println!("Layer2Info not initialized");
             }
+            // ACCESS GWYNETH DATA END
+
             if self.blocklist.contains(&payload.fee_recipient()) {
                 warn!(
                     slot = payload.slot(),
@@ -256,16 +268,18 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 async fn get_layer2_infos(chain_id: U256) -> Result<(), Box<dyn std::error::Error>> {
     // Let's just pretend this info is already set up somewhere as Layer2Info but for now
     // i'm just constructing it here.
-    let urls = vec![
-        "http://localhost:10110".to_string(),
-    ];
+    // let urls = vec![
+    //     "http://localhost:10110".to_string(),
+    // ];
 
-    let layer2_info = Layer2Info::new(urls).await?;
+    // let (ipc_paths, data_dirs) = self.resolve_l2_paths()?;
 
-    match layer2_info.get_latest_block(chain_id).await? {
-        Some(latest_block) => println!("Latest block: {:?}", latest_block),
-        None => println!("Chain ID not found"),
-    }
+    // let layer2_info = Some(Layer2Info::new(ipc_paths, data_dirs).await?);
+
+    // match layer2_info.get_latest_block(chain_id).await? {
+    //     Some(latest_block) => println!("Latest block: {:?}", latest_block),
+    //     None => println!("Chain ID not found"),
+    // }
 
     Ok(())
 }
