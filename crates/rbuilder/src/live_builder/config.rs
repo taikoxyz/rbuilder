@@ -317,6 +317,8 @@ impl LiveBuilderConfig for Config {
         );
 
         println!("Dani debug: reth_datadir is: {:?}",self.base_config.reth_datadir);
+        println!("Dani debug: reth_datadir_l2 is: {:?}",self.base_config.l2_reth_datadir);
+        println!("Dani debug: el_l2_node_ipc_path is: {:?}",self.base_config.l2_el_node_ipc_path);
         
         Ok(live_builder.with_builders(builders))
     }

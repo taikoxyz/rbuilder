@@ -56,6 +56,7 @@ pub struct BaseConfig {
     pub flashbots_db: Option<EnvOrValue<String>>,
 
     pub el_node_ipc_path: PathBuf,
+    pub l2_el_node_ipc_path: PathBuf,
     pub jsonrpc_server_port: u16,
     pub jsonrpc_server_ip: Option<String>,
 
@@ -64,6 +65,7 @@ pub struct BaseConfig {
 
     pub chain: String,
     pub reth_datadir: Option<PathBuf>,
+    pub l2_reth_datadir: Option<PathBuf>,
     pub reth_db_path: Option<PathBuf>,
     pub reth_static_files_path: Option<PathBuf>,
 
@@ -123,7 +125,6 @@ pub fn load_config_toml_and_env<T: serde::de::DeserializeOwned>(
             path.as_ref().to_string_lossy()
         )
     })?;
-
     let config: T = toml::from_str(&data).context("Config file parsing")?;
     Ok(config)
 }
@@ -376,12 +377,14 @@ impl Default for BaseConfig {
             coinbase_secret_key: "".into(),
             flashbots_db: None,
             el_node_ipc_path: "/tmp/reth.ipc".parse().unwrap(),
+            l2_el_node_ipc_path: "/tmp/reth.ipc".parse().unwrap(),
             jsonrpc_server_port: DEFAULT_INCOMING_BUNDLES_PORT,
             jsonrpc_server_ip: None,
             ignore_cancellable_orders: true,
             ignore_blobs: false,
             chain: "mainnet".to_string(),
             reth_datadir: Some(DEFAULT_RETH_DB_PATH.parse().unwrap()),
+            l2_reth_datadir: Some(DEFAULT_RETH_DB_PATH.parse().unwrap()),
             reth_db_path: None,
             reth_static_files_path: None,
             blocklist_file_path: None,
