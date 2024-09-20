@@ -8,7 +8,7 @@ use crate::{
 };
 use ahash::HashSet;
 use alloy_primitives::{Address, B256};
-use eyre::{eyre, Context};
+use eyre::{eyre, Context, Result};
 use jsonrpsee::RpcModule;
 use lazy_static::lazy_static;
 use reth::tasks::pool::BlockingTaskPool;
@@ -32,6 +32,8 @@ use std::{
 use tracing::warn;
 
 use super::SlotSource;
+
+use crate::live_builder::Layer2Info;
 
 /// Prefix for env variables in config
 const ENV_PREFIX: &str = "env:";
@@ -92,6 +94,13 @@ pub struct BaseConfig {
     pub backtest_builders: Vec<String>,
     pub backtest_results_store_path: PathBuf,
     pub backtest_protect_bundle_signers: Vec<Address>,
+
+    // Layer2 related
+    #[serde_as(as = "Vec<EnvOrValue<String>>")]
+    pub l2_el_node_ipc_paths: Vec<EnvOrValue<String>>,
+
+    #[serde_as(as = "Vec<EnvOrValue<String>>")]
+    pub l2_reth_datadirs: Vec<EnvOrValue<String>>,
 }
 
 lazy_static! {
@@ -123,7 +132,6 @@ pub fn load_config_toml_and_env<T: serde::de::DeserializeOwned>(
             path.as_ref().to_string_lossy()
         )
     })?;
-
     let config: T = toml::from_str(&data).context("Config file parsing")?;
     Ok(config)
 }
@@ -194,6 +202,7 @@ impl BaseConfig {
             extra_rpc: RpcModule::new(()),
             sink_factory,
             builders: Vec::new(),
+            layer2_info: None,
         })
     }
 
@@ -282,6 +291,17 @@ impl BaseConfig {
         let path_expanded = shellexpand::tilde(&path).to_string();
 
         Ok(path_expanded.parse()?)
+    }
+
+    pub fn resolve_l2_paths(&self) -> eyre::Result<(Vec<String>, Vec<String>)> {
+        let ipc_paths = resolve_env_or_values(&self.l2_el_node_ipc_paths)?;
+        let data_dirs = resolve_env_or_values(&self.l2_reth_datadirs)?;
+        
+        if ipc_paths.len() != data_dirs.len() {
+            return Err(eyre::eyre!("Number of L2 IPC paths and data directories must match"));
+        }
+
+        Ok((ipc_paths, data_dirs))
     }
 }
 
@@ -398,9 +418,14 @@ impl Default for BaseConfig {
             live_builders: vec!["mgp-ordering".to_string(), "mp-ordering".to_string()],
             simulation_threads: 1,
             sbundle_mergeabe_signers: None,
+            //L2 related
+            l2_el_node_ipc_paths: vec!["/tmp/reth.ipc".into()],
+            l2_reth_datadirs: vec![DEFAULT_RETH_DB_PATH.into()],
         }
     }
 }
+
+
 
 /// Open reth db and DB should be opened once per process but it can be cloned and moved to different threads.
 pub fn create_provider_factory(

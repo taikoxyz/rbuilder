@@ -26,7 +26,7 @@ use crate::{
             relay_submit::BuilderSinkFactory,
         },
         cli::LiveBuilderConfig,
-        payload_events::MevBoostSlotDataGenerator,
+        payload_events::MevBoostSlotDataGenerator, layer2_info::Layer2Info,
     },
     mev_boost::BLSBlockSigner,
     primitives::mev_boost::{MevBoostRelay, RelayConfig},
@@ -309,9 +309,13 @@ impl LiveBuilderConfig for Config {
             self.base_config.sbundle_mergeabe_signers(),
         );
 
-        println!("Dani debug: reth_datadir is: {:?}",self.base_config.reth_datadir);
-        
-        Ok(live_builder.with_builders(builders))
+        let (l2_ipc_paths, l2_data_dirs) = self.base_config.resolve_l2_paths()?;
+        println!("Dani debug: l2_el_node_ipc_paths are: {:?}", l2_ipc_paths);
+        println!("Dani debug: l2_reth_datadirs are: {:?}", l2_data_dirs);
+
+        let layer2_info = Layer2Info::new(l2_ipc_paths, l2_data_dirs).await?;
+
+        Ok(live_builder.with_builders_and_layer2_info(builders, Some(layer2_info)))
     }
 
     fn version_for_telemetry(&self) -> crate::utils::build_info::Version {
