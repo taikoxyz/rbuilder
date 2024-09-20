@@ -26,7 +26,7 @@ use crate::{
             relay_submit::BuilderSinkFactory,
         },
         cli::LiveBuilderConfig,
-        payload_events::MevBoostSlotDataGenerator,
+        payload_events::MevBoostSlotDataGenerator, layer2_info::Layer2Info,
     },
     mev_boost::BLSBlockSigner,
     primitives::mev_boost::{MevBoostRelay, RelayConfig},
@@ -284,7 +284,7 @@ impl LiveBuilderConfig for Config {
     }
     /// WARN: opens reth db
     async fn create_builder(
-        &mut self,
+        &self,
         cancellation_token: tokio_util::sync::CancellationToken,
     ) -> eyre::Result<super::LiveBuilder<Arc<DatabaseEnv>, MevBoostSlotDataGenerator>> {
         let (sink_factory, relays) = self.l1_config.create_relays_sink_factory(
@@ -316,18 +316,13 @@ impl LiveBuilderConfig for Config {
             self.base_config.sbundle_mergeabe_signers(),
         );
 
-        // Initialize Layer2Info if not already initialized
-        if self.base_config.layer2_info.is_none() {
-            self.base_config.initialize_layer2_info().await?;
-        }
-
-        let layer2_info = self.base_config.layer2_info.clone();
-
         let (l2_ipc_paths, l2_data_dirs) = self.base_config.resolve_l2_paths()?;
         println!("Dani debug: l2_el_node_ipc_paths are: {:?}", l2_ipc_paths);
         println!("Dani debug: l2_reth_datadirs are: {:?}", l2_data_dirs);
-        
-        Ok(live_builder.with_builders_and_layer2_info(builders, layer2_info))
+
+        let layer2_info = Layer2Info::new(l2_ipc_paths, l2_data_dirs).await?;
+
+        Ok(live_builder.with_builders_and_layer2_info(builders, Some(layer2_info)))
     }
 
     fn version_for_telemetry(&self) -> crate::utils::build_info::Version {

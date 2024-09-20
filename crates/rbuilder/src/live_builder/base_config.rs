@@ -101,9 +101,6 @@ pub struct BaseConfig {
 
     #[serde_as(as = "Vec<EnvOrValue<String>>")]
     pub l2_reth_datadirs: Vec<EnvOrValue<String>>,
-
-    #[serde(skip)]
-    pub layer2_info: Option<Layer2Info>,
 }
 
 lazy_static! {
@@ -205,7 +202,7 @@ impl BaseConfig {
             extra_rpc: RpcModule::new(()),
             sink_factory,
             builders: Vec::new(),
-            layer2_info: self.layer2_info.clone(),
+            layer2_info: None,
         })
     }
 
@@ -306,13 +303,6 @@ impl BaseConfig {
 
         Ok((ipc_paths, data_dirs))
     }
-
-    pub async fn initialize_layer2_info(&mut self) -> eyre::Result<()> {
-        let (ipc_paths, data_dirs) = self.resolve_l2_paths()?;
-        self.layer2_info = Some(Layer2Info::new(ipc_paths, data_dirs).await?);
-        Ok(())
-    }
-
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -431,8 +421,6 @@ impl Default for BaseConfig {
             //L2 related
             l2_el_node_ipc_paths: vec!["/tmp/reth.ipc".into()],
             l2_reth_datadirs: vec![DEFAULT_RETH_DB_PATH.into()],
-            // Initialize layer2_info as None
-            layer2_info: None,
         }
     }
 }
