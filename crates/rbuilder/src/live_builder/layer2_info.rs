@@ -7,7 +7,6 @@ use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactionsKind};
 use alloy_eips::BlockId;
 use alloy_pubsub::PubSubFrontend;
 use eyre::Result;
-use tracing::warn;
 
 #[derive(Debug)]
 pub struct Layer2Info {
