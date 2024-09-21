@@ -131,6 +131,10 @@ pub fn backtest_simulate_block<DB: Database + Clone + 'static>(
     ordering_config: OrderingBuilderConfig,
     input: BacktestSimulateBlockInput<'_, DB>,
 ) -> eyre::Result<(Block, CachedReads)> {
+
+    let mut provider_factories = HashMap::default();
+    provider_factories.insert(input.ctx.chain_spec.chain.id(), input.provider_factory.clone());
+
     let use_suggested_fee_recipient_as_coinbase = ordering_config.coinbase_payment;
     let state_provider = input
         .provider_factory
@@ -142,7 +146,7 @@ pub fn backtest_simulate_block<DB: Database + Clone + 'static>(
         &input.sbundle_mergeabe_signers,
     )?;
     let mut builder = OrderingBuilderContext::new(
-        input.provider_factory.clone(),
+        provider_factories.clone(),
         BlockingTaskPool::build()?,
         input.builder_name,
         input.ctx.clone(),
@@ -170,7 +174,7 @@ pub fn backtest_simulate_block<DB: Database + Clone + 'static>(
 
 #[derive(Debug)]
 pub struct OrderingBuilderContext<DB> {
-    provider_factory: ProviderFactory<DB>,
+    provider_factory: HashMap<u64, ProviderFactory<DB>>,
     root_hash_task_pool: BlockingTaskPool,
     builder_name: String,
     ctx: BlockBuildingContext,
@@ -187,7 +191,7 @@ pub struct OrderingBuilderContext<DB> {
 
 impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
     pub fn new(
-        provider_factory: ProviderFactory<DB>,
+        provider_factory: HashMap<u64, ProviderFactory<DB>>,
         root_hash_task_pool: BlockingTaskPool,
         builder_name: String,
         ctx: BlockBuildingContext,
@@ -238,7 +242,7 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
         let span = info_span!("build_run", build_attempt_id);
         let _guard = span.enter();
 
-        check_provider_factory_health(self.ctx.block(), &self.provider_factory)?;
+        check_provider_factory_health(self.ctx.block(), &self.provider_factory[&self.ctx.chain_spec.chain.id()])?;
 
         let build_start = Instant::now();
 
@@ -365,6 +369,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingAlgorithm<DB> for OrderingBuil
     }
 
     fn build_blocks(&self, input: BlockBuildingAlgorithmInput<DB>) {
+
         let live_input = LiveBuilderInput {
             provider_factory: input.provider_factory,
             root_hash_task_pool: self.root_hash_task_pool.clone(),

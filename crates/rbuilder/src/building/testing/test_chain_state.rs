@@ -70,7 +70,7 @@ pub struct TestChainState {
     mev_test_address: Address,   //NamedAddr::MevTest
     dummy_test_address: Address, //NamedAddr::Dummy
     blocklisted_address: Signer, //NamedAddr::BlockedAddress
-    chain_spec: Arc<ChainSpec>,
+    pub chain_spec: Arc<ChainSpec>,
     provider_factory: ProviderFactory<Arc<TempDatabase<DatabaseEnv>>>,
     block_building_context: BlockBuildingContext,
 }

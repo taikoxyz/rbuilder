@@ -8,6 +8,8 @@ use crate::{
     telemetry::add_sim_thread_utilisation_timings,
     utils::ProviderFactoryReopener,
 };
+use ahash::HashMap;
+use alloy_rlp::BufMut;
 use reth_db::database::Database;
 use reth_payload_builder::database::CachedReads;
 use std::{
@@ -24,7 +26,7 @@ use tracing::error;
 pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
     worker_id: usize,
     ctx: Arc<Mutex<CurrentSimulationContexts>>,
-    provider_factory: ProviderFactoryReopener<DB>,
+    provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
     global_cancellation: CancellationToken,
 ) {
     loop {
@@ -45,7 +47,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             }
         };
 
-        let provider_factory = match provider_factory.check_consistency_and_reopen_if_needed(
+        let provider_factory = match provider_factory[&1].check_consistency_and_reopen_if_needed(
             current_sim_context.block_ctx.block_env.number.to(),
         ) {
             Ok(provider_factory) => provider_factory,
@@ -73,7 +75,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                 }
             };
             let start_time = Instant::now();
-            let mut block_state = BlockState::new(state_provider).with_cached_reads(cached_reads);
+            let mut block_state = BlockState::new(state_provider, 1).with_cached_reads(cached_reads);
             let sim_result = simulate_order(
                 task.parents.clone(),
                 task.order,

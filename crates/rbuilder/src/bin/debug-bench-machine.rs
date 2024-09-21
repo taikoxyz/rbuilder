@@ -1,5 +1,6 @@
 //! App to benchmark/test the tx block execution.
 //! It loads the last landed block and re-executes all the txs in it.
+use ahash::HashMap;
 use alloy_primitives::{B256, U256};
 use clap::Parser;
 use itertools::Itertools;
@@ -115,7 +116,7 @@ async fn main() -> eyre::Result<()> {
     for _ in 0..cli.iters {
         let mut partial_block = PartialBlock::new(true, None);
         let mut block_state =
-            BlockState::new_arc(state_provider).with_cached_reads(cached_reads.unwrap_or_default());
+            BlockState::new_arc_single(state_provider, chain.chain.id()).with_cached_reads(cached_reads.unwrap_or_default());
         let build_time = Instant::now();
         partial_block.pre_block_call(&ctx, &mut block_state)?;
         for order in &sim_orders {
@@ -137,7 +138,7 @@ async fn main() -> eyre::Result<()> {
 
         build_times_mus.push(build_time.as_micros());
         finalize_time_mus.push(finalize_time.as_micros());
-        state_provider = block_state.into_provider();
+        state_provider = block_state.into_provider(chain.chain.id());
     }
     report_time_data("build", &build_times_mus);
     report_time_data("finalize", &finalize_time_mus);

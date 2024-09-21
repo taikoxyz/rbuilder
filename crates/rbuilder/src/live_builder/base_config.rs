@@ -31,7 +31,7 @@ use std::{
 };
 use tracing::warn;
 
-use super::SlotSource;
+use super::{layer2_info::create_gwyneth_providers, SlotSource};
 
 use crate::live_builder::Layer2Info;
 
@@ -159,6 +159,7 @@ impl BaseConfig {
         cancellation_token: tokio_util::sync::CancellationToken,
         sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
         slot_source: SlotSourceType,
+        gwyneth_chain_ids: Vec<u64>,
     ) -> eyre::Result<super::LiveBuilder<Arc<DatabaseEnv>, SlotSourceType>>
     where
         SlotSourceType: SlotSource,
@@ -168,6 +169,7 @@ impl BaseConfig {
             cancellation_token,
             sink_factory,
             slot_source,
+            gwyneth_chain_ids,
             provider_factory,
         )
         .await
@@ -179,6 +181,7 @@ impl BaseConfig {
         cancellation_token: tokio_util::sync::CancellationToken,
         sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
         slot_source: SlotSourceType,
+        gwyneth_chain_ids: Vec<u64>,
         provider_factory: ProviderFactoryReopener<Arc<DatabaseEnv>>,
     ) -> eyre::Result<super::LiveBuilder<Arc<DatabaseEnv>, SlotSourceType>>
     where
@@ -202,7 +205,7 @@ impl BaseConfig {
             extra_rpc: RpcModule::new(()),
             sink_factory,
             builders: Vec::new(),
-            layer2_info: None,
+            layer2_info: Layer2Info::<Arc<DatabaseEnv>>::new(gwyneth_chain_ids.clone(), create_gwyneth_providers(gwyneth_chain_ids)?).await?,
         })
     }
 

@@ -10,7 +10,9 @@ use crate::{
     live_builder::{payload_events::MevBoostSlotData, simulation::SlotOrderSimResults},
     utils::ProviderFactoryReopener,
 };
+use ahash::HashMap;
 use reth_db::database::Database;
+use reth_provider::ProviderFactory;
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace};
@@ -25,26 +27,26 @@ use super::{
 
 #[derive(Debug)]
 pub struct BlockBuildingPool<DB> {
-    provider_factory: ProviderFactoryReopener<DB>,
+    provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
     builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>,
     sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
-    orderpool_subscriber: order_input::OrderPoolSubscriber,
+    orderpool_subscribers: HashMap<u64, order_input::OrderPoolSubscriber>,
     order_simulation_pool: OrderSimulationPool<DB>,
 }
 
 impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
     pub fn new(
-        provider_factory: ProviderFactoryReopener<DB>,
+        provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
         builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>,
         sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
-        orderpool_subscriber: order_input::OrderPoolSubscriber,
+        orderpool_subscribers: HashMap<u64, order_input::OrderPoolSubscriber>,
         order_simulation_pool: OrderSimulationPool<DB>,
     ) -> Self {
         BlockBuildingPool {
             provider_factory,
             builders,
             sink_factory,
-            orderpool_subscriber,
+            orderpool_subscribers,
             order_simulation_pool,
         }
     }
@@ -65,18 +67,21 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
             cancel.cancel();
         });
 
-        let (orders_for_block, sink) = OrdersForBlock::new_with_sink();
         // add OrderReplacementManager to manage replacements and cancellations
-        let order_replacement_manager = OrderReplacementManager::new(Box::new(sink));
         // sink removal is automatic via OrderSink::is_alive false
-        let _block_sub = self.orderpool_subscriber.add_sink(
-            block_ctx.block_env.number.to(),
-            Box::new(order_replacement_manager),
-        );
+        let mut orders_for_blocks = HashMap::default();
+        for (chain_id, orderpool_subscriber) in self.orderpool_subscribers.iter_mut() {
+            let (orders_for_block, sink) = OrdersForBlock::new_with_sink();
+            let _block_sub = orderpool_subscriber.add_sink(
+                block_ctx.block_env.number.to(),
+                Box::new(OrderReplacementManager::new(Box::new(sink))),
+            );
+            orders_for_blocks.insert(*chain_id, orders_for_block);
+        }
 
         let simulations_for_block = self.order_simulation_pool.spawn_simulation_job(
             block_ctx.clone(),
-            orders_for_block,
+            orders_for_blocks,
             block_cancellation.clone(),
         );
         self.start_building_job(
@@ -100,22 +105,22 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
         let (broadcast_input, _) = broadcast::channel(10_000);
 
         let block_number = ctx.block_env.number.to::<u64>();
-        let provider_factory = match self
-            .provider_factory
-            .check_consistency_and_reopen_if_needed(block_number)
-        {
-            Ok(provider_factory) => provider_factory,
-            Err(err) => {
-                error!(?err, "Error while reopening provider factory");
-                return;
-            }
-        };
+        let provider_factories: HashMap<u64, ProviderFactory<DB>> = self
+            .provider_factory.iter().map(|(chain_id, provider_factory)| {
+                match provider_factory.check_consistency_and_reopen_if_needed(block_number)
+                {
+                    Ok(provider_factory) => (*chain_id, provider_factory),
+                    Err(err) => {
+                        panic!("Error while reopening provider factory");
+                    }
+                }
+            }).collect();
 
         for builder in self.builders.iter() {
             let builder_name = builder.name();
             debug!(block = block_number, builder_name, "Spawning builder job");
             let input = BlockBuildingAlgorithmInput::<DB> {
-                provider_factory: provider_factory.clone(),
+                provider_factory: provider_factories.clone(),
                 ctx: ctx.clone(),
                 input: broadcast_input.subscribe(),
                 sink: builder_sink.clone(),

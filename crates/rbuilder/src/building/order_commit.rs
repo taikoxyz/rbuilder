@@ -29,35 +29,44 @@ use revm::{
 };
 
 use crate::building::evm_inspector::{RBuilderEVMInspector, UsedStateTrace};
-use std::{collections::HashMap, sync::Arc};
+use std::{sync::Arc};
+use ahash::HashMap;
 use thiserror::Error;
 
 #[derive(Clone)]
 pub struct BlockState {
-    provider: Arc<dyn StateProvider>,
+    providers: HashMap<u64, Arc<dyn StateProvider>>,
     cached_reads: CachedReads,
     bundle_state: Option<BundleState>,
 }
 
 impl BlockState {
-    pub fn new(provider: StateProviderBox) -> Self {
-        Self::new_arc(Arc::from(provider))
+    pub fn new(provider: StateProviderBox, chain_id: u64) -> Self {
+        let mut providers = HashMap::default();
+        providers.insert(chain_id, provider.into());
+        Self::new_arc(providers)
     }
 
-    pub fn new_arc(provider: Arc<dyn StateProvider>) -> Self {
+    pub fn new_arc(providers: HashMap<u64, Arc<dyn StateProvider>>) -> Self {
         Self {
-            provider,
+            providers,
             cached_reads: CachedReads::default(),
             bundle_state: Some(BundleState::default()),
         }
     }
 
-    pub fn state_provider(&self) -> &dyn StateProvider {
-        &self.provider
+    pub fn new_arc_single(provider: Arc<dyn StateProvider>, chain_id: u64) -> Self {
+        let mut providers = HashMap::default();
+        providers.insert(chain_id, provider);
+        Self::new_arc(providers)
     }
 
-    pub fn into_provider(self) -> Arc<dyn StateProvider> {
-        self.provider
+    pub fn state_provider(&self, chain_id: u64) -> &dyn StateProvider {
+        &self.providers[&chain_id]
+    }
+
+    pub fn into_provider(self, chain_id: u64) -> Arc<dyn StateProvider> {
+        self.providers[&chain_id].clone()
     }
 
     pub fn with_cached_reads(mut self, cached_reads: CachedReads) -> Self {
@@ -70,8 +79,8 @@ impl BlockState {
         self
     }
 
-    pub fn into_parts(self) -> (CachedReads, BundleState, Arc<dyn StateProvider>) {
-        (self.cached_reads, self.bundle_state.unwrap(), self.provider)
+    pub fn into_parts(self) -> (CachedReads, BundleState, HashMap<u64, Arc<dyn StateProvider>>) {
+        (self.cached_reads, self.bundle_state.unwrap(), self.providers)
     }
 
     pub fn clone_bundle_and_cache(&self) -> (CachedReads, BundleState) {
@@ -82,7 +91,7 @@ impl BlockState {
     }
 
     pub fn new_db_ref(&mut self) -> BlockStateDBRef<impl Database<Error = ProviderError> + '_> {
-        let state_provider = StateProviderDatabase::new(&self.provider);
+        let state_provider = StateProviderDatabase::new(&self.providers[&1]);
         let cachedb = WrapDatabaseRef(self.cached_reads.as_db(state_provider));
         let bundle_state = self.bundle_state.take().unwrap();
         let db = State::builder()
@@ -775,7 +784,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             .map(|r| (r.body_idx, r.percent))
             .collect::<HashMap<_, _>>();
         let mut refundable_profit = U256::from(0);
-        let mut inner_payouts = HashMap::new();
+        let mut inner_payouts = HashMap::default();
         for (idx, body) in bundle.body.iter().enumerate() {
             match body {
                 ShareBundleBody::Tx(sbundle_tx) => {
@@ -915,7 +924,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         }
 
         // calculate gas limits
-        let mut payouts_promised = HashMap::new();
+        let mut payouts_promised = HashMap::default();
         for (to, refundable_value) in inner_payouts.drain() {
             let gas_limit =
                 match estimate_payout_gas_limit(to, ctx, self.state, insert.cumulative_gas_used) {

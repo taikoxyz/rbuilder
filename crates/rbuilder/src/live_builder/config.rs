@@ -300,7 +300,7 @@ impl LiveBuilderConfig for Config {
         );
         let live_builder = self
             .base_config
-            .create_builder(cancellation_token, sink_factory, payload_event)
+            .create_builder(cancellation_token, sink_factory, payload_event, vec![167010])
             .await?;
         let root_hash_task_pool = self.base_config.root_hash_task_pool()?;
         let builders = create_builders(
@@ -313,9 +313,7 @@ impl LiveBuilderConfig for Config {
         println!("Dani debug: l2_el_node_ipc_paths are: {:?}", l2_ipc_paths);
         println!("Dani debug: l2_reth_datadirs are: {:?}", l2_data_dirs);
 
-        let layer2_info = Layer2Info::new(l2_ipc_paths, l2_data_dirs).await?;
-
-        Ok(live_builder.with_builders_and_layer2_info(builders, Some(layer2_info)))
+        Ok(live_builder.with_builders_and_layer2_info(builders))
     }
 
     fn version_for_telemetry(&self) -> crate::utils::build_info::Version {

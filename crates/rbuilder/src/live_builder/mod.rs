@@ -22,7 +22,7 @@ use crate::{
     telemetry::inc_active_slots,
     utils::{error_storage::spawn_error_storage_writer, ProviderFactoryReopener, Signer},
 };
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use alloy_primitives::{Address, B256, U256};
 use building::BlockBuildingPool;
 use eyre::Context;
@@ -79,7 +79,7 @@ pub struct LiveBuilder<DB, BlocksSourceType: SlotSource> {
     pub sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
     pub builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>,
     pub extra_rpc: RpcModule<()>,
-    pub layer2_info: Option<Layer2Info>,
+    pub layer2_info: Layer2Info<DB>,
 }
 
 impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
@@ -89,8 +89,8 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         Self { extra_rpc, ..self }
     }
 
-    pub fn with_builders_and_layer2_info(self, builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>, layer2_info: Option<Layer2Info>,) -> Self {
-        Self { builders,layer2_info, ..self }
+    pub fn with_builders_and_layer2_info(self, builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>) -> Self {
+        Self { builders, ..self }
     }
 
     pub async fn run(self) -> eyre::Result<()> {
@@ -107,6 +107,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         let mut inner_jobs_handles = Vec::new();
         let mut payload_events_channel = self.blocks_source.recv_slot_channel();
 
+        let mut orderpool_subscribers = HashMap::default();
         let orderpool_subscriber = {
             let (handle, sub) = start_orderpool_jobs(
                 self.order_input_config,
@@ -118,20 +119,40 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             inner_jobs_handles.push(handle);
             sub
         };
+        orderpool_subscribers.insert(1, orderpool_subscriber);
+
+        let mut provider_factories: HashMap<u64, ProviderFactoryReopener<DB>> = HashMap::default();
+        provider_factories.insert(1, self.provider_factory.clone());
+
+        for (chain_id, node) in self.layer2_info.nodes.iter() {
+            let orderpool_subscriber = {
+                let (handle, sub) = start_orderpool_jobs(
+                    node.order_input_config.clone(),
+                    node.provider_factory.clone(),
+                    RpcModule::new(()),
+                    self.global_cancellation.clone(),
+                )
+                .await?;
+                inner_jobs_handles.push(handle);
+                sub
+            };
+            orderpool_subscribers.insert(*chain_id, orderpool_subscriber);
+            provider_factories.insert(*chain_id, node.provider_factory.clone());
+        }
 
         let order_simulation_pool = {
             OrderSimulationPool::new(
-                self.provider_factory.clone(),
+                provider_factories.clone(),
                 self.simulation_threads,
                 self.global_cancellation.clone(),
             )
         };
 
         let mut builder_pool = BlockBuildingPool::new(
-            self.provider_factory.clone(),
+            provider_factories,
             self.builders,
             self.sink_factory,
-            orderpool_subscriber,
+            orderpool_subscribers,
             order_simulation_pool,
         );
 
@@ -143,15 +164,11 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
             // Example: Get the latest block from Gwyneth Exexe (chain ID 167010)
             // ACCESS GWYNETH DATA BEGINS
-            let gwyneth_chain_id = U256::from(167010);
-            if let Some(layer2_info) = &self.layer2_info {
-                match layer2_info.get_latest_block(gwyneth_chain_id).await {
-                    Ok(Some(latest_block)) => println!("Latest Gwyneth block: {:?}", latest_block),
-                    Ok(None) => println!("No block found for Gwyneth"),
-                    Err(e) => eprintln!("Error getting Gwyneth block: {:?}", e),
-                }
-            } else {
-                println!("Layer2Info not initialized");
+            let gwyneth_chain_id = 167010;
+            match self.layer2_info.get_latest_block(gwyneth_chain_id).await {
+                Ok(Some(latest_block)) => println!("Latest Gwyneth block: {:?}", latest_block),
+                Ok(None) => println!("No block found for Gwyneth"),
+                Err(e) => eprintln!("Error getting Gwyneth block: {:?}", e),
             }
             // ACCESS GWYNETH DATA END
 
@@ -188,7 +205,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 let parent_block = payload.parent_block_hash();
                 println!("Parent block's hash: {:?}", parent_block);
                 let timestamp = payload.timestamp();
-                let provider_factory = self.provider_factory.provider_factory_unchecked();
+                let provider_factory = self.provider_factory.clone().provider_factory_unchecked();
                 match wait_for_block_header(parent_block, timestamp, &provider_factory).await {
                     Ok(header) => header,
                     Err(err) => {
@@ -198,7 +215,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 }
             };
 
-            println!("Dani debug: gather blopvk hashes");
+            println!("Dani debug: gather block hashes");
             {
                 let provider_factory = self.provider_factory.clone();
                 let block = payload.block();

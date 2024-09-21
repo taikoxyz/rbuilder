@@ -1,17 +1,18 @@
 use std::{
-    cmp::max,
-    time::{Duration, Instant},
+    cmp::max, sync::Arc, time::{Duration, Instant}
 };
 
+use ahash::HashMap;
 use alloy_primitives::U256;
 use reth::tasks::pool::BlockingTaskPool;
 use reth_db::database::Database;
 use reth_payload_builder::database::CachedReads;
 use reth_primitives::format_ether;
-use reth_provider::{BlockNumReader, ProviderFactory};
+use reth_provider::{BlockNumReader, ProviderFactory, StateProvider};
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace};
+use reth::primitives::{Header, Block as RethBlock};
 
 use crate::{
     building::{
@@ -91,7 +92,7 @@ pub struct BlockBuildingHelperFromDB<DB> {
     building_ctx: BlockBuildingContext,
     built_block_trace: BuiltBlockTrace,
     /// Needed to get the initial state and the final root hash calculation.
-    provider_factory: ProviderFactory<DB>,
+    provider_factories: HashMap<u64, ProviderFactory<DB>>,
     root_hash_task_pool: BlockingTaskPool,
     root_hash_mode: RootHashMode,
     /// Token to cancel in case of fatal error (if we believe that it's impossible to build for this block).
@@ -130,7 +131,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
     /// - Estimate payout tx cost.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        provider_factory: ProviderFactory<DB>,
+        provider_factories: HashMap<u64, ProviderFactory<DB>>,
         root_hash_task_pool: BlockingTaskPool,
         root_hash_mode: RootHashMode,
         building_ctx: BlockBuildingContext,
@@ -141,16 +142,21 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         cancel_on_fatal_error: CancellationToken,
     ) -> Result<Self, BlockBuildingHelperError> {
         // @Maybe an issue - we have 2 db txs here (one for hash and one for finalize)
-        let state_provider =
-            provider_factory.history_by_block_hash(building_ctx.attributes.parent)?;
-        let fee_recipient_balance_start = state_provider
+        let mut state_providers: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
+        for (chain_id, provider_factory) in provider_factories.iter() {
+            state_providers.insert(
+                *chain_id,
+                provider_factory.history_by_block_hash(building_ctx.attributes.parent)?.into(),
+            );
+        }
+        let fee_recipient_balance_start = state_providers[&building_ctx.chain_spec.chain.id()]
             .account_balance(building_ctx.attributes.suggested_fee_recipient)?
             .unwrap_or_default();
         let mut partial_block = PartialBlock::new(discard_txs, enforce_sorting)
             .with_tracer(GasUsedSimulationTracer::default());
         // Brecht: create local state for block building on top of latest blockchain state
         let mut block_state =
-            BlockState::new(state_provider).with_cached_reads(cached_reads.unwrap_or_default());
+            BlockState::new_arc(state_providers).with_cached_reads(cached_reads.unwrap_or_default());
         partial_block
             .pre_block_call(&building_ctx, &mut block_state)
             .map_err(|_| BlockBuildingHelperError::PreBlockCallFailed)?;
@@ -174,7 +180,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
             builder_name,
             building_ctx,
             built_block_trace: BuiltBlockTrace::new(),
-            provider_factory,
+            provider_factories,
             root_hash_task_pool,
             root_hash_mode,
             cancel_on_fatal_error,
@@ -320,54 +326,83 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
             .verify_bundle_consistency(&self.building_ctx.blocklist)?;
 
         let sim_gas_used = self.partial_block.tracer.used_gas;
-        let block_number = self.building_context().block();
-        let finalized_block = match self.partial_block.finalize(
-            &mut self.block_state,
-            &self.building_ctx,
-            self.provider_factory.clone(),
-            self.root_hash_mode,
-            self.root_hash_task_pool,
-        ) {
-            Ok(finalized_block) => finalized_block,
-            Err(err) => {
-                if err
-                    .to_string()
-                    .contains("failed to initialize consistent view")
-                {
-                    let last_block_number = self
-                        .provider_factory
-                        .last_block_number()
-                        .unwrap_or_default();
-                    debug!(
-                        block_number,
-                        last_block_number, "Can't build on this head, cancelling slot"
-                    );
-                    self.cancel_on_fatal_error.cancel();
-                }
-                return Err(BlockBuildingHelperError::FinalizeError(err));
+
+        let mut blocks = HashMap::default();
+        let mut cached_reads = CachedReads::default();
+        for (chain_id, provider_factory) in self.provider_factories.iter() {
+            if *chain_id == self.building_ctx.chain_spec.chain.id() {
+                continue;
             }
+
+            let block_number = self.building_context().block();
+            let finalized_block = match self.partial_block.clone().finalize(
+                &mut self.block_state,
+                &self.building_ctx,
+                provider_factory.clone(),
+                self.root_hash_mode,
+                self.root_hash_task_pool.clone(),
+            ) {
+                Ok(finalized_block) => finalized_block,
+                Err(err) => {
+                    if err
+                        .to_string()
+                        .contains("failed to initialize consistent view")
+                    {
+                        let last_block_number = provider_factory
+                            .last_block_number()
+                            .unwrap_or_default();
+                        debug!(
+                            block_number,
+                            last_block_number, "Can't build on this head, cancelling slot"
+                        );
+                        self.cancel_on_fatal_error.cancel();
+                    }
+                    return Err(BlockBuildingHelperError::FinalizeError(err));
+                }
+            };
+            self.built_block_trace.update_orders_sealed_at();
+
+            self.built_block_trace.finalize_time = start_time.elapsed();
+
+            Self::trace_finalized_block(
+                &finalized_block,
+                &self.builder_name,
+                &self.building_ctx,
+                &self.built_block_trace,
+                sim_gas_used,
+            );
+
+            let block = Block {
+                trace: self.built_block_trace.clone(),
+                sealed_block: finalized_block.sealed_block,
+                txs_blobs_sidecars: finalized_block.txs_blob_sidecars,
+                builder_name: self.builder_name.clone(),
+            };
+
+            blocks.insert(*chain_id, block);
+            cached_reads = finalized_block.cached_reads;
+        }
+
+        let header = Header::default();
+        let block = RethBlock {
+            header,
+            //body: self.executed_tx.into_iter().map(|t| t.tx.into()).collect(),
+            body: Vec::new(),
+            ommers: Vec::new(),
+            withdrawals: None,
+            requests: None,
         };
-        self.built_block_trace.update_orders_sealed_at();
-
-        self.built_block_trace.finalize_time = start_time.elapsed();
-
-        Self::trace_finalized_block(
-            &finalized_block,
-            &self.builder_name,
-            &self.building_ctx,
-            &self.built_block_trace,
-            sim_gas_used,
-        );
 
         let block = Block {
-            trace: self.built_block_trace,
-            sealed_block: finalized_block.sealed_block,
-            txs_blobs_sidecars: finalized_block.txs_blob_sidecars,
+            trace: self.built_block_trace.clone(),
+            sealed_block: block.seal_slow(),
+            txs_blobs_sidecars: Vec::new(),
             builder_name: self.builder_name.clone(),
         };
+
         Ok(FinalizeBlockResult {
             block,
-            cached_reads: finalized_block.cached_reads,
+            cached_reads,
         })
     }
 
