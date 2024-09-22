@@ -487,9 +487,11 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         gas_limit: u64,
         ctx: &BlockBuildingContext,
     ) -> Result<U256, InsertPayoutTxErr> {
-        self.coinbase_profit
-            .checked_sub(U256::from(gas_limit) * ctx.block_env.basefee)
-            .ok_or_else(|| InsertPayoutTxErr::ProfitTooLow)
+        // TODO(Brecht): revert
+        Ok(self.coinbase_profit)
+        //self.coinbase_profit
+        //    .checked_sub(U256::from(gas_limit) * ctx.block_env.basefee)
+        //    .ok_or_else(|| InsertPayoutTxErr::ProfitTooLow)
     }
 
     /// Inserts payout tx to ctx.attributes.suggested_fee_recipient (should be called at the end of the block)
