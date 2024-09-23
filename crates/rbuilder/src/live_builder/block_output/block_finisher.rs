@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use reth_primitives::SealedBlockWithSenders;
 use tracing::{trace, warn};
 
 use crate::building::builders::{
     block_building_helper::{BlockBuildingHelper, BlockBuildingHelperError},
-    UnfinishedBlockBuildingSink,
+    UnfinishedBlockBuildingSink, propose_block::ProposeBlockError,
 };
 
 use super::{
@@ -63,5 +64,10 @@ impl UnfinishedBlockBuildingSink for BlockFinisher {
 
     fn can_use_suggested_fee_recipient_as_coinbase(&self) -> bool {
         self.bidder.is_pay_to_coinbase_allowed()
+    }
+
+    fn finalize_block(&self, _block: SealedBlockWithSenders) -> Result<(), ProposeBlockError> {
+        // Empty implementation
+        Ok(())
     }
 }

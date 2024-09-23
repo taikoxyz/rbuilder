@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use crate::{
     building::{
         builders::{
-            BlockBuildingAlgorithm, BlockBuildingAlgorithmInput, UnfinishedBlockBuildingSinkFactory,
+            BlockBuildingAlgorithm, BlockBuildingAlgorithmInput, UnfinishedBlockBuildingSinkFactory, UnfinishedBlockBuildingSink, ProposingBlockSink, BlockProposer, block_building_helper::BlockBuildingHelper, propose_block::ProposeBlockError,
         },
         BlockBuildingContext,
     },
@@ -12,6 +12,7 @@ use crate::{
 };
 use ahash::HashMap;
 use reth_db::database::Database;
+use reth_primitives::SealedBlockWithSenders;
 use reth_provider::ProviderFactory;
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -32,6 +33,7 @@ pub struct BlockBuildingPool<DB> {
     sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
     orderpool_subscribers: HashMap<u64, order_input::OrderPoolSubscriber>,
     order_simulation_pool: OrderSimulationPool<DB>,
+    block_proposer: BlockProposer,
 }
 
 impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
@@ -41,6 +43,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
         sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
         orderpool_subscribers: HashMap<u64, order_input::OrderPoolSubscriber>,
         order_simulation_pool: OrderSimulationPool<DB>,
+        block_proposer: BlockProposer,
     ) -> Self {
         BlockBuildingPool {
             provider_factory,
@@ -48,6 +51,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
             sink_factory,
             orderpool_subscribers,
             order_simulation_pool,
+            block_proposer,
         }
     }
 
@@ -101,7 +105,15 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
         cancel: CancellationToken,
     ) {
         // Brecht: start building
-        let builder_sink = self.sink_factory.create_sink(slot_data, cancel.clone());
+        let inner_sink = self.sink_factory.create_sink(slot_data.clone(), cancel.clone());
+        let proposer = self.block_proposer.clone();
+    
+        // Wrap the inner sink with our ProposingBlockSink
+        let builder_sink = Arc::new(ProposingBlockSink {
+            inner: inner_sink,
+            proposer,
+        });
+
         let (broadcast_input, _) = broadcast::channel(10_000);
 
         let block_number = ctx.block_env.number.to::<u64>();

@@ -13,7 +13,7 @@ use rbuilder::{
         builders::{
             block_building_helper::{BlockBuildingHelper, BlockBuildingHelperFromDB},
             BlockBuildingAlgorithm, BlockBuildingAlgorithmInput, OrderConsumer,
-            UnfinishedBlockBuildingSink, UnfinishedBlockBuildingSinkFactory,
+            UnfinishedBlockBuildingSink, UnfinishedBlockBuildingSinkFactory, propose_block::ProposeBlockError,
         },
         BlockBuildingContext, SimulatedOrderStore,
     },
@@ -36,6 +36,7 @@ use rbuilder::{
 use reth::{providers::ProviderFactory, tasks::pool::BlockingTaskPool};
 use reth_chainspec::MAINNET;
 use reth_db::{database::Database, DatabaseEnv};
+use reth_primitives::SealedBlockWithSenders;
 use tokio::{signal::ctrl_c, sync::broadcast};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, level_filters::LevelFilter};
@@ -137,6 +138,11 @@ impl UnfinishedBlockBuildingSink for TracingBlockSink {
 
     fn can_use_suggested_fee_recipient_as_coinbase(&self) -> bool {
         false
+    }
+
+    fn finalize_block(&self, _block: SealedBlockWithSenders) -> Result<(), ProposeBlockError> {
+        // Empty implementation
+        Ok(())
     }
 }
 

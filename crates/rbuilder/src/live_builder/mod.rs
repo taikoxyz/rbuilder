@@ -9,6 +9,8 @@ pub mod payload_events;
 pub mod simulation;
 mod watchdog;
 
+use crate::building::builders::BlockProposer;
+
 use crate::{
     building::{
         builders::{BlockBuildingAlgorithm, UnfinishedBlockBuildingSinkFactory},
@@ -148,12 +150,16 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             )
         };
 
+        //Extend constructor with params if/when needed
+        let block_proposer = BlockProposer::new();
+
         let mut builder_pool = BlockBuildingPool::new(
             provider_factories,
             self.builders,
             self.sink_factory,
             orderpool_subscribers,
             order_simulation_pool,
+            block_proposer
         );
 
         let watchdog_sender = spawn_watchdog_thread(self.watchdog_timeout)?;

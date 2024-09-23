@@ -1,6 +1,9 @@
 //! builders is a subprocess that builds a block
 pub mod block_building_helper;
 pub mod ordering_builder;
+pub mod propose_block;
+
+pub use propose_block::BlockProposer;
 
 use crate::{
     building::{BlockBuildingContext, BlockOrders, BuiltBlockTrace, SimulatedOrderSink, Sorting},
@@ -18,10 +21,13 @@ use reth::{
 };
 use reth_db::database::Database;
 use reth_payload_builder::database::CachedReads;
+use reth_primitives::SealedBlockWithSenders;
 use std::sync::Arc;
 use tokio::sync::{broadcast, broadcast::error::TryRecvError};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
+
+use self::propose_block::ProposeBlockError;
 
 /// Block we built
 #[derive(Debug, Clone)]
@@ -185,7 +191,8 @@ impl<DB: Database + Clone> OrderIntakeConsumer<DB> {
 /// Output of the BlockBuildingAlgorithm.
 pub trait UnfinishedBlockBuildingSink: std::fmt::Debug + Send + Sync {
     fn new_block(&self, block: Box<dyn BlockBuildingHelper>);
-
+    // When block is built, is passed to new_block(), we need to "intercept" it and propose to L1.
+    fn finalize_block(&self, block: SealedBlockWithSenders) -> Result<(), ProposeBlockError>;
     /// The sink may not like blocks where coinbase is the final fee_recipient (eg: this does not allows us to take profit!).
     /// Not sure this is the right place for this func. Might move somewhere else.
     fn can_use_suggested_fee_recipient_as_coinbase(&self) -> bool;
@@ -244,4 +251,31 @@ pub fn handle_building_error(err: eyre::Report) -> bool {
         }
     }
     true
+}
+#[derive(Debug)]
+pub struct ProposingBlockSink {
+    pub inner: Arc<dyn UnfinishedBlockBuildingSink>,
+    pub proposer: BlockProposer,
+}
+
+impl UnfinishedBlockBuildingSink for ProposingBlockSink {
+    fn new_block(&self, block: Box<dyn BlockBuildingHelper>) {
+        self.inner.new_block(block);
+    }
+
+    fn finalize_block(&self, block: SealedBlockWithSenders) -> Result<(), ProposeBlockError> {
+        // Propose the block
+        match self.proposer.propose_block(&block) {
+            Ok(_) => {},
+            Err(e) => return Err(ProposeBlockError::ProposalFailed(e.to_string())),
+        }
+        
+        // Call the inner sink's finalize_block method if it exists
+        self.inner.finalize_block(block)
+    }
+
+    fn can_use_suggested_fee_recipient_as_coinbase(&self) -> bool {
+        //Dummy
+        true
+    }
 }
