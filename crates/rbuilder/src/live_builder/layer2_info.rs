@@ -92,7 +92,7 @@ impl<DB: Clone> Layer2Info<DB> {
                     true,
                     false,
                     Path::new(&format!("{}-{}", ipc_base, chain_id).to_owned()).into(),
-                    9646,
+                    9646 + ((chain_id + 1) - 167010) as u16,
                     Ipv4Addr::new(0, 0, 0, 0),
                     4096,
                     Duration::from_millis(50),
