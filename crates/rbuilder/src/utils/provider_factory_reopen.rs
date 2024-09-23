@@ -3,7 +3,7 @@ use reth::providers::{BlockHashReader, ChainSpecProvider, ProviderFactory};
 use reth_chainspec::ChainSpec;
 use reth_db::database::Database;
 use reth_errors::RethResult;
-use reth_provider::{providers::StaticFileProvider, StaticFileProviderFactory};
+use reth_provider::{providers::StaticFileProvider, BlockNumReader, StaticFileProviderFactory};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -35,7 +35,7 @@ impl<DB: Database + Clone> ProviderFactoryReopener<DB> {
             provider_factory: Arc::new(Mutex::new(provider_factory)),
             chain_spec,
             static_files_path,
-            testing_mode: false,
+            testing_mode: true,
         })
     }
 
