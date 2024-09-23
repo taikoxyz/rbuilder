@@ -157,6 +157,7 @@ impl L1Config {
     pub fn create_relays(&self) -> eyre::Result<Vec<MevBoostRelay>> {
         let mut results = Vec::new();
         for relay in &self.relays {
+            println!("Dani debug - create relays: {:?}", relay);
             results.push(MevBoostRelay::from_config(relay)?);
         }
         Ok(results)

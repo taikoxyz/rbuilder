@@ -1,4 +1,7 @@
 use crate::mev_boost::{RelayClient, SubmitBlockErr, SubmitBlockRequest};
+
+use crate::proposing::BlockProposer;
+
 use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use serde::{Deserialize, Deserializer};
 use std::{env, sync::Arc, time::Duration};
@@ -28,6 +31,10 @@ pub struct RelayConfig {
     pub api_token_header: Option<String>,
     #[serde(default)]
     pub interval_between_submissions_ms: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_env_var")]
+    pub l1_rpc_url: Option<String>,
+    pub l1_proposer_pk: Option<String>,
+    pub l1_smart_contract_address: Option<String>,
 }
 
 impl RelayConfig {
@@ -62,6 +69,7 @@ pub struct MevBoostRelay {
     /// Relay accepts optimistic submissions.
     pub optimistic: bool,
     pub submission_rate_limiter: Option<Arc<DefaultDirectRateLimiter>>,
+    pub block_proposer: Option<BlockProposer>,
 }
 
 impl MevBoostRelay {
@@ -82,6 +90,20 @@ impl MevBoostRelay {
             ))
         });
 
+        let block_proposer = if let (Some(l1_rpc_url), Some(l1_smart_contract_address), Some(l1_proposer_pk)) = (
+            &config.l1_rpc_url,
+            &config.l1_smart_contract_address,
+            &config.l1_proposer_pk
+        ) {
+            Some(BlockProposer::new(
+                l1_rpc_url.clone(),
+                l1_smart_contract_address.clone(),
+                l1_proposer_pk.clone(),
+            )?)
+        } else {
+            None
+        };
+
         Ok(MevBoostRelay {
             id: config.name.to_string(),
             client,
@@ -90,6 +112,7 @@ impl MevBoostRelay {
             use_gzip_for_submit: config.use_gzip_for_submit,
             optimistic: config.optimistic,
             submission_rate_limiter,
+            block_proposer: block_proposer,
         })
     }
 
@@ -97,6 +120,17 @@ impl MevBoostRelay {
     // Can implement a custom "relay" for gwyneth that has this behaviour
     pub async fn submit_block(&self, data: &SubmitBlockRequest) -> Result<(), SubmitBlockErr> {
         println!("Brecht: L1 propose!");
+
+        // Handle the Option<BlockProposer>
+        if let Some(proposer) = &self.block_proposer {
+            // Call propose_block on the BlockProposer
+            // Dani: Data is type &SealedBlockWithSenders ?
+            // proposer.propose_block(data).await?;
+        } else {
+            // Handle the case where there's no BlockProposer
+            println!("No L1 block proposer configured");
+        }
+
         self.client
             .submit_block(data, self.use_ssz_for_submit, self.use_gzip_for_submit)
             .await
