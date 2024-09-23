@@ -55,7 +55,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
     pub fn start_block_building(
         &mut self,
         payload: payload_events::MevBoostSlotData,
-        block_ctx: BlockBuildingContext,
+        block_ctx: HashMap<u64, BlockBuildingContext>,
         global_cancellation: CancellationToken,
         max_time_to_build: Duration,
     ) {
@@ -73,7 +73,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
         for (chain_id, orderpool_subscriber) in self.orderpool_subscribers.iter_mut() {
             let (orders_for_block, sink) = OrdersForBlock::new_with_sink();
             let _block_sub = orderpool_subscriber.add_sink(
-                block_ctx.block_env.number.to(),
+                block_ctx[chain_id].block_env.number.to(),
                 Box::new(OrderReplacementManager::new(Box::new(sink))),
             );
             orders_for_blocks.insert(*chain_id, orders_for_block);
@@ -95,7 +95,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
     /// Per each BlockBuildingAlgorithm creates BlockBuildingAlgorithmInput and Sinks and spawn a task to run it
     fn start_building_job(
         &mut self,
-        ctx: BlockBuildingContext,
+        ctx: HashMap<u64, BlockBuildingContext>,
         slot_data: MevBoostSlotData,
         input: SlotOrderSimResults,
         cancel: CancellationToken,
@@ -104,9 +104,9 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
         let builder_sink = self.sink_factory.create_sink(slot_data, cancel.clone());
         let (broadcast_input, _) = broadcast::channel(10_000);
 
-        let block_number = ctx.block_env.number.to::<u64>();
         let provider_factories: HashMap<u64, ProviderFactory<DB>> = self
             .provider_factory.iter().map(|(chain_id, provider_factory)| {
+                let block_number = ctx[chain_id].block_env.number.to::<u64>();
                 match provider_factory.check_consistency_and_reopen_if_needed(block_number)
                 {
                     Ok(provider_factory) => (*chain_id, provider_factory),
@@ -117,8 +117,8 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
             }).collect();
 
         for builder in self.builders.iter() {
-            let builder_name = builder.name();
-            debug!(block = block_number, builder_name, "Spawning builder job");
+            //let builder_name = builder.name();
+            //debug!(block = block_number, builder_name, "Spawning builder job");
             let input = BlockBuildingAlgorithmInput::<DB> {
                 provider_factory: provider_factories.clone(),
                 ctx: ctx.clone(),
@@ -129,7 +129,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
             let builder = builder.clone();
             tokio::task::spawn_blocking(move || {
                 builder.build_blocks(input);
-                debug!(block = block_number, builder_name, "Stopped builder job");
+                //debug!(block = block_number, builder_name, "Stopped builder job");
             });
         }
 

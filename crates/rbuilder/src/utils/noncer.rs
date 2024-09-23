@@ -17,11 +17,11 @@ pub struct NonceCache<DB> {
     // We have to use Arc<Mutex here because Rc are not Send (so can't be used in futures)
     // and borrows don't work when nonce cache is a field in a struct.
     cache: Arc<Mutex<HashMap<Address, u64>>>,
-    block: B256,
+    block: HashMap<u64, B256>,
 }
 
 impl<DB: Database> NonceCache<DB> {
-    pub fn new(provider_factory: HashMap<u64, ProviderFactory<DB>>, block: B256) -> Self {
+    pub fn new(provider_factory: HashMap<u64, ProviderFactory<DB>>, block: HashMap<u64, B256>) -> Self {
         Self {
             provider_factory,
             cache: Arc::new(Mutex::new(HashMap::default())),
@@ -32,7 +32,7 @@ impl<DB: Database> NonceCache<DB> {
     pub fn get_ref(&self) -> ProviderResult<NonceCacheRef> {
         let mut states = HashMap::default();
         for (chain_id, provider_factory) in self.provider_factory.iter() {
-            states.insert(*chain_id, provider_factory.history_by_block_hash(self.block)?);
+            states.insert(*chain_id, provider_factory.history_by_block_hash(self.block[chain_id])?);
         }
         Ok(NonceCacheRef {
             states,

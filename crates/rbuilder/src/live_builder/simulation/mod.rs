@@ -28,7 +28,7 @@ type BlockContextId = u64;
 /// Struct representing the need of order simulation for a particular block.
 #[derive(Debug, Clone)]
 pub struct SimulationContext {
-    pub block_ctx: BlockBuildingContext,
+    pub block_ctx: HashMap<u64, BlockBuildingContext>,
     /// Simulation requests come in through this channel.
     pub requests: flume::Receiver<SimulationRequest>,
     /// Simulation results go out through this channel.
@@ -101,7 +101,7 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
     /// @Pending: Not properly working to be used with several blocks at the same time (forks!).
     pub fn spawn_simulation_job(
         &self,
-        ctx: BlockBuildingContext,
+        ctx: HashMap<u64, BlockBuildingContext>,
         input: HashMap<u64, OrdersForBlock>,
         block_cancellation: CancellationToken,
     ) -> SlotOrderSimResults {
@@ -111,12 +111,12 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
 
         let current_contexts = Arc::clone(&self.current_contexts);
         let block_context: BlockContextId = gen_uid();
-        let span = info_span!("sim_ctx", block = ctx.block_env.number.to::<u64>(), parent = ?ctx.attributes.parent);
+        //let span = info_span!("sim_ctx", block = ctx.block_env.number.to::<u64>(), parent = ?ctx.attributes.parent);
 
         let handle = tokio::spawn(
             async move {
                 for (_chain_id, new_order_sub) in input {
-                    let sim_tree = SimTree::new(providers.clone(), ctx.attributes.parent);
+                    let sim_tree = SimTree::new(providers.clone(), ctx.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect());
                     let new_order_sub = new_order_sub.new_order_sub;
                     let (sim_req_sender, sim_req_receiver) = flume::unbounded();
                     let (sim_results_sender, sim_results_receiver) = mpsc::channel(1024);
@@ -147,7 +147,8 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
                     }
                 }
             }
-            .instrument(span),
+            //.instrument(span)
+            ,
         );
 
         {
@@ -203,7 +204,7 @@ mod tests {
         orders_for_blocks.insert(test_context.chain_spec.chain.id(), orders_for_block);
         orders_for_blocks.insert(test_context.chain_spec.chain.id() + 1, orders_for_block2);
         let mut sim_results = sim_pool.spawn_simulation_job(
-            test_context.block_building_context().clone(),
+            test_context.block_building_context_map(),
             orders_for_blocks,
             cancel.clone(),
         );

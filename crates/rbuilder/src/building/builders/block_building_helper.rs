@@ -89,7 +89,7 @@ pub struct BlockBuildingHelperFromDB<DB> {
     /// Name of the builder that pregenerated this block.
     /// Might be ambiguous if several building parts were involved...
     builder_name: String,
-    building_ctx: BlockBuildingContext,
+    building_ctx: HashMap<u64, BlockBuildingContext>,
     built_block_trace: BuiltBlockTrace,
     /// Needed to get the initial state and the final root hash calculation.
     provider_factories: HashMap<u64, ProviderFactory<DB>>,
@@ -97,6 +97,7 @@ pub struct BlockBuildingHelperFromDB<DB> {
     root_hash_mode: RootHashMode,
     /// Token to cancel in case of fatal error (if we believe that it's impossible to build for this block).
     cancel_on_fatal_error: CancellationToken,
+    origin_chain_id: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -134,23 +135,29 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         provider_factories: HashMap<u64, ProviderFactory<DB>>,
         root_hash_task_pool: BlockingTaskPool,
         root_hash_mode: RootHashMode,
-        building_ctx: BlockBuildingContext,
+        building_ctx: HashMap<u64, BlockBuildingContext>,
         cached_reads: Option<CachedReads>,
         builder_name: String,
         discard_txs: bool,
         enforce_sorting: Option<Sorting>,
         cancel_on_fatal_error: CancellationToken,
     ) -> Result<Self, BlockBuildingHelperError> {
+        let mut origin_chain_id = 0;
+
         // @Maybe an issue - we have 2 db txs here (one for hash and one for finalize)
         let mut state_providers: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
         for (chain_id, provider_factory) in provider_factories.iter() {
             state_providers.insert(
                 *chain_id,
-                provider_factory.history_by_block_hash(building_ctx.attributes.parent)?.into(),
+                provider_factory.history_by_block_hash(building_ctx[chain_id].attributes.parent)?.into(),
             );
+            if *chain_id > origin_chain_id {
+                origin_chain_id = *chain_id;
+            }
         }
-        let fee_recipient_balance_start = state_providers[&building_ctx.chain_spec.chain.id()]
-            .account_balance(building_ctx.attributes.suggested_fee_recipient)?
+
+        let fee_recipient_balance_start = state_providers[&building_ctx[&origin_chain_id].chain_spec.chain.id()]
+            .account_balance(building_ctx[&origin_chain_id].attributes.suggested_fee_recipient)?
             .unwrap_or_default();
         let mut partial_block = PartialBlock::new(discard_txs, enforce_sorting)
             .with_tracer(GasUsedSimulationTracer::default());
@@ -158,14 +165,14 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         let mut block_state =
             BlockState::new_arc(state_providers).with_cached_reads(cached_reads.unwrap_or_default());
         partial_block
-            .pre_block_call(&building_ctx, &mut block_state)
+            .pre_block_call(&building_ctx[&origin_chain_id], &mut block_state)
             .map_err(|_| BlockBuildingHelperError::PreBlockCallFailed)?;
-        let payout_tx_gas = if building_ctx.coinbase_is_suggested_fee_recipient() {
+        let payout_tx_gas = if building_ctx[&origin_chain_id].coinbase_is_suggested_fee_recipient() {
             None
         } else {
             let payout_tx_gas = estimate_payout_gas_limit(
-                building_ctx.attributes.suggested_fee_recipient,
-                &building_ctx,
+                building_ctx[&origin_chain_id].attributes.suggested_fee_recipient,
+                &building_ctx[&origin_chain_id],
                 &mut block_state,
                 0,
             )?;
@@ -184,6 +191,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
             root_hash_task_pool,
             root_hash_mode,
             cancel_on_fatal_error,
+            origin_chain_id,
         })
     }
 
@@ -237,7 +245,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
             match self.partial_block.insert_proposer_payout_tx(
                 payout_tx_gas,
                 payout_tx_value,
-                &self.building_ctx,
+                &self.building_ctx[&self.origin_chain_id],
                 &mut self.block_state,
             ) {
                 Ok(()) => (payout_tx_value, self.true_block_value()?),
@@ -253,7 +261,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         // we check the fee_recipient delta and make our bid include that! This is supposed to be what the relay will check.
         let fee_recipient_balance_after = self
             .block_state
-            .balance(self.building_ctx.attributes.suggested_fee_recipient)?;
+            .balance(self.building_ctx[&self.origin_chain_id].attributes.suggested_fee_recipient)?;
         let fee_recipient_balance_diff = fee_recipient_balance_after
             .checked_sub(self._fee_recipient_balance_start)
             .unwrap_or_default();
@@ -271,7 +279,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
     ) -> Result<Result<&ExecutionResult, ExecutionError>, CriticalCommitOrderError> {
         let result =
             self.partial_block
-                .commit_order(order, &self.building_ctx, &mut self.block_state);
+                .commit_order(order, &self.building_ctx[&self.origin_chain_id], &mut self.block_state);
         match result {
             Ok(ok_result) => match ok_result {
                 Ok(res) => {
@@ -297,14 +305,14 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
     }
 
     fn can_add_payout_tx(&self) -> bool {
-        !self.building_ctx.coinbase_is_suggested_fee_recipient()
+        !self.building_ctx[&self.origin_chain_id].coinbase_is_suggested_fee_recipient()
     }
 
     fn true_block_value(&self) -> Result<U256, BlockBuildingHelperError> {
         if let Some(payout_tx_gas) = self.payout_tx_gas {
             Ok(self
                 .partial_block
-                .get_proposer_payout_tx_value(payout_tx_gas, &self.building_ctx)?)
+                .get_proposer_payout_tx_value(payout_tx_gas, &self.building_ctx[&self.origin_chain_id])?)
         } else {
             Ok(self.partial_block.coinbase_profit)
         }
@@ -315,7 +323,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         mut self: Box<Self>,
         payout_tx_value: Option<U256>,
     ) -> Result<FinalizeBlockResult, BlockBuildingHelperError> {
-        if payout_tx_value.is_some() && self.building_ctx.coinbase_is_suggested_fee_recipient() {
+        if payout_tx_value.is_some() && self.building_ctx[&self.origin_chain_id].coinbase_is_suggested_fee_recipient() {
             return Err(BlockBuildingHelperError::PayoutTxNotAllowed);
         }
         let start_time = Instant::now();
@@ -323,21 +331,21 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         self.finalize_block_execution(payout_tx_value)?;
         // This could be moved outside of this func (pre finalize) since I don´t think the payout tx can change much.
         self.built_block_trace
-            .verify_bundle_consistency(&self.building_ctx.blocklist)?;
+            .verify_bundle_consistency(&self.building_ctx[&self.origin_chain_id].blocklist)?;
 
         let sim_gas_used = self.partial_block.tracer.used_gas;
 
         let mut blocks = HashMap::default();
         let mut cached_reads = CachedReads::default();
         for (chain_id, provider_factory) in self.provider_factories.iter() {
-            if *chain_id == self.building_ctx.chain_spec.chain.id() {
+            if *chain_id == self.building_ctx[&self.origin_chain_id].chain_spec.chain.id() {
                 continue;
             }
 
             let block_number = self.building_context().block();
             let finalized_block = match self.partial_block.clone().finalize(
                 &mut self.block_state,
-                &self.building_ctx,
+                &self.building_ctx[&self.origin_chain_id],
                 provider_factory.clone(),
                 self.root_hash_mode,
                 self.root_hash_task_pool.clone(),
@@ -367,7 +375,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
             Self::trace_finalized_block(
                 &finalized_block,
                 &self.builder_name,
-                &self.building_ctx,
+                &self.building_ctx[&self.origin_chain_id],
                 &self.built_block_trace,
                 sim_gas_used,
             );
@@ -415,6 +423,6 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
     }
 
     fn building_context(&self) -> &BlockBuildingContext {
-        &self.building_ctx
+        &self.building_ctx[&self.origin_chain_id]
     }
 }

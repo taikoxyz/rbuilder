@@ -1,4 +1,4 @@
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use alloy_primitives::{keccak256, utils::parse_ether, Address, BlockHash, Bytes, B256, U256};
 use lazy_static::lazy_static;
 use reth::{
@@ -215,6 +215,12 @@ impl TestChainState {
     }
     pub fn block_building_context(&self) -> &BlockBuildingContext {
         &self.block_building_context
+    }
+
+    pub fn block_building_context_map(&self) -> HashMap<u64, BlockBuildingContext> {
+        let mut map = HashMap::default();
+        map.insert(self.chain_spec.chain.id(), self.block_building_context().clone());
+        map
     }
 
     pub fn provider_factory(&self) -> &ProviderFactory<Arc<TempDatabase<DatabaseEnv>>> {

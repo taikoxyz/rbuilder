@@ -191,7 +191,7 @@ impl DummyBuildingAlgorithm {
         &self,
         orders: Vec<SimulatedOrder>,
         provider_factory: HashMap<u64, ProviderFactory<DB>>,
-        ctx: &BlockBuildingContext,
+        ctx: &HashMap<u64, BlockBuildingContext>,
     ) -> eyre::Result<Box<dyn BlockBuildingHelper>> {
         let mut block_building_helper = BlockBuildingHelperFromDB::new(
             provider_factory.clone(),

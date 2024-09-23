@@ -37,7 +37,7 @@ pub struct Block {
 pub struct LiveBuilderInput<DB: Database> {
     pub provider_factory: HashMap<u64, ProviderFactory<DB>>,
     pub root_hash_task_pool: BlockingTaskPool,
-    pub ctx: BlockBuildingContext,
+    pub ctx: HashMap<u64, BlockBuildingContext>,
     pub input: broadcast::Receiver<SimulatedOrderCommand>,
     pub sink: Arc<dyn UnfinishedBlockBuildingSink>,
     pub builder_name: String,
@@ -117,7 +117,7 @@ impl<DB: Database + Clone> OrderIntakeConsumer<DB> {
     pub fn new(
         provider_factory: HashMap<u64, ProviderFactory<DB>>,
         orders: broadcast::Receiver<SimulatedOrderCommand>,
-        parent_block: B256,
+        parent_block: HashMap<u64, B256>,
         sorting: Sorting,
         sbundle_merger_selected_signers: &[Address],
     ) -> Self {
@@ -194,7 +194,7 @@ pub trait UnfinishedBlockBuildingSink: std::fmt::Debug + Send + Sync {
 #[derive(Debug)]
 pub struct BlockBuildingAlgorithmInput<DB: Database> {
     pub provider_factory: HashMap<u64, ProviderFactory<DB>>,
-    pub ctx: BlockBuildingContext,
+    pub ctx: HashMap<u64, BlockBuildingContext>,
     pub input: broadcast::Receiver<SimulatedOrderCommand>,
     /// output for the blocks
     pub sink: Arc<dyn UnfinishedBlockBuildingSink>,

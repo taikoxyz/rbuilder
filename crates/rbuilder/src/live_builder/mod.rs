@@ -23,6 +23,7 @@ use crate::{
     utils::{error_storage::spawn_error_storage_writer, ProviderFactoryReopener, Signer},
 };
 use ahash::{HashMap, HashSet};
+use alloy_chains::{Chain, ChainKind};
 use alloy_primitives::{Address, B256, U256};
 use building::BlockBuildingPool;
 use eyre::Context;
@@ -34,6 +35,7 @@ use reth::{
 };
 use reth_chainspec::ChainSpec;
 use reth_db::database::Database;
+use reth_evm::provider;
 use std::{cmp::min, path::PathBuf, sync::Arc, time::Duration};
 use time::OffsetDateTime;
 use tokio::{sync::mpsc, task::spawn_blocking};
@@ -149,7 +151,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         };
 
         let mut builder_pool = BlockBuildingPool::new(
-            provider_factories,
+            provider_factories.clone(),
             self.builders,
             self.sink_factory,
             orderpool_subscribers,
@@ -258,10 +260,19 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 None,
             );
 
+            let mut ctxs = HashMap::default();
+            for (chain_id, _) in provider_factories.iter() {
+                let mut block_ctx = block_ctx.clone();
+                let mut chain_spec = (*block_ctx.chain_spec).clone();
+                chain_spec.chain = Chain::from(*chain_id);
+                block_ctx.chain_spec = chain_spec.into();
+                ctxs.insert(*chain_id, block_ctx);
+            }
+
             println!("Dani debug: start building");
             builder_pool.start_block_building(
                 payload,
-                block_ctx,
+                ctxs,
                 self.global_cancellation.clone(),
                 time_until_slot_end.try_into().unwrap_or_default(),
             );
