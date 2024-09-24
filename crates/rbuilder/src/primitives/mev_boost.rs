@@ -123,9 +123,8 @@ impl MevBoostRelay {
 
         // Handle the Option<BlockProposer>
         if let Some(proposer) = &self.block_proposer {
-            // Call propose_block on the BlockProposer
-            // Dani: Data is type &SealedBlockWithSenders ?
-            // proposer.propose_block(data).await?;
+            // Call propose_block on the BlockProposer with the SubmitBlockRequest
+            proposer.propose_block(data).await.map_err(|e| SubmitBlockErr::SimError(e.to_string()))?;
         } else {
             // Handle the case where there's no BlockProposer
             println!("No L1 block proposer configured");

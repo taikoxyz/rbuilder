@@ -11,7 +11,9 @@ use alloy_signer_local::{PrivateKeySigner};
 use alloy_transport_http::Http;
 use alloy_transport_http::Client;
 use std::str::FromStr;
-use url::Url;  // Add this import
+use url::Url;
+use crate::mev_boost::{SubmitBlockRequest};
+use alloy_rpc_types_engine::{ExecutionPayload, ExecutionPayloadV2, ExecutionPayloadV3};
 
 #[derive(Clone, Debug)]
 struct BlockMetadata {
@@ -48,8 +50,6 @@ impl BlockProposer {
 
         // Create the signer directly from the private key string
         let signer = PrivateKeySigner::from_str(&private_key_str)?;
-        // signer.address();
-        // let signer_wallet = EthereumWallet::from(signer.clone());
 
         let url = Url::parse(&rpc_url)?;
         let provider = ProviderBuilder::new().on_http(url);
@@ -62,32 +62,37 @@ impl BlockProposer {
         })
     }
 
-    pub async fn propose_block(&self, block: &SealedBlockWithSenders) -> Result<()> {
-        // Extract necessary data from the block
-        //let block_number = block.block.header.header.number();
-        let sealed_header;
-        let block_body;
-        (sealed_header, block_body) = block.clone().block.split_header_body();
-
-        let (sealed_header, block_body) = block.clone().block.split_header_body();
+    pub async fn propose_block(&self, request: &SubmitBlockRequest) -> Result<()> {
+        let execution_payload = request.execution_payload();
 
         // Create the transaction data
-        let tx_data = self.create_propose_block_tx_data(&sealed_header, &block_body)?;
+        let tx_data = self.create_propose_block_tx_data(&execution_payload)?;
 
         // Get the current nonce for the wallet
         let nonce = self.provider.get_transaction_count(self.signer.address()).await?;
-        
-        // Dani todo: Implement the logic to propose the block to the L1 smart contract
-        // This might involve creating and sending a transaction to the L1 contract
+
+        // TODO: Implement the logic to propose the block to the L1 smart contract
 
         Ok(())
     }
 
-    fn create_propose_block_tx_data(&self, sealed_header: &SealedHeader, block_body: &BlockBody) -> Result<Vec<u8>> {
-        // Implement the logic to create the transaction data for proposing the block
-        // This will depend on your specific smart contract's function signature and requirements
-        // For now, we'll just return an empty vector
-        Ok(vec![])
+    // Implement the logic to create the transaction data for proposing the block
+    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<Vec<u8>> {
+        // Later on the payload
+        let mut serialized_payload = Vec::new();
+
+        //Extract necessary data from payload
+        if let ExecutionPayload::V2(payload) = execution_payload {
+            let block_number = payload.payload_inner.block_number;
+        } else if let ExecutionPayload::V3(payload) = execution_payload {
+            let block_number = payload.payload_inner.payload_inner.block_number;
+
+        } else {
+            // Handle unsupported versions
+            return Err(eyre::eyre!("Unsupported ExecutionPayload version"));
+        }
+        
+        Ok(serialized_payload)
     }
 }
 
