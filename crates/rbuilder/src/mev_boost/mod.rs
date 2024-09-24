@@ -6,7 +6,7 @@ use super::utils::u256decimal_serde_helper;
 
 use alloy_primitives::{Address, BlockHash, Bytes, U256};
 use alloy_rpc_types_beacon::relay::{BidTrace, SignedBidSubmissionV2, SignedBidSubmissionV3};
-use alloy_rpc_types_engine::{ExecutionPayload, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
+use alloy_rpc_types_engine::{ExecutionPayload};
 use flate2::{write::GzEncoder, Compression};
 use primitive_types::H384;
 use reqwest::{

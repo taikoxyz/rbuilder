@@ -1,22 +1,19 @@
-use std::sync::Arc;
 
 use alloy_signer_local::LocalSigner;
 use ethers::prelude::k256;
-use reth_primitives::{SealedBlockWithSenders, SealedHeader, BlockBody};
 use eyre::Result;
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
-use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{U64, B256, U256, Address, fixed_bytes, FixedBytes, Bytes};
+use alloy_provider::{ProviderBuilder, RootProvider};
+use alloy_network::{TransactionBuilder};
+use alloy_primitives::{B256, U256, Address};
 use alloy_signer_local::{PrivateKeySigner};
 use alloy_transport_http::Http;
 use alloy_transport_http::Client;
 use std::str::FromStr;
 use url::Url;
 use crate::mev_boost::{SubmitBlockRequest};
-use alloy_rpc_types_engine::{ExecutionPayload, ExecutionPayloadV2, ExecutionPayloadV3};
-use alloy_sol_types::{sol, SolType};
+use alloy_rpc_types_engine::{ExecutionPayload};
+use alloy_sol_types::{sol};
 
-use std::convert::TryFrom;
 // Using sol macro to use solidity code here.
 sol! {
     struct BlockMetadata {
