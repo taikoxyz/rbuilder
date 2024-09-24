@@ -26,7 +26,7 @@ use crate::{
             relay_submit::BuilderSinkFactory,
         },
         cli::LiveBuilderConfig,
-        payload_events::MevBoostSlotDataGenerator, layer2_info::Layer2Info,
+        payload_events::MevBoostSlotDataGenerator,
     },
     mev_boost::BLSBlockSigner,
     primitives::mev_boost::{MevBoostRelay, RelayConfig},
