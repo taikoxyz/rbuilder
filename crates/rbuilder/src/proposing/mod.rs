@@ -1,18 +1,16 @@
 
-use alloy_signer_local::LocalSigner;
-use ethers::prelude::k256;
 use eyre::Result;
-use alloy_provider::{ProviderBuilder, RootProvider};
-use alloy_network::{TransactionBuilder};
 use alloy_primitives::{B256, U256, Address};
-use alloy_signer_local::{PrivateKeySigner};
-use alloy_transport_http::Http;
-use alloy_transport_http::Client;
-use std::str::FromStr;
-use url::Url;
 use crate::mev_boost::{SubmitBlockRequest};
 use alloy_rpc_types_engine::{ExecutionPayload};
-use alloy_sol_types::{sol};
+use alloy_sol_types::{sol, SolType};
+use ethers::{
+    prelude::*,
+    types::{Address as EthersAddress}
+};
+use ethers::signers::LocalWallet;
+use ethers::providers::{Http as EthersHttp, Provider as EthersProvider};
+use web3::ethabi;
 
 // Using sol macro to use solidity code here.
 sol! {
@@ -34,92 +32,87 @@ sol! {
         bool blobUsed;
     }
 
-    function proposeBlock(BlockMetadata[] calldata params, bytes[] calldata txList) external payable;
+    function proposeBlock(BlockMetadata[] calldata data, bytes[] calldata txLists) external payable;
 }
-
-// #[derive(Clone, Debug)]
-// struct BlockMetadata {
-//     block_hash: B256,
-//     parent_block_hash: B256,
-//     parent_meta_hash: B256,
-//     l1_hash: B256,
-//     difficulty: U256,
-//     blob_hash: B256,
-//     extra_data: B256,
-//     coinbase: Address,
-//     l2_block_number: u64,
-//     gas_limit: u32,
-//     l1_state_block_number: u32,
-//     timestamp: u64,
-//     tx_list_byte_offset: u32,
-//     tx_list_byte_size: u32,
-//     blob_used: bool,
-// }
 
 #[derive(Debug, Clone)]
 pub struct BlockProposer {
-    // Add necessary fields for L1 interaction
     rpc_url: String,
-    contract_address: Address,
-    provider: RootProvider<Http<Client>>,
-    signer: LocalSigner<k256::ecdsa::SigningKey>,
+    contract_address: String,
+    private_key: String,
 }
 
 impl BlockProposer {
-    pub fn new(rpc_url: String, contract_address_str: String, private_key_str: String) -> Result<Self> {
-        let contract_address = Address::parse_checksummed(&contract_address_str, None)?;
-        assert_eq!(contract_address.to_checksum(None), contract_address_str);
-
-        // Create the signer directly from the private key string
-        let signer = PrivateKeySigner::from_str(&private_key_str)?;
-
-        let url = Url::parse(&rpc_url)?;
-        let provider = ProviderBuilder::new().on_http(url);
-
+    pub fn new(rpc_url: String, contract_address: String, private_key: String) -> Result<Self> {
         Ok(BlockProposer {
             rpc_url,
             contract_address,
-            provider,
-            signer,
+            private_key,
         })
     }
 
     pub async fn propose_block(&self, request: &SubmitBlockRequest) -> Result<()> {
+        println!("Dani debug: Trying to propose blocks");
+
+        let provider = EthersProvider::<EthersHttp>::try_from(self.rpc_url.clone())?;
+        let chain_id = provider.get_chainid().await?.as_u64();
+        let wallet: LocalWallet = self.private_key.parse::<LocalWallet>()?
+            .with_chain_id(chain_id);
+
         let execution_payload = request.execution_payload();
         
         // Create the transaction data
-        let (meta, tx_list) = self.create_propose_block_tx_data(&execution_payload)?;
+        let (meta, tx_list) = self.create_propose_block_tx_data(&execution_payload, wallet.address())?;
         
-        // // Encode the metadata
-        // let meta_encoded = BlockMetadata::encode(&meta);
+        // Encode the metadata - so that we be decoding on contract
+        let meta_encoded = <BlockMetadata as SolType>::abi_encode(&meta);
 
-        // // Prepare the function call data
-        // let function = proposeBlockFunction::abi();
-        // let data = function.encode(&[
-        //     sol!(bytes[])::encode(&[meta_encoded]),
-        //     sol!(bytes[])::encode(&[tx_list_encoded]),
-        // ])?;
+        // Put togehter the "abi" for proposeBlock
+        let function = ethabi::Function {
+            name: "proposeBlock".to_string(),
+            inputs: vec![
+                ethabi::Param {
+                    name: "data".to_string(),
+                    kind: ethabi::ParamType::Array(Box::new(ethabi::ParamType::Bytes)),
+                    internal_type: None,
+                },
+                ethabi::Param {
+                    name: "txLists".to_string(),
+                    kind: ethabi::ParamType::Array(Box::new(ethabi::ParamType::Bytes)),
+                    internal_type: None,
+                },
+            ],
+            outputs: vec![],
+            constant: Some(false),
+            state_mutability: ethabi::StateMutability::Payable,
+        };
 
-        // // Create the transaction request
-        // let tx_request = TransactionRequest::new()
-        //     .to(self.contract_address)
-        //     .data(data);
+        // Encode input into the data
+        let data = function.encode_input(&[
+            ethers::abi::Token::Array(vec![ethers::abi::Token::Bytes(meta_encoded)]),
+            ethers::abi::Token::Array(vec![ethers::abi::Token::Bytes(tx_list)]),
+        ])?;
 
-        // // Get the current nonce for the wallet
-        // let nonce = self.provider.get_transaction_count(self.signer.address()).await?;
-        
-        // println!("Sending transaction");
-        
-        // let pending_tx = self.signer.send_transaction(tx_request.nonce(nonce), &self.provider).await?;
+        let tx_object = TransactionRequest {
+            to: Some(self.contract_address.parse()?),
+            data: Some(Bytes::from_iter(data.iter())),
+            ..Default::default()
+        };
 
-        // println!("Transaction sent. Hash: {:?}", pending_tx.tx_hash());
 
+        let client = SignerMiddleware::new(provider, wallet);
+
+        println!("Dani debug - Sending transaction");
+
+        let pending_tx = client.send_transaction(tx_object, None).await?;
+
+        println!("Dani debug - Transaction sent. Hash: {:?}", pending_tx.tx_hash());
         Ok(())
     }
 
-    // Implement the logic to create the transaction data for proposing the block
-    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<(BlockMetadata, Vec<u8>)> {
-        let (block_number, parent_hash, state_root, receipts_root, gas_limit, gas_used, timestamp, extra_data, base_fee_per_gas, transactions) = match execution_payload {
+    // The logic to create the transaction (call)data for proposing the block
+    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload, wallet_address: EthersAddress) -> Result<(BlockMetadata, Vec<u8>)> {
+        let (block_number, parent_hash, _, _, gas_limit, _, timestamp, extra_data, base_fee_per_gas, transactions, block_hash) = match execution_payload {
             ExecutionPayload::V2(payload) => {
                 let inner = &payload.payload_inner;
                 (
@@ -133,6 +126,7 @@ impl BlockProposer {
                     inner.extra_data.clone(),
                     inner.base_fee_per_gas,
                     inner.transactions.clone(),
+                    inner.block_hash,
                 )
             },
             ExecutionPayload::V3(payload) => {
@@ -148,27 +142,28 @@ impl BlockProposer {
                     inner.extra_data.clone(),
                     inner.base_fee_per_gas,
                     inner.transactions.clone(),
+                    inner.block_hash,
                 )
             },
             _ => return Err(eyre::eyre!("Unsupported ExecutionPayload version")),
         };
 
-        // Create tx_list from transactions
-        let tx_list = transactions.iter().flat_map(|tx| tx.0.clone()).collect::<Vec<u8>>();
+        // Create tx_list from transactions -> Are they RLP encoded alredy ? I guess not so doing now.
+        let tx_list = self.rlp_encode_transactions(&transactions);
         let tx_list_hash = B256::from(alloy_primitives::keccak256(&tx_list));
 
         let meta = BlockMetadata {
-            blockHash: B256::random(), // You might want to calculate this based on the payload
+            blockHash: block_hash,
             parentBlockHash: parent_hash,
-            parentMetaHash: B256::ZERO, // You might need to get this from somewhere else
-            l1Hash: B256::ZERO, // You might need to get this from L1
-            difficulty: U256::ZERO, // This might need to be set differently for PoS
+            parentMetaHash: B256::ZERO, // Either we get rid of this or have a getter ?
+            l1Hash: B256::ZERO, // Preconfer/builder has to set this. It needs to represent the l1StateBlockNumber's hash
+            difficulty: U256::ZERO, // ??
             blobHash: tx_list_hash,
             extraData: B256::from_slice(&extra_data),
-            coinbase: self.signer.address(),
+            coinbase: Address::from_slice(wallet_address.as_bytes()),  // Convert EthersAddress to alloy Address,
             l2BlockNumber: block_number,
             gasLimit: gas_limit.try_into().map_err(|_| eyre::eyre!("Gas limit overflow"))?,
-            l1StateBlockNumber: 0, // You might need to get this from L1
+            l1StateBlockNumber: 0, // Preconfer/builder has to set this.
             timestamp: timestamp,
             txListByteOffset: 0u32.try_into().map_err(|_| eyre::eyre!("txListByteOffset conversion error"))?,
             txListByteSize: (tx_list.len() as u32).try_into().map_err(|_| eyre::eyre!("txListByteSize conversion error"))?,
@@ -177,6 +172,21 @@ impl BlockProposer {
 
         Ok((meta, tx_list))
     }
+
+    // This one handles '&[ethers::types::Bytes]' and '&Vec<alloy_primitives::Bytes>' types
+    fn rlp_encode_transactions<B>(&self, transactions: &[B]) -> Vec<u8>
+    where
+        B: AsRef<[u8]>,
+    {
+        let mut rlp_stream = rlp::RlpStream::new_list(transactions.len());
+
+        for tx in transactions {
+            rlp_stream.append(&tx.as_ref());
+        }
+
+        rlp_stream.out().to_vec()
+    }
+    
 }
 
 #[derive(Debug, thiserror::Error)]

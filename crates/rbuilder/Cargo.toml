@@ -9,7 +9,9 @@ build = "build.rs"
 [dependencies]
 alloy-sol-types = "0.7.7" # Use this version cause allow-rpc-types for example needs to match which alloy version they using for datay types
 ethers = { version = "2.0", features = ["ws", "rustls", "ipc"] }
+web3 = "0.19.0"
 ethers-providers = { version = "2.0", features = ["ipc"] }
+rlp = "0.6.1"
 tokio = "1.38.0"
 serde = "1.0.188"
 serde_json = "1.0.105"
