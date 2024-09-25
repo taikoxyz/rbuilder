@@ -142,7 +142,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         enforce_sorting: Option<Sorting>,
         cancel_on_fatal_error: CancellationToken,
     ) -> Result<Self, BlockBuildingHelperError> {
-        let mut origin_chain_id = 0;
+        let mut origin_chain_id = 1_000_000;
 
         // @Maybe an issue - we have 2 db txs here (one for hash and one for finalize)
         let mut state_providers: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
