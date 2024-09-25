@@ -266,6 +266,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 println!("setting up {}", chain_id);
                 let mut block_ctx = block_ctx.clone();
                 let mut chain_spec = (*block_ctx.chain_spec).clone();
+                println!("chain spec chain id: {}", chain_spec.chain.id());
                 if chain_spec.chain.id() != *chain_id {
                     println!("updating ctx for {}", chain_id);
                     let latest_block = self.layer2_info.get_latest_block(gwyneth_chain_id).await?;
