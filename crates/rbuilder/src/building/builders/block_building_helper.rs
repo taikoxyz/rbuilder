@@ -151,10 +151,11 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
                 *chain_id,
                 provider_factory.history_by_block_hash(building_ctx[chain_id].attributes.parent)?.into(),
             );
-            if *chain_id > origin_chain_id {
+            if *chain_id < origin_chain_id {
                 origin_chain_id = *chain_id;
             }
         }
+        println!("origin_chain_id: {}", origin_chain_id);
 
         let fee_recipient_balance_start = state_providers[&building_ctx[&origin_chain_id].chain_spec.chain.id()]
             .account_balance(building_ctx[&origin_chain_id].attributes.suggested_fee_recipient)?
