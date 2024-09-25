@@ -142,7 +142,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         enforce_sorting: Option<Sorting>,
         cancel_on_fatal_error: CancellationToken,
     ) -> Result<Self, BlockBuildingHelperError> {
-        let mut origin_chain_id = 1_000_000;
+        let mut origin_chain_id = 0;
 
         // @Maybe an issue - we have 2 db txs here (one for hash and one for finalize)
         let mut state_providers: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
@@ -151,7 +151,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
                 *chain_id,
                 provider_factory.history_by_block_hash(building_ctx[chain_id].attributes.parent)?.into(),
             );
-            if *chain_id < origin_chain_id {
+            if *chain_id > origin_chain_id {
                 origin_chain_id = *chain_id;
             }
         }

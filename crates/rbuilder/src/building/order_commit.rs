@@ -444,6 +444,10 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         let used_state_tracer = self.tracer.as_mut().and_then(|t| t.get_used_state_tracer());
         let mut rbuilder_inspector = RBuilderEVMInspector::new(tx, used_state_tracer);
 
+        let mut env = env.clone();
+        env.cfg.chain_id = tx.chain_id().unwrap();
+        println!("active remv chain_id: {}", env.cfg.chain_id);
+
         let mut evm = revm::Evm::builder()
             .with_spec_id(ctx.spec_id)
             .with_env(Box::new(env))
