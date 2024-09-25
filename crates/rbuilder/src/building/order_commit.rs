@@ -91,7 +91,8 @@ impl BlockState {
     }
 
     pub fn new_db_ref(&mut self) -> BlockStateDBRef<impl Database<Error = ProviderError> + '_> {
-        let state_provider = StateProviderDatabase::new(&self.providers[&1]);
+        // TODO: Brecht fix
+        let state_provider = StateProviderDatabase::new(&self.providers[&160010]);
         let cachedb = WrapDatabaseRef(self.cached_reads.as_db(state_provider));
         let bundle_state = self.bundle_state.take().unwrap();
         let db = State::builder()
