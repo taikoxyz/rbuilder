@@ -121,10 +121,10 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             inner_jobs_handles.push(handle);
             sub
         };
-        orderpool_subscribers.insert(1, orderpool_subscriber);
+        orderpool_subscribers.insert(self.chain_chain_spec.chain.id(), orderpool_subscriber);
 
         let mut provider_factories: HashMap<u64, ProviderFactoryReopener<DB>> = HashMap::default();
-        provider_factories.insert(1, self.provider_factory.clone());
+        provider_factories.insert(self.chain_chain_spec.chain.id(), self.provider_factory.clone());
 
         for (chain_id, node) in self.layer2_info.nodes.iter() {
             let orderpool_subscriber = {
@@ -272,6 +272,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                     let latest_block = self.layer2_info.get_latest_block(gwyneth_chain_id).await?;
                     if let Some(latest_block) = latest_block {
                         block_ctx.attributes.parent = latest_block.header.hash.unwrap();
+                        block_ctx.block_env.number = U256::from(latest_block.header.number.unwrap() + 1);
                     } else {
                         println!("failed to get latest block for {}", chain_id);
                     }
