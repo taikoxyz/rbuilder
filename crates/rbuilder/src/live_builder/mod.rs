@@ -260,12 +260,24 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 None,
             );
 
+            // TODO: Brecht
             let mut ctxs = HashMap::default();
             for (chain_id, _) in provider_factories.iter() {
+                println!("setting up {}", chain_id);
                 let mut block_ctx = block_ctx.clone();
                 let mut chain_spec = (*block_ctx.chain_spec).clone();
-                chain_spec.chain = Chain::from(*chain_id);
-                block_ctx.chain_spec = chain_spec.into();
+                if chain_spec.chain.id() != *chain_id {
+                    println!("updating ctx for {}", chain_id);
+                    let latest_block = self.layer2_info.get_latest_block(gwyneth_chain_id).await?;
+                    if let Some(latest_block) = latest_block {
+                        block_ctx.attributes.parent = latest_block.header.hash.unwrap();
+                    } else {
+                        println!("failed to get latest block for {}", chain_id);
+                    }
+                    chain_spec.chain = Chain::from(*chain_id);
+                    block_ctx.chain_spec = chain_spec.into();
+                }
+                println!("Latest block hash for {} is {}", chain_id, block_ctx.attributes.parent);
                 ctxs.insert(*chain_id, block_ctx);
             }
 
