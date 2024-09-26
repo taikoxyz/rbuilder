@@ -9,7 +9,6 @@ use crate::{
     utils::ProviderFactoryReopener,
 };
 use ahash::HashMap;
-use alloy_rlp::BufMut;
 use reth_db::database::Database;
 use reth_payload_builder::database::CachedReads;
 use std::{

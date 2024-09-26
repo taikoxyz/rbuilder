@@ -10,7 +10,7 @@ use crate::{
     live_builder::{
         payload_events::{
             payload_source::PayloadSourceMuxer,
-            relay_epoch_cache::{RelaysForSlotData, SlotData},
+            relay_epoch_cache::{SlotData},
         },
         SlotSource,
     },

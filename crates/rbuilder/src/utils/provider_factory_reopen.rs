@@ -3,7 +3,7 @@ use reth::providers::{BlockHashReader, ChainSpecProvider, ProviderFactory};
 use reth_chainspec::ChainSpec;
 use reth_db::database::Database;
 use reth_errors::RethResult;
-use reth_provider::{providers::StaticFileProvider, BlockNumReader, StaticFileProviderFactory};
+use reth_provider::{providers::StaticFileProvider, StaticFileProviderFactory};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},

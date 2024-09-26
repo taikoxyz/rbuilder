@@ -26,7 +26,7 @@ use crate::{
             relay_submit::BuilderSinkFactory,
         },
         cli::LiveBuilderConfig,
-        payload_events::MevBoostSlotDataGenerator, layer2_info::Layer2Info,
+        payload_events::MevBoostSlotDataGenerator,
     },
     mev_boost::BLSBlockSigner,
     primitives::mev_boost::{MevBoostRelay, RelayConfig},
@@ -157,6 +157,7 @@ impl L1Config {
     pub fn create_relays(&self) -> eyre::Result<Vec<MevBoostRelay>> {
         let mut results = Vec::new();
         for relay in &self.relays {
+            println!("Dani debug - create relays: {:?}", relay);
             results.push(MevBoostRelay::from_config(relay)?);
         }
         Ok(results)

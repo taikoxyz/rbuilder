@@ -6,6 +6,7 @@ use super::utils::u256decimal_serde_helper;
 
 use alloy_primitives::{Address, BlockHash, Bytes, U256};
 use alloy_rpc_types_beacon::relay::{BidTrace, SignedBidSubmissionV2, SignedBidSubmissionV3};
+use alloy_rpc_types_engine::{ExecutionPayload};
 use flate2::{write::GzEncoder, Compression};
 use primitive_types::H384;
 use reqwest::{
@@ -624,6 +625,12 @@ impl SubmitBlockRequest {
         match self {
             SubmitBlockRequest::Capella(req) => req.0.message.clone(),
             SubmitBlockRequest::Deneb(req) => req.0.message.clone(),
+        }
+    }
+    pub fn execution_payload(&self) -> ExecutionPayload {
+        match self {
+            SubmitBlockRequest::Capella(req) => ExecutionPayload::V2(req.0.execution_payload.clone()),
+            SubmitBlockRequest::Deneb(req) => ExecutionPayload::V3(req.0.execution_payload.clone()),
         }
     }
 }
