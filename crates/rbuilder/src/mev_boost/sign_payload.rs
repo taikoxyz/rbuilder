@@ -113,6 +113,7 @@ pub fn sign_block_for_relay(
     pubkey: H384,
     value: U256,
 ) -> eyre::Result<SubmitBlockRequest> {
+    println!("sign_block_for_relay");
     let message = BidTrace {
         slot: attrs.proposal_slot,
         parent_hash: attrs.parent_block_hash,
@@ -124,6 +125,7 @@ pub fn sign_block_for_relay(
         gas_used: sealed_block.gas_used,
         value,
     };
+    println!("sign_block_for_relay 2");
 
     let signature = signer.sign_payload(&message)?;
     let signature = FixedBytes::from_slice(&signature);
@@ -165,6 +167,8 @@ pub fn sign_block_for_relay(
             .unwrap_or_default(),
     };
 
+    println!("sign_block_for_relay 3");
+
     let submit_block_request = if chain_spec.is_cancun_active_at_timestamp(sealed_block.timestamp) {
         let execution_payload = ExecutionPayloadV3 {
             payload_inner: capella_payload,
@@ -192,6 +196,8 @@ pub fn sign_block_for_relay(
             signature,
         }))
     };
+
+    println!("sign_block_for_relay 4");
 
     Ok(submit_block_request)
 }
