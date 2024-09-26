@@ -503,6 +503,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         ctx: &BlockBuildingContext,
         state: &mut BlockState,
     ) -> Result<(), InsertPayoutTxErr> {
+        println!("insert_proposer_payout_tx");
         let builder_signer = ctx
             .builder_signer
             .as_ref()

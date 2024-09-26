@@ -30,6 +30,7 @@ impl BlockFinisher {
         &self,
         block: Box<dyn BlockBuildingHelper>,
     ) -> Result<(), BlockBuildingHelperError> {
+        println!("finish_and_submit");
         let payout_tx_value = if block.can_add_payout_tx() {
             let available_value = block.true_block_value()?;
             match self
@@ -48,6 +49,7 @@ impl BlockFinisher {
         } else {
             None
         };
+        println!("finalize_block: {:?}", payout_tx_value);
         self.sink
             .new_block(block.finalize_block(payout_tx_value)?.block);
         Ok(())
