@@ -137,6 +137,7 @@ async fn run_submit_to_relays_job(
     cancel: CancellationToken,
     slot_bidder: Arc<dyn SlotBidder>,
 ) -> Option<BuiltBlockInfo> {
+    println!("run_submit_to_relays_job");
     // Brecht: block submission
     let mut res = None;
     // first, sleep to slot time - slot_delta_to_start_submits
@@ -164,6 +165,8 @@ async fn run_submit_to_relays_job(
     let mut last_bid_value = U256::from(0);
     let mut last_submit_time = Instant::now();
     'submit: loop {
+        println!("poll loop");
+
         if cancel.is_cancelled() {
             break 'submit res;
         }
@@ -175,7 +178,7 @@ async fn run_submit_to_relays_job(
         last_submit_time = Instant::now();
 
         let block = if let Some(new_block) = best_bid.take_best_block() {
-            if new_block.trace.bid_value > last_bid_value {
+            if new_block.trace.bid_value >= last_bid_value {
                 last_bid_value = new_block.trace.bid_value;
                 new_block
             } else {
@@ -184,6 +187,8 @@ async fn run_submit_to_relays_job(
         } else {
             continue 'submit;
         };
+
+        println!("submit block!");
 
         res = Some(BuiltBlockInfo {
             bid_value: block.trace.bid_value,
@@ -394,6 +399,7 @@ pub async fn run_submit_to_relays_job_and_metrics(
     cancel: CancellationToken,
     slot_bidder: Arc<dyn SlotBidder>,
 ) {
+    println!("run_submit_to_relays_job_and_metrics");
     let best_bid = run_submit_to_relays_job(
         best_bid.clone(),
         slot_data,
@@ -550,6 +556,9 @@ impl BuilderSinkFactory for RelaySubmitSinkFactory {
                     .clone()
             })
             .collect();
+
+        println!("filtered relays: {:?}", self.relays);
+
         tokio::spawn(run_submit_to_relays_job_and_metrics(
             best_bid.clone(),
             slot_data,
