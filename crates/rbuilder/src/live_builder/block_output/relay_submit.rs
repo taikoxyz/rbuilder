@@ -49,23 +49,27 @@ impl Default for BestBlockCell {
 
 impl BlockBuildingSink for BestBlockCell {
     fn new_block(&self, block: Block) {
+        println!("BestBlockCell::new_block");
         self.compare_and_update(block);
     }
 }
 
 impl BestBlockCell {
     pub fn compare_and_update(&self, block: Block) {
+        println!("compare_and_update");
         let mut best_block = self.val.lock().unwrap();
         let old_value = best_block
             .as_ref()
             .map(|b| b.trace.bid_value)
             .unwrap_or_default();
         if block.trace.bid_value > old_value {
+            println!("best_block update");
             *best_block = Some(block);
         }
     }
 
     pub fn take_best_block(&self) -> Option<Block> {
+        println!("take_best_block update");
         self.val.lock().unwrap().take()
     }
 }
@@ -435,6 +439,7 @@ async fn submit_bid_to_the_relay(
     signed_submit_request: SubmitBlockRequest,
     optimistic: bool,
 ) {
+    println!("submit_bid_to_the_relay");
     let submit_start = Instant::now();
 
     if let Some(limiter) = &relay.submission_rate_limiter {

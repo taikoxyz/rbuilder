@@ -462,6 +462,7 @@ impl RelayClient {
         ssz: bool,
         gzip: bool,
     ) -> Result<Response, SubmitBlockErr> {
+        println!("call_relay_submit_block");
         let url = {
             let mut url = self.url.clone();
             url.set_path("/relay/v1/builder/blocks");
@@ -517,6 +518,8 @@ impl RelayClient {
         ssz: bool,
         gzip: bool,
     ) -> Result<(), SubmitBlockErr> {
+        println!("RelayClient::submit_block");
+        
         let resp = self.call_relay_submit_block(data, ssz, gzip).await?;
         let status = resp.status();
 
