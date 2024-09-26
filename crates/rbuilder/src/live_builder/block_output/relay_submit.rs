@@ -144,11 +144,13 @@ async fn run_submit_to_relays_job(
     {
         let submit_start_time = slot_data.timestamp() + config.slot_delta_to_start_submits;
         let sleep_duration = submit_start_time - time::OffsetDateTime::now_utc();
+        println!("Sleeping for {:?}", sleep_duration);
         if sleep_duration.is_positive() {
             sleep(sleep_duration.try_into().unwrap()).await;
         }
     }
 
+    println!("Sleeping done");
     let (normal_relays, optimistic_relays) = {
         let mut normal_relays = Vec::new();
         let mut optimistic_relays = Vec::new();
@@ -161,6 +163,8 @@ async fn run_submit_to_relays_job(
         }
         (normal_relays, optimistic_relays)
     };
+    println!("normal_relays: {:?}", normal_relays);
+    println!("optimistic_relays: {:?}", optimistic_relays);
 
     let mut last_bid_value = U256::from(0);
     let mut last_submit_time = Instant::now();
@@ -173,6 +177,7 @@ async fn run_submit_to_relays_job(
 
         let time_since_submit = last_submit_time.elapsed();
         if time_since_submit < MIN_TIME_BETWEEN_BLOCK_CHECK {
+            println!("Sleeping for {:?}", MIN_TIME_BETWEEN_BLOCK_CHECK - time_since_submit);
             sleep(MIN_TIME_BETWEEN_BLOCK_CHECK - time_since_submit).await;
         }
         last_submit_time = Instant::now();
