@@ -231,6 +231,8 @@ async fn run_submit_to_relays_job(
         );
         inc_initiated_submissions(submission_optimistic);
 
+        println!("submit block 2!");
+
         let (normal_signed_submission, optimistic_signed_submission) = {
             let normal_signed_submission = match sign_block_for_relay(
                 &config.signer,
@@ -247,6 +249,7 @@ async fn run_submit_to_relays_job(
                     continue 'submit;
                 }
             };
+            println!("normal_signed_submission ok");
             let optimistic_signed_submission = match sign_block_for_relay(
                 &config.optimistic_signer,
                 &block.sealed_block,
@@ -262,10 +265,14 @@ async fn run_submit_to_relays_job(
                     continue 'submit;
                 }
             };
+            println!("optimistic_signed_submission ok");
             (normal_signed_submission, optimistic_signed_submission)
         };
 
+        println!("normal_signed_submission: {:?}", normal_signed_submission);
+
         if config.dry_run {
+            println!("dry_run");
             match validate_block(
                 &slot_data,
                 &normal_signed_submission,
@@ -294,9 +301,12 @@ async fn run_submit_to_relays_job(
             continue 'submit;
         }
 
+        println!("submit block 3!");
+
         measure_block_e2e_latency(&block.trace.included_orders);
 
         for relay in &normal_relays {
+            println!("relay: {:?}", relay);
             let span = info_span!(parent: &submission_span, "relay_submit", relay = &relay.id, optimistic = false);
             let relay = relay.clone();
             let cancel = cancel.clone();
