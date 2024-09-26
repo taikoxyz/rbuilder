@@ -333,7 +333,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
 
         println!("finalize_block_execution");
         self.finalize_block_execution(payout_tx_value)?;
-        rintln!("finalize_block_execution done");
+        println!("finalize_block_execution done");
         // This could be moved outside of this func (pre finalize) since I don´t think the payout tx can change much.
         self.built_block_trace
             .verify_bundle_consistency(&self.building_ctx[&self.origin_chain_id].blocklist)?;
