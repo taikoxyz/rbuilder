@@ -646,7 +646,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             }
             (ctx.excess_blob_gas, Some(self.blob_gas_used))
         } else {
-            (None, None)
+            (Some(0), Some(0))
         };
 
         let header = Header {
