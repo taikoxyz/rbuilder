@@ -507,6 +507,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             .builder_signer
             .as_ref()
             .ok_or(InsertPayoutTxErr::NoSigner)?;
+        println!("insert_proposer_payout_tx: builder_signer: {:?}", builder_signer);
         self.free_reserved_gas();
         let nonce = state
             .nonce(builder_signer.address)
@@ -520,6 +521,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             gas_limit,
             value.to(),
         )?;
+        println!("payout tx: {:?}", tx);
         // payout tx has no blobs so it's safe to unwrap
         let tx = TransactionSignedEcRecoveredWithBlobs::new_no_blobs(tx).unwrap();
         let mut fork = PartialBlockFork::new(state).with_tracer(&mut self.tracer);

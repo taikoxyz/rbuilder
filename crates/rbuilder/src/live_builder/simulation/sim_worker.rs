@@ -47,7 +47,8 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             }
         };
 
-        let chain_id = 1;
+        //TODO Brecht: fix
+        let chain_id = 167010;
 
         let provider_factory = match provider_factory[&chain_id].check_consistency_and_reopen_if_needed(
             current_sim_context.block_ctx[&chain_id].block_env.number.to(),
