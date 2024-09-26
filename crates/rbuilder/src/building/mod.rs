@@ -612,7 +612,9 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             provider_factory,
             ctx.attributes.parent,
             &execution_outcome,
-            root_hash_mode,
+            // TODO Brecht: Fix
+            //root_hash_mode,
+            RootHashMode::IgnoreParentHash,
             root_hash_task_pool,
         )?;
 
