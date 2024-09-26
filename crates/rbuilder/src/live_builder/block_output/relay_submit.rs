@@ -245,6 +245,7 @@ async fn run_submit_to_relays_job(
             ) {
                 Ok(res) => res,
                 Err(err) => {
+                    println!("couldn't sign block for relay: {:?}", err);
                     error!(parent: &submission_span, err = ?err, "Error signing block for relay");
                     continue 'submit;
                 }
