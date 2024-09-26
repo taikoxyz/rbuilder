@@ -256,6 +256,7 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
 
         // Create a new ctx to remove builder_signer if necessary
         let mut new_ctx = self.ctx.clone();
+        println!("use_suggested_fee_recipient_as_coinbase: {}", use_suggested_fee_recipient_as_coinbase);
         if use_suggested_fee_recipient_as_coinbase {
             new_ctx.get_mut(&parent_chain_id).unwrap().modify_use_suggested_fee_recipient_as_coinbase();
         }

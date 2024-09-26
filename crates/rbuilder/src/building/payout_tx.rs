@@ -53,6 +53,8 @@ pub fn insert_test_payout_tx(
 ) -> Result<Option<u64>, PayoutTxErr> {
     let builder_signer = ctx.builder_signer.as_ref().ok_or(PayoutTxErr::NoSigner)?;
 
+    println!("builder_signer: {:?}", builder_signer);
+
     let nonce = state.nonce(builder_signer.address)?;
 
     let mut cfg = ctx.initialized_cfg.clone();
