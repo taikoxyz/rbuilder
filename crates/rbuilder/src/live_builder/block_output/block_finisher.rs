@@ -49,10 +49,10 @@ impl BlockFinisher {
         } else {
             None
         };
-        println!("finalize_block: {:?}", payout_tx_value);
+        //println!("finalize_block: {:?}", payout_tx_value);
         self.sink
             .new_block(block.finalize_block(payout_tx_value)?.block);
-        println!("finish_and_submit done");
+        //println!("finish_and_submit done");
         Ok(())
     }
 }

@@ -146,7 +146,7 @@ async fn run_submit_to_relays_job(
         let sleep_duration = submit_start_time - time::OffsetDateTime::now_utc();
         println!("Sleeping for {:?}", sleep_duration);
         if sleep_duration.is_positive() {
-            sleep(sleep_duration.try_into().unwrap()).await;
+            //sleep(sleep_duration.try_into().unwrap()).await;
         }
     }
 

@@ -243,7 +243,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         let (bid_value, true_value) = if let (Some(payout_tx_gas), Some(payout_tx_value)) =
             (self.payout_tx_gas, payout_tx_value)
         {
-            println!("insert_proposer_payout_tx");
+            //println!("insert_proposer_payout_tx");
             match self.partial_block.insert_proposer_payout_tx(
                 payout_tx_gas,
                 payout_tx_value,
@@ -325,15 +325,15 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         mut self: Box<Self>,
         payout_tx_value: Option<U256>,
     ) -> Result<FinalizeBlockResult, BlockBuildingHelperError> {
-        println!("finalize_block");
+        //println!("finalize_block");
         if payout_tx_value.is_some() && self.building_ctx[&self.origin_chain_id].coinbase_is_suggested_fee_recipient() {
             return Err(BlockBuildingHelperError::PayoutTxNotAllowed);
         }
         let start_time = Instant::now();
 
-        println!("finalize_block_execution");
+        //println!("finalize_block_execution");
         self.finalize_block_execution(payout_tx_value)?;
-        println!("finalize_block_execution done");
+        //println!("finalize_block_execution done");
         // This could be moved outside of this func (pre finalize) since I don´t think the payout tx can change much.
         self.built_block_trace
             .verify_bundle_consistency(&self.building_ctx[&self.origin_chain_id].blocklist)?;

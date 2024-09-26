@@ -503,12 +503,12 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         ctx: &BlockBuildingContext,
         state: &mut BlockState,
     ) -> Result<(), InsertPayoutTxErr> {
-        println!("insert_proposer_payout_tx");
+        //println!("insert_proposer_payout_tx");
         let builder_signer = ctx
             .builder_signer
             .as_ref()
             .ok_or(InsertPayoutTxErr::NoSigner)?;
-        println!("insert_proposer_payout_tx: builder_signer: {:?}", builder_signer);
+        //println!("insert_proposer_payout_tx: builder_signer: {:?}", builder_signer);
         self.free_reserved_gas();
         let nonce = state
             .nonce(builder_signer.address)
