@@ -343,9 +343,12 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         let mut blocks = HashMap::default();
         let mut cached_reads = CachedReads::default();
         for (chain_id, provider_factory) in self.provider_factories.iter() {
-            if *chain_id == self.building_ctx[&self.origin_chain_id].chain_spec.chain.id() {
+            // TODO Brecht: fix
+            if *chain_id == 160010 {
                 continue;
             }
+
+            println!("Creating block for {}", chain_id);
 
             let block_number = self.building_context().block();
             let finalized_block = match self.partial_block.clone().finalize(
