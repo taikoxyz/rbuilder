@@ -14,6 +14,7 @@ use web3::ethabi;
 
 // Using sol macro to use solidity code here.
 sol! {
+    #[derive(Debug)]
     struct BlockMetadata {
         bytes32 blockHash;
         bytes32 parentBlockHash;
@@ -64,6 +65,9 @@ impl BlockProposer {
         // Create the transaction data
         let (meta, tx_list) = self.create_propose_block_tx_data(&execution_payload, wallet.address())?;
         
+        println!("meta: {:?}", meta);
+        println!("tx_list: {:?}", tx_list);
+
         // Encode the metadata - so that we be decoding on contract
         let meta_encoded = <BlockMetadata as SolType>::abi_encode(&meta);
 
@@ -145,12 +149,19 @@ impl BlockProposer {
                     inner.block_hash,
                 )
             },
-            _ => return Err(eyre::eyre!("Unsupported ExecutionPayload version")),
+            _ => {
+                println!("Unsupported ExecutionPayload version");
+                return Err(eyre::eyre!("Unsupported ExecutionPayload version"))
+            }
         };
+
+        println!("proposing: {}", block_number);
 
         // Create tx_list from transactions -> Are they RLP encoded alredy ? I guess not so doing now.
         let tx_list = self.rlp_encode_transactions(&transactions);
         let tx_list_hash = B256::from(alloy_primitives::keccak256(&tx_list));
+
+        println!("tx list created: {:?}", tx_list);
 
         let meta = BlockMetadata {
             blockHash: block_hash,
