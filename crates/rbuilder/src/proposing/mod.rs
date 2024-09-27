@@ -1,16 +1,25 @@
 
+use alloy_network::TransactionBuilder;
+use alloy_provider::{Provider, ProviderBuilder};
 use eyre::Result;
 use alloy_primitives::{B256, U256, Address};
+use revm_primitives::address;
+use url::Url;
 use crate::mev_boost::{SubmitBlockRequest};
 use alloy_rpc_types_engine::{ExecutionPayload};
-use alloy_sol_types::{sol, SolType};
+use alloy_sol_types::{sol, SolCall, SolType};
 use ethers::{
     prelude::*,
     types::{Address as EthersAddress}
-};
+};  
 use ethers::signers::LocalWallet;
 use ethers::providers::{Http as EthersHttp, Provider as EthersProvider};
 use web3::ethabi;
+
+use ethers::prelude::*;
+use std::{convert::TryFrom, str::FromStr};
+
+use alloy_rpc_types::{TransactionInput, TransactionRequest};
 
 // Using sol macro to use solidity code here.
 sol! {
@@ -33,7 +42,11 @@ sol! {
         bool blobUsed;
     }
 
-    function proposeBlock(BlockMetadata[] calldata data, bytes[] calldata txLists) external payable;
+    //#[sol(rpc)]
+    #[allow(dead_code)]
+    contract Rollup {
+        function proposeBlock(BlockMetadata[] calldata data, bytes[] calldata txLists) external payable;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -87,33 +100,104 @@ impl BlockProposer {
         };
 
         // Encode input into the data
-        let data = function.encode_input(&[
-            ethers::abi::Token::Array(vec![ethers::abi::Token::Bytes(meta_encoded)]),
-            ethers::abi::Token::Array(vec![ethers::abi::Token::Bytes(tx_list)]),
-        ])?;
+        // let data = function.encode_input(&[
+        //     ethers::abi::Token::Array(vec![ethers::abi::Token::Bytes(meta_encoded)]),
+        //     ethers::abi::Token::Array(vec![ethers::abi::Token::Bytes(tx_list)]),
+        // ])?;
 
-        let tx_object = TransactionRequest {
-            to: Some(self.contract_address.parse()?),
-            data: Some(Bytes::from_iter(data.iter())),
-            ..Default::default()
-        };
+        // let tx_object = TransactionRequest {
+        //     to: Some(self.contract_address.parse()?),
+        //     data: Some(Bytes::from_iter(data.iter())),
+        //     ..Default::default()
+        // };
 
         println!("start provider from: {:?}", self.rpc_url);
-        let provider = EthersProvider::<EthersHttp>::try_from(self.rpc_url.clone())?;
-        println!("provider created");
-        let chain_id = provider.get_chainid().await?.as_u64();
-        println!("chain id from provider: {:?}", chain_id);
-        let wallet: LocalWallet = self.private_key.parse::<LocalWallet>()?
-            .with_chain_id(chain_id);
+        //let provider = EthersProvider::<EthersHttp>::try_from(self.rpc_url.clone())?;
+        //println!("provider created");
+        //let chain_id = provider.get_chainid().await?.as_u64();
+        //println!("chain id from provider: {:?}", chain_id);
+        //let wallet: LocalWallet = self.private_key.parse::<LocalWallet>()?
+        //    .with_chain_id(chain_id);
 
-        println!("setting up client for tx");
-        let client = SignerMiddleware::new(provider, wallet);
+        //println!("setting up client for tx");
+        //let client = SignerMiddleware::new(provider, wallet);
 
         println!("Dani debug - Sending transaction");
 
-        let pending_tx = client.send_transaction(tx_object, None).await?;
+        //let pending_tx = client.send_transaction(tx_object, None).await?;
 
-        println!("Dani debug - Transaction sent. Hash: {:?}", pending_tx.tx_hash());
+         // Your private key (ensure this is kept secure and never hard-coded in production)
+        //let private_key = "your-private-key-here";
+        //let wallet = private_key.parse::<LocalWallet>()?;
+
+        // Connect the wallet to the provider
+        //let wallet = wallet.with_provider(provider.clone());
+
+        // The recipient's address
+        //let to = "0xRecipientAddress".parse::<Address>()?;
+
+        // The amount to send (in wei)
+        //let value = ethers::utils::parse_ether(1.0)?; // Sending 1 Ether
+
+        // Prepare the transaction request
+        //let tx = TransactionRequest::new().to(self.contract_address.parse()?);
+
+        let provider = ProviderBuilder::new().on_http(Url::parse(&self.rpc_url.clone()).unwrap());
+        println!("provider created");
+
+        // Sign the transaction
+        let chain_id = provider.get_chain_id().await?;
+        println!("chain id from provider: {:?}", chain_id);
+        
+        //let rollup = Rollup::(Address::from_str(&self.contract_address).unwrap(), provider);
+        let propose_data = Rollup::proposeBlockCall { data: vec![meta], txLists: vec![tx_list.into()] };
+        let propose_data = propose_data.abi_encode();
+
+        // Build a transaction to send 100 wei from Alice to Bob.
+        // The `from` field is automatically filled to the first signer's address (Alice).
+        let tx = TransactionRequest::default()
+            .with_to(Address::from_str(&self.contract_address).unwrap())
+            .input(TransactionInput {input: Some(propose_data.into()), data: None })
+            .with_nonce(0)
+            .with_chain_id(chain_id)
+            .with_value(U256::from(0))
+            .with_gas_limit(5_000_000)
+            .with_max_priority_fee_per_gas(1_000_000_000)
+            .with_max_fee_per_gas(20_000_000_000);
+
+        // Send the transaction and wait for the broadcast.
+        let pending_tx = provider.send_transaction(tx).await?;
+
+        println!("Pending transaction... {}", pending_tx.tx_hash());
+
+        // Wait for the transaction to be included and get the receipt.
+        let receipt = pending_tx.get_receipt().await?;
+
+        println!(
+            "Transaction included in block {}",
+            receipt.block_number.expect("Failed to get block number")
+        );
+        
+
+        //let data = propose_data.abi_encode();
+
+
+        //let res = provider.send_raw_transaction(&data).await;
+
+        // if res.is_ok() {
+        //     println!("SP1 proof verified successfully using!");
+        // } else {
+        //     println!("SP1 proof verification failed!");
+        // }
+
+        //let signed_tx = wallet.sign_transaction(&tx).await?;
+
+        // Serialize the signed transaction into raw bytes
+        //let raw_tx_bytes = signed_tx.encode();
+
+        //let pending_tx = provider.send_raw_transaction(raw_tx_bytes).await?;
+
+        //println!("Dani debug - Transaction sent. Hash: {:?}", pending_tx.tx_hash());
         Ok(())
     }
 

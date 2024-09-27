@@ -7,7 +7,8 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy-sol-types = "0.7.7" # Use this version cause allow-rpc-types for example needs to match which alloy version they using for datay types
+alloy-sol-types = { version = "0.7.2", default-features = false }
+alloy-contract = { version = "0.1", default-features = false }
 ethers = { version = "2.0", features = ["ws", "rustls", "ipc"] }
 web3 = "0.19.0"
 ethers-providers = { version = "2.0", features = ["ipc"] }
