@@ -468,6 +468,10 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         self.coinbase_profit += ok_result.coinbase_profit;
         self.executed_tx.extend(ok_result.txs.clone());
         self.receipts.extend(ok_result.receipts.clone());
+
+        println!("self.executed_tx num: {:?}", self.executed_tx.len());
+        println!("self.executed_tx: {:?}", self.executed_tx);
+
         Ok(Ok(ExecutionResult {
             coinbase_profit: ok_result.coinbase_profit,
             inplace_sim: inplace_sim_result,
@@ -536,6 +540,9 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         self.blob_gas_used += ok_result.blob_gas_used;
         self.executed_tx.push(ok_result.tx);
         self.receipts.push(ok_result.receipt);
+
+        println!("self.executed_tx num: {:?}", self.executed_tx.len());
+        println!("self.executed_tx: {:?}", self.executed_tx);
 
         Ok(())
     }
@@ -675,11 +682,13 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         let block = Block {
             header,
-            body: self.executed_tx.into_iter().map(|t| t.tx.into()).collect(),
+            body: self.executed_tx.clone().into_iter().map(|t| t.tx.into()).collect(),
             ommers: vec![],
             withdrawals,
             requests,
         };
+
+        println!("self.executed_tx [{}]: {:?}", self.executed_tx.len(), self.executed_tx);
 
         Ok(FinalizeResult {
             sealed_block: block.seal_slow(),

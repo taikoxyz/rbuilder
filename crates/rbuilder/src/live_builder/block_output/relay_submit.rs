@@ -163,8 +163,8 @@ async fn run_submit_to_relays_job(
         }
         (normal_relays, optimistic_relays)
     };
-    println!("normal_relays: {:?}", normal_relays);
-    println!("optimistic_relays: {:?}", optimistic_relays);
+    //println!("normal_relays: {:?}", normal_relays);
+    //println!("optimistic_relays: {:?}", optimistic_relays);
 
     let mut last_bid_value = U256::from(0);
     let mut last_submit_time = Instant::now();
@@ -301,12 +301,12 @@ async fn run_submit_to_relays_job(
             continue 'submit;
         }
 
-        println!("submit block 3!");
+        //println!("submit block 3!");
 
         measure_block_e2e_latency(&block.trace.included_orders);
 
         for relay in &normal_relays {
-            println!("relay: {:?}", relay);
+            //println!("relay: {:?}", relay);
             let span = info_span!(parent: &submission_span, "relay_submit", relay = &relay.id, optimistic = false);
             let relay = relay.clone();
             let cancel = cancel.clone();
@@ -559,7 +559,7 @@ impl BuilderSinkFactory for RelaySubmitSinkFactory {
     ) -> Box<dyn BlockBuildingSink> {
         let best_bid = BestBlockCell::default();
 
-        println!("builder relays: {:?}", self.relays);
+        //println!("builder relays: {:?}", self.relays);
 
         let relays = slot_data
             .relays
@@ -572,7 +572,7 @@ impl BuilderSinkFactory for RelaySubmitSinkFactory {
             })
             .collect();
 
-        println!("filtered relays: {:?}", self.relays);
+        //println!("filtered relays: {:?}", self.relays);
 
         tokio::spawn(run_submit_to_relays_job_and_metrics(
             best_bid.clone(),
