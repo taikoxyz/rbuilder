@@ -55,18 +55,10 @@ impl BlockProposer {
     pub async fn propose_block(&self, request: &SubmitBlockRequest) -> Result<()> {
         println!("Dani debug: Trying to propose blocks");
 
-        println!("start provider from: {:?}", self.rpc_url);
-        let provider = EthersProvider::<EthersHttp>::try_from(self.rpc_url.clone())?;
-        println!("provider created");
-        let chain_id = provider.get_chainid().await?.as_u64();
-        println!("chain id: {:?}", chain_id);
-        let wallet: LocalWallet = self.private_key.parse::<LocalWallet>()?
-            .with_chain_id(chain_id);
-
         let execution_payload = request.execution_payload();
         
         // Create the transaction data
-        let (meta, tx_list) = self.create_propose_block_tx_data(&execution_payload, wallet.address())?;
+        let (meta, tx_list) = self.create_propose_block_tx_data(&execution_payload)?;
         
         println!("meta: {:?}", meta);
         println!("tx_list: {:?}", tx_list);
@@ -106,7 +98,15 @@ impl BlockProposer {
             ..Default::default()
         };
 
+        println!("start provider from: {:?}", self.rpc_url);
+        let provider = EthersProvider::<EthersHttp>::try_from(self.rpc_url.clone())?;
+        println!("provider created");
+        let chain_id = provider.get_chainid().await?.as_u64();
+        println!("chain id from provider: {:?}", chain_id);
+        let wallet: LocalWallet = self.private_key.parse::<LocalWallet>()?
+            .with_chain_id(chain_id);
 
+        println!("setting up client for tx");
         let client = SignerMiddleware::new(provider, wallet);
 
         println!("Dani debug - Sending transaction");
@@ -118,39 +118,13 @@ impl BlockProposer {
     }
 
     // The logic to create the transaction (call)data for proposing the block
-    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload, wallet_address: EthersAddress) -> Result<(BlockMetadata, Vec<u8>)> {
-        let (block_number, parent_hash, _, _, gas_limit, _, timestamp, extra_data, base_fee_per_gas, transactions, block_hash) = match execution_payload {
+    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<(BlockMetadata, Vec<u8>)> {
+        let execution_payload = match execution_payload {
             ExecutionPayload::V2(payload) => {
-                let inner = &payload.payload_inner;
-                (
-                    inner.block_number,
-                    inner.parent_hash,
-                    inner.state_root,
-                    inner.receipts_root,
-                    inner.gas_limit,
-                    inner.gas_used,
-                    inner.timestamp,
-                    inner.extra_data.clone(),
-                    inner.base_fee_per_gas,
-                    inner.transactions.clone(),
-                    inner.block_hash,
-                )
+                &payload.payload_inner
             },
             ExecutionPayload::V3(payload) => {
-                let inner = &payload.payload_inner.payload_inner;
-                (
-                    inner.block_number,
-                    inner.parent_hash,
-                    inner.state_root,
-                    inner.receipts_root,
-                    inner.gas_limit,
-                    inner.gas_used,
-                    inner.timestamp,
-                    inner.extra_data.clone(),
-                    inner.base_fee_per_gas,
-                    inner.transactions.clone(),
-                    inner.block_hash,
-                )
+                &payload.payload_inner.payload_inner
             },
             _ => {
                 println!("Unsupported ExecutionPayload version");
@@ -158,27 +132,27 @@ impl BlockProposer {
             }
         };
 
-        println!("proposing: {}", block_number);
+        println!("proposing: {}", execution_payload.block_number);
 
         // Create tx_list from transactions -> Are they RLP encoded alredy ? I guess not so doing now.
-        let tx_list = self.rlp_encode_transactions(&transactions);
+        let tx_list = self.rlp_encode_transactions(&execution_payload.transactions);
         let tx_list_hash = B256::from(alloy_primitives::keccak256(&tx_list));
 
         println!("tx list created: {:?}", tx_list);
 
         let meta = BlockMetadata {
-            blockHash: block_hash,
-            parentBlockHash: parent_hash,
+            blockHash: execution_payload.block_hash,
+            parentBlockHash: execution_payload.parent_hash,
             parentMetaHash: B256::ZERO, // Either we get rid of this or have a getter ?
             l1Hash: B256::ZERO, // Preconfer/builder has to set this. It needs to represent the l1StateBlockNumber's hash
             difficulty: U256::ZERO, // ??
             blobHash: tx_list_hash,
-            extraData: B256::from_slice(&extra_data),
-            coinbase: Address::from_slice(wallet_address.as_bytes()),  // Convert EthersAddress to alloy Address,
-            l2BlockNumber: block_number,
-            gasLimit: gas_limit.try_into().map_err(|_| eyre::eyre!("Gas limit overflow"))?,
+            extraData: B256::from_slice(&execution_payload.extra_data),
+            coinbase: execution_payload.fee_recipient,
+            l2BlockNumber: execution_payload.block_number,
+            gasLimit: execution_payload.gas_limit.try_into().map_err(|_| eyre::eyre!("Gas limit overflow"))?,
             l1StateBlockNumber: 0, // Preconfer/builder has to set this.
-            timestamp: timestamp,
+            timestamp: execution_payload.timestamp,
             txListByteOffset: 0u32.try_into().map_err(|_| eyre::eyre!("txListByteOffset conversion error"))?,
             txListByteSize: (tx_list.len() as u32).try_into().map_err(|_| eyre::eyre!("txListByteSize conversion error"))?,
             blobUsed: false,
