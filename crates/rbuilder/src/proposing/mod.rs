@@ -1,6 +1,7 @@
 
-use alloy_network::TransactionBuilder;
+use alloy_network::{EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
+use alloy_signer_local::PrivateKeySigner;
 use eyre::Result;
 use alloy_primitives::{B256, U256, Address};
 use revm_primitives::address;
@@ -8,6 +9,7 @@ use url::Url;
 use crate::mev_boost::{SubmitBlockRequest};
 use alloy_rpc_types_engine::{ExecutionPayload};
 use alloy_sol_types::{sol, SolCall, SolType};
+use alloy_network::eip2718::Encodable2718;
 use ethers::{
     prelude::*,
     types::{Address as EthersAddress}
@@ -145,9 +147,15 @@ impl BlockProposer {
         let provider = ProviderBuilder::new().on_http(Url::parse(&self.rpc_url.clone()).unwrap());
         println!("provider created");
 
+        // Create a signer from a random private key.
+        let signer = PrivateKeySigner::from_str(&self.private_key).unwrap();
+        let wallet = EthereumWallet::from(signer.clone());
+
         // Sign the transaction
         let chain_id = provider.get_chain_id().await?;
+        let nonce = provider.get_transaction_count(signer.address()).await.unwrap();
         println!("chain id from provider: {:?}", chain_id);
+        println!("nonce from provider: {:?}", nonce);
         
         //let rollup = Rollup::(Address::from_str(&self.contract_address).unwrap(), provider);
         let propose_data = Rollup::proposeBlockCall { data: vec![meta], txLists: vec![tx_list.into()] };
@@ -158,15 +166,22 @@ impl BlockProposer {
         let tx = TransactionRequest::default()
             .with_to(Address::from_str(&self.contract_address).unwrap())
             .input(TransactionInput {input: Some(propose_data.into()), data: None })
-            .with_nonce(0)
+            .with_nonce(nonce)
             .with_chain_id(chain_id)
             .with_value(U256::from(0))
             .with_gas_limit(5_000_000)
             .with_max_priority_fee_per_gas(1_000_000_000)
             .with_max_fee_per_gas(20_000_000_000);
 
+        // Build the transaction with the provided wallet. Flashbots Protect requires the transaction to
+        // be signed locally and send using `eth_sendRawTransaction`.
+        let tx_envelope = tx.build(&wallet).await?;
+
+        // Encode the transaction using EIP-2718 encoding.
+        let tx_encoded = tx_envelope.encoded_2718();
+
         // Send the transaction and wait for the broadcast.
-        let pending_tx = provider.send_transaction(tx).await?;
+        let pending_tx = provider.send_raw_transaction(&tx_encoded).await?;
 
         println!("Pending transaction... {}", pending_tx.tx_hash());
 
