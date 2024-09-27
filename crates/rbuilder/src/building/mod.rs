@@ -522,7 +522,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             gas_limit,
             value.to(),
         )?;
-        println!("payout tx: {:?}", tx);
+        //println!("payout tx: {:?}", tx);
         // payout tx has no blobs so it's safe to unwrap
         let tx = TransactionSignedEcRecoveredWithBlobs::new_no_blobs(tx).unwrap();
         let mut fork = PartialBlockFork::new(state).with_tracer(&mut self.tracer);

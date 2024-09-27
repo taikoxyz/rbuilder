@@ -177,7 +177,6 @@ async fn run_submit_to_relays_job(
 
         let time_since_submit = last_submit_time.elapsed();
         if time_since_submit < MIN_TIME_BETWEEN_BLOCK_CHECK {
-            println!("Sleeping for {:?}", MIN_TIME_BETWEEN_BLOCK_CHECK - time_since_submit);
             sleep(MIN_TIME_BETWEEN_BLOCK_CHECK - time_since_submit).await;
         }
         last_submit_time = Instant::now();
@@ -231,7 +230,7 @@ async fn run_submit_to_relays_job(
         );
         inc_initiated_submissions(submission_optimistic);
 
-        println!("submit block 2!");
+        //println!("submit block 2!");
 
         let (normal_signed_submission, optimistic_signed_submission) = {
             let normal_signed_submission = match sign_block_for_relay(
@@ -250,7 +249,7 @@ async fn run_submit_to_relays_job(
                     continue 'submit;
                 }
             };
-            println!("normal_signed_submission ok");
+            //println!("normal_signed_submission ok");
             let optimistic_signed_submission = match sign_block_for_relay(
                 &config.optimistic_signer,
                 &block.sealed_block,
@@ -266,11 +265,11 @@ async fn run_submit_to_relays_job(
                     continue 'submit;
                 }
             };
-            println!("optimistic_signed_submission ok");
+            //println!("optimistic_signed_submission ok");
             (normal_signed_submission, optimistic_signed_submission)
         };
 
-        println!("normal_signed_submission: {:?}", normal_signed_submission);
+        //println!("normal_signed_submission: {:?}", normal_signed_submission);
 
         if config.dry_run {
             println!("dry_run");

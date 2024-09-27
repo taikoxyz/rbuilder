@@ -45,7 +45,7 @@ pub struct GwynethNode<DB> {
 
 #[derive(Debug)]
 pub struct Layer2Info<DB> {
-    pub providers: Arc<Mutex<HashMap<u64, (RootProvider<PubSubFrontend>, String)>>>,
+    pub ipc_providers: Arc<Mutex<HashMap<u64, (RootProvider<PubSubFrontend>, String)>>>,
     pub data_dirs: HashMap<u64, PathBuf>,
     pub nodes: HashMap<u64, GwynethNode<DB>>,
 }
@@ -102,14 +102,14 @@ impl<DB: Clone> Layer2Info<DB> {
         }
 
         Ok(Self { 
-            providers: Arc::new(Mutex::new(providers)),
+            ipc_providers: Arc::new(Mutex::new(providers)),
             data_dirs: data_dirs_map,
             nodes,
         })
     }
 
     async fn ensure_connection(&self, chain_id: &u64) -> bool {
-        let mut providers = self.providers.lock().unwrap();
+        let mut providers = self.ipc_providers.lock().unwrap();
         if let Some((provider, ipc_path)) = providers.get_mut(chain_id) {
             match provider.get_chain_id().await {
                 Ok(_) => true,
@@ -131,7 +131,7 @@ impl<DB: Clone> Layer2Info<DB> {
 
     pub async fn get_latest_block(&self, chain_id: u64) -> Result<Option<Block>> {
         if self.ensure_connection(&chain_id).await {
-            let providers = self.providers.lock().unwrap();
+            let providers = self.ipc_providers.lock().unwrap();
             if let Some((provider, _)) = providers.get(&chain_id) {
                 let block_id = BlockId::Number(BlockNumberOrTag::Latest);
                 let transactions_kind = BlockTransactionsKind::Full;
@@ -147,7 +147,7 @@ impl<DB: Clone> Layer2Info<DB> {
 
     pub async fn get_chain_id(&self, chain_id: &u64) -> Result<Option<U256>> {
         if self.ensure_connection(chain_id).await {
-            let providers = self.providers.lock().unwrap();
+            let providers = self.ipc_providers.lock().unwrap();
             if let Some((provider, _)) = providers.get(chain_id) {
                 let chain_id = U256::from(provider.get_chain_id().await?);
                 Ok(Some(chain_id))
