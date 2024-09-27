@@ -147,7 +147,7 @@ impl BlockProposer {
             l1Hash: B256::ZERO, // Preconfer/builder has to set this. It needs to represent the l1StateBlockNumber's hash
             difficulty: U256::ZERO, // ??
             blobHash: tx_list_hash,
-            extraData: B256::from_slice(&execution_payload.extra_data),
+            extraData: /*execution_payload.extra_data.try_into().unwrap()*/ B256::default(),
             coinbase: execution_payload.fee_recipient,
             l2BlockNumber: execution_payload.block_number,
             gasLimit: execution_payload.gas_limit.try_into().map_err(|_| eyre::eyre!("Gas limit overflow"))?,
