@@ -400,7 +400,8 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         let block = RethBlock {
             header,
             //body: self.executed_tx.into_iter().map(|t| t.tx.into()).collect(),
-            body: Vec::new(),
+            // TODO Brecht: fix
+            body: blocks[&167010].sealed_block.body.clone(),
             ommers: Vec::new(),
             withdrawals: None,
             requests: None,
