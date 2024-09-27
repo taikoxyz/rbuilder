@@ -55,8 +55,11 @@ impl BlockProposer {
     pub async fn propose_block(&self, request: &SubmitBlockRequest) -> Result<()> {
         println!("Dani debug: Trying to propose blocks");
 
+        println!("start provider from: {:?}", self.rpc_url);
         let provider = EthersProvider::<EthersHttp>::try_from(self.rpc_url.clone())?;
+        println!("provider created");
         let chain_id = provider.get_chainid().await?.as_u64();
+        println!("chain id: {:?}", chain_id);
         let wallet: LocalWallet = self.private_key.parse::<LocalWallet>()?
             .with_chain_id(chain_id);
 
