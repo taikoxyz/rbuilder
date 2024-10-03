@@ -155,7 +155,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
                 origin_chain_id = *chain_id;
             }
         }
-        println!("origin_chain_id: {}", origin_chain_id);
+        //println!("origin_chain_id: {}", origin_chain_id);
 
         let fee_recipient_balance_start = state_providers[&building_ctx[&origin_chain_id].chain_spec.chain.id()]
             .account_balance(building_ctx[&origin_chain_id].attributes.suggested_fee_recipient)?
@@ -348,7 +348,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
                 continue;
             }
 
-            println!("Creating block for {}", chain_id);
+            println!("Creating block for chain {}", chain_id);
 
             let block_number = self.building_context().block();
             let finalized_block = match self.partial_block.clone().finalize(

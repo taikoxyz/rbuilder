@@ -76,7 +76,7 @@ impl BlockProposer {
         let (meta, tx_list) = self.create_propose_block_tx_data(&execution_payload)?;
         
         //println!("meta: {:?}", meta);
-        println!("tx_list: {:?}", tx_list);
+        //println!("proposing tx_list: {:?}", tx_list);
 
         let provider = ProviderBuilder::new().on_http(Url::parse(&self.rpc_url.clone()).unwrap());
 
@@ -142,13 +142,15 @@ impl BlockProposer {
             }
         };
 
-        println!("proposing: {}", execution_payload.block_number);
+        println!("proposing for block: {}", execution_payload.block_number);
+        println!("number of transactions: {}", execution_payload.transactions.len());
+        println!("transactions: {:?}", execution_payload.transactions);
 
         // Create tx_list from transactions -> Are they RLP encoded alredy ? I guess not so doing now.
         let tx_list = self.rlp_encode_transactions(&execution_payload.transactions);
         let tx_list_hash = B256::from(alloy_primitives::keccak256(&tx_list));
 
-        println!("tx list created: {:?}", tx_list);
+        println!("tx list: {:?}", tx_list);
 
         let meta = BlockMetadata {
             blockHash: execution_payload.block_hash,

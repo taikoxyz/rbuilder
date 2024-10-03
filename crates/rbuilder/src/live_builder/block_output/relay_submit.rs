@@ -49,27 +49,27 @@ impl Default for BestBlockCell {
 
 impl BlockBuildingSink for BestBlockCell {
     fn new_block(&self, block: Block) {
-        println!("BestBlockCell::new_block");
+        //println!("BestBlockCell::new_block");
         self.compare_and_update(block);
     }
 }
 
 impl BestBlockCell {
     pub fn compare_and_update(&self, block: Block) {
-        println!("compare_and_update");
+        //println!("compare_and_update");
         let mut best_block = self.val.lock().unwrap();
         let old_value = best_block
             .as_ref()
             .map(|b| b.trace.bid_value)
             .unwrap_or_default();
-        if block.trace.bid_value >= old_value {
+        if block.trace.bid_value > old_value {
             println!("best_block update");
             *best_block = Some(block);
         }
     }
 
     pub fn take_best_block(&self) -> Option<Block> {
-        println!("take_best_block update");
+        //println!("take_best_block update");
         self.val.lock().unwrap().take()
     }
 }
@@ -182,7 +182,7 @@ async fn run_submit_to_relays_job(
         last_submit_time = Instant::now();
 
         let block = if let Some(new_block) = best_bid.take_best_block() {
-            if new_block.trace.bid_value >= last_bid_value {
+            if new_block.trace.bid_value > last_bid_value {
                 last_bid_value = new_block.trace.bid_value;
                 new_block
             } else {
