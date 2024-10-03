@@ -688,7 +688,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             requests,
         };
 
-        println!("self.executed_tx finalized [{}]: {:?}", self.executed_tx.len(), self.executed_tx);
+        //println!("self.executed_tx finalized [{}]: {:?}", self.executed_tx.len(), self.executed_tx);
 
         Ok(FinalizeResult {
             sealed_block: block.seal_slow(),

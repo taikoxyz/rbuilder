@@ -269,6 +269,10 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
             .unwrap_or_default();
         self.built_block_trace.bid_value = max(bid_value, fee_recipient_balance_diff);
         self.built_block_trace.true_bid_value = true_value;
+
+        self.built_block_trace.bid_value = U256::from(self.partial_block.gas_used);
+        self.built_block_trace.true_bid_value = self.built_block_trace.bid_value;
+        
         Ok(())
     }
 }
@@ -348,7 +352,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
                 continue;
             }
 
-            println!("Creating block for chain {}", chain_id);
+            //println!("Creating block for chain {}", chain_id);
 
             let block_number = self.building_context().block();
             let finalized_block = match self.partial_block.clone().finalize(

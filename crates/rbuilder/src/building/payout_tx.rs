@@ -85,7 +85,7 @@ pub fn insert_test_payout_tx(
 
     let mut env = env.clone();
     env.cfg.chain_id = tx.chain_id().unwrap();
-    println!("active remv chain_id: {}", env.cfg.chain_id);
+    //println!("active remv chain_id: {}", env.cfg.chain_id);
 
     let mut evm = revm::Evm::builder()
         .with_spec_id(ctx.spec_id)
