@@ -26,6 +26,7 @@ use alloy_rpc_types::{TransactionInput, TransactionRequest};
 // Using sol macro to use solidity code here.
 sol! {
     #[derive(Debug)]
+    /// @dev Struct containing data only required for proving a block
     struct BlockMetadata {
         bytes32 blockHash;
         bytes32 parentBlockHash;
@@ -42,12 +43,13 @@ sol! {
         uint24 txListByteOffset;
         uint24 txListByteSize;
         bool blobUsed;
+        bytes txList;
     }
 
     //#[sol(rpc)]
     #[allow(dead_code)]
     contract Rollup {
-        function proposeBlock(BlockMetadata[] calldata data, bytes[] calldata txLists) external payable;
+        function proposeBlock(BlockMetadata[] calldata data) external payable;
     }
 }
 
@@ -73,7 +75,7 @@ impl BlockProposer {
         let execution_payload = request.execution_payload();
         
         // Create the transaction data
-        let (meta, tx_list, num_txs) = self.create_propose_block_tx_data(&execution_payload)?;
+        let (meta, num_txs) = self.create_propose_block_tx_data(&execution_payload)?;
         
         if num_txs == 1 {
             // If there's only the payout tx, don't propose
@@ -94,7 +96,7 @@ impl BlockProposer {
         let nonce = provider.get_transaction_count(signer.address()).await.unwrap();
         
         //let rollup = Rollup::(Address::from_str(&self.contract_address).unwrap(), provider);
-        let propose_data = Rollup::proposeBlockCall { data: vec![meta], txLists: vec![tx_list.into()] };
+        let propose_data = Rollup::proposeBlockCall { data: vec![meta] };
         let propose_data = propose_data.abi_encode();
 
         // Build a transaction to send 100 wei from Alice to Bob.
@@ -133,7 +135,7 @@ impl BlockProposer {
     }
 
     // The logic to create the transaction (call)data for proposing the block
-    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<(BlockMetadata, Vec<u8>, usize)> {
+    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<(BlockMetadata, usize)> {
         let execution_payload = match execution_payload {
             ExecutionPayload::V2(payload) => {
                 &payload.payload_inner
@@ -172,9 +174,10 @@ impl BlockProposer {
             txListByteOffset: 0u32.try_into().map_err(|_| eyre::eyre!("txListByteOffset conversion error"))?,
             txListByteSize: (tx_list.len() as u32).try_into().map_err(|_| eyre::eyre!("txListByteSize conversion error"))?,
             blobUsed: false,
+            txList: tx_list.into(),
         };
 
-        Ok((meta, tx_list, execution_payload.transactions.len()))
+        Ok((meta, execution_payload.transactions.len()))
     }
 
     // This one handles '&[ethers::types::Bytes]' and '&Vec<alloy_primitives::Bytes>' types
