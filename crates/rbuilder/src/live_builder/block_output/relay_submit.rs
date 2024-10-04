@@ -144,13 +144,13 @@ async fn run_submit_to_relays_job(
     {
         let submit_start_time = slot_data.timestamp() + config.slot_delta_to_start_submits;
         let sleep_duration = submit_start_time - time::OffsetDateTime::now_utc();
-        println!("Sleeping for {:?}", sleep_duration);
+        //println!("Sleeping for {:?}", sleep_duration);
         if sleep_duration.is_positive() {
             //sleep(sleep_duration.try_into().unwrap()).await;
         }
     }
 
-    println!("Sleeping done");
+    //println!("Sleeping done");
     let (normal_relays, optimistic_relays) = {
         let mut normal_relays = Vec::new();
         let mut optimistic_relays = Vec::new();

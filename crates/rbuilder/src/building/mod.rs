@@ -469,8 +469,8 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         self.executed_tx.extend(ok_result.txs.clone());
         self.receipts.extend(ok_result.receipts.clone());
 
-        println!("self.executed_tx num: {:?}", self.executed_tx.len());
-        println!("self.executed_tx: {:?}", self.executed_tx);
+        //println!("self.executed_tx num: {:?}", self.executed_tx.len());
+        //println!("self.executed_tx: {:?}", self.executed_tx);
 
         Ok(Ok(ExecutionResult {
             coinbase_profit: ok_result.coinbase_profit,

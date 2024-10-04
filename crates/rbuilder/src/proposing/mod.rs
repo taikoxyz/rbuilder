@@ -73,8 +73,13 @@ impl BlockProposer {
         let execution_payload = request.execution_payload();
         
         // Create the transaction data
-        let (meta, tx_list) = self.create_propose_block_tx_data(&execution_payload)?;
+        let (meta, tx_list, num_txs) = self.create_propose_block_tx_data(&execution_payload)?;
         
+        if num_txs == 1 {
+            // If only the payout tx, don't propose
+            return Ok(());
+        }
+
         //println!("meta: {:?}", meta);
         //println!("proposing tx_list: {:?}", tx_list);
 
@@ -128,7 +133,7 @@ impl BlockProposer {
     }
 
     // The logic to create the transaction (call)data for proposing the block
-    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<(BlockMetadata, Vec<u8>)> {
+    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<(BlockMetadata, Vec<u8>, u64)> {
         let execution_payload = match execution_payload {
             ExecutionPayload::V2(payload) => {
                 &payload.payload_inner
@@ -170,7 +175,7 @@ impl BlockProposer {
             blobUsed: false,
         };
 
-        Ok((meta, tx_list))
+        Ok((meta, tx_list, execution_payload.transactions.len()))
     }
 
     // This one handles '&[ethers::types::Bytes]' and '&Vec<alloy_primitives::Bytes>' types
