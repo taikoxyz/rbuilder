@@ -76,7 +76,7 @@ impl BlockProposer {
         let (meta, tx_list, num_txs) = self.create_propose_block_tx_data(&execution_payload)?;
         
         if num_txs == 1 {
-            // If only the payout tx, don't propose
+            // If there's only the payout tx, don't propose
             return Ok(());
         }
 
@@ -133,7 +133,7 @@ impl BlockProposer {
     }
 
     // The logic to create the transaction (call)data for proposing the block
-    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<(BlockMetadata, Vec<u8>, u64)> {
+    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<(BlockMetadata, Vec<u8>, usize)> {
         let execution_payload = match execution_payload {
             ExecutionPayload::V2(payload) => {
                 &payload.payload_inner
@@ -147,14 +147,13 @@ impl BlockProposer {
             }
         };
 
-        println!("proposing for block: {}", execution_payload.block_number);
-        println!("number of transactions: {}", execution_payload.transactions.len());
-        println!("transactions: {:?}", execution_payload.transactions);
-
         // Create tx_list from transactions -> Are they RLP encoded alredy ? I guess not so doing now.
         let tx_list = self.rlp_encode_transactions(&execution_payload.transactions);
         let tx_list_hash = B256::from(alloy_primitives::keccak256(&tx_list));
 
+        println!("proposing for block: {}", execution_payload.block_number);
+        println!("number of transactions: {}", execution_payload.transactions.len());
+        println!("transactions: {:?}", execution_payload.transactions);
         println!("tx list: {:?}", tx_list);
 
         let meta = BlockMetadata {
