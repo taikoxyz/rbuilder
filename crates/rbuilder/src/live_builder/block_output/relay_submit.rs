@@ -63,7 +63,7 @@ impl BestBlockCell {
             .map(|b| b.trace.bid_value)
             .unwrap_or_default();
         if block.trace.bid_value > old_value {
-            println!("best_block update: {:?} > {:?}", block.trace.bid_value, old_value);
+            //println!("best_block update: {:?} > {:?}", block.trace.bid_value, old_value);
             *best_block = Some(block);
         }
     }
