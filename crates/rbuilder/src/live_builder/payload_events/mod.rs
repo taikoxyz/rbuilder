@@ -10,7 +10,7 @@ use crate::{
     live_builder::{
         payload_events::{
             payload_source::PayloadSourceMuxer,
-            relay_epoch_cache::{RelaysForSlotData, SlotData},
+            relay_epoch_cache::{SlotData},
         },
         SlotSource,
     },
@@ -22,6 +22,7 @@ use primitive_types::H384;
 use reth::{
     primitives::constants::SLOT_DURATION, rpc::types::beacon::events::PayloadAttributesEvent,
 };
+use revm_primitives::address;
 use std::{collections::VecDeque, time::Duration};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -140,7 +141,7 @@ impl MevBoostSlotDataGenerator {
                     };*/
 
                 let slot_data = SlotData {
-                    fee_recipient: Address::default(),
+                    fee_recipient: address!("8943545177806ED17B9F23F0a21ee5948eCaa776"),
                     gas_limit: 15_000_000,
                     pubkey: H384::default(),
                 };

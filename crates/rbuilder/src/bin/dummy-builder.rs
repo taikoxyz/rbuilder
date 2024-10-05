@@ -5,6 +5,7 @@
 //! This is NOT intended to be run in production so it has no nice configuration, poor error checking and some hardcoded values.
 use std::{path::PathBuf, sync::Arc, thread::sleep, time::Duration};
 
+use ahash::HashMap;
 use jsonrpsee::RpcModule;
 use rbuilder::{
     beacon_api_client::Client,
@@ -20,15 +21,10 @@ use rbuilder::{
         base_config::{
             DEFAULT_EL_NODE_IPC_PATH, DEFAULT_ERROR_STORAGE_PATH, DEFAULT_INCOMING_BUNDLES_PORT,
             DEFAULT_IP, DEFAULT_RETH_DB_PATH,
-        },
-        config::create_provider_factory,
-        order_input::{
+        }, config::create_provider_factory, layer2_info::Layer2Info, order_input::{
             OrderInputConfig, DEFAULT_INPUT_CHANNEL_BUFFER_SIZE, DEFAULT_RESULTS_CHANNEL_TIMEOUT,
             DEFAULT_SERVE_MAX_CONNECTIONS,
-        },
-        payload_events::{MevBoostSlotData, MevBoostSlotDataGenerator},
-        simulation::SimulatedOrderCommand,
-        LiveBuilder,
+        }, payload_events::{MevBoostSlotData, MevBoostSlotDataGenerator}, simulation::SimulatedOrderCommand, LiveBuilder
     },
     primitives::{
         mev_boost::{MevBoostRelay, RelayConfig},
@@ -99,7 +95,7 @@ async fn main() -> eyre::Result<()> {
         extra_rpc: RpcModule::new(()),
         sink_factory: Box::new(TraceBlockSinkFactory {}),
         builders: vec![Arc::new(DummyBuildingAlgorithm::new(10))],
-        layer2_info: None,
+        layer2_info: Layer2Info::new(vec![], HashMap::default()).await?,
     };
 
     let ctrlc = tokio::spawn(async move {
@@ -133,6 +129,7 @@ struct TracingBlockSink {}
 
 impl UnfinishedBlockBuildingSink for TracingBlockSink {
     fn new_block(&self, block: Box<dyn BlockBuildingHelper>) {
+        println!("UnfinishedBlockBuildingSink::new_block");
         info!(
             order_count =? block.built_block_trace().included_orders.len(),
             "Block generated. Throwing it away!"
@@ -194,8 +191,8 @@ impl DummyBuildingAlgorithm {
     fn build_block<DB: Database + Clone + 'static>(
         &self,
         orders: Vec<SimulatedOrder>,
-        provider_factory: ProviderFactory<DB>,
-        ctx: &BlockBuildingContext,
+        provider_factory: HashMap<u64, ProviderFactory<DB>>,
+        ctx: &HashMap<u64, BlockBuildingContext>,
     ) -> eyre::Result<Box<dyn BlockBuildingHelper>> {
         let mut block_building_helper = BlockBuildingHelperFromDB::new(
             provider_factory.clone(),
@@ -225,7 +222,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingAlgorithm<DB> for DummyBuildin
     fn build_blocks(&self, input: BlockBuildingAlgorithmInput<DB>) {
         if let Some(orders) = self.wait_for_orders(&input.cancel, input.input) {
             let block = self
-                .build_block(orders, input.provider_factory, &input.ctx)
+                .build_block(orders, input.provider_factory.clone(), &input.ctx)
                 .unwrap();
             input.sink.new_block(block);
         }

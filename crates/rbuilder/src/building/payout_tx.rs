@@ -53,6 +53,8 @@ pub fn insert_test_payout_tx(
 ) -> Result<Option<u64>, PayoutTxErr> {
     let builder_signer = ctx.builder_signer.as_ref().ok_or(PayoutTxErr::NoSigner)?;
 
+    println!("builder_signer: {:?}", builder_signer);
+
     let nonce = state.nonce(builder_signer.address)?;
 
     let mut cfg = ctx.initialized_cfg.clone();
@@ -80,6 +82,10 @@ pub fn insert_test_payout_tx(
     };
 
     let mut db = state.new_db_ref();
+
+    let mut env = env.clone();
+    env.cfg.chain_id = tx.chain_id().unwrap();
+    //println!("active remv chain_id: {}", env.cfg.chain_id);
 
     let mut evm = revm::Evm::builder()
         .with_spec_id(ctx.spec_id)

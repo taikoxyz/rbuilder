@@ -89,7 +89,7 @@ enum OrderNonceState {
 }
 
 impl<DB: Database> SimTree<DB> {
-    pub fn new(provider_factory: ProviderFactory<DB>, parent_block: B256) -> Self {
+    pub fn new(provider_factory: HashMap<u64, ProviderFactory<DB>>, parent_block: HashMap<u64, B256>) -> Self {
         let nonce_cache = NonceCache::new(provider_factory, parent_block);
         Self {
             nonce_cache,
@@ -312,7 +312,15 @@ pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
     orders: &[Order],
     randomize_insertion: bool,
 ) -> Result<(Vec<SimulatedOrder>, Vec<OrderErr>), CriticalCommitOrderError> {
-    let mut sim_tree = SimTree::new(factory.clone(), ctx.attributes.parent);
+    let mut provider_factories = HashMap::default();
+    provider_factories.insert(ctx.chain_spec.chain.id(), factory.clone());    
+
+    let mut ctxs = HashMap::default();
+    ctxs.insert(ctx.chain_spec.chain.id(), ctx.clone());
+
+    let parent_block_hashes = ctxs.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect();
+
+    let mut sim_tree = SimTree::new(provider_factories, parent_block_hashes);
 
     let mut orders = orders.to_vec();
     let random_insert_size = max(orders.len() / 20, 1);
@@ -325,8 +333,11 @@ pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
     }
 
     let mut sim_errors = Vec::new();
-    let mut state_for_sim =
-        Arc::<dyn StateProvider>::from(factory.history_by_block_hash(ctx.attributes.parent)?);
+    let mut state_for_sim: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
+    state_for_sim.insert(
+        ctx.chain_spec.chain.id(),
+        Arc::<dyn StateProvider>::from(factory.history_by_block_hash(ctx.attributes.parent)?),
+    );
     let mut cache_reads = Some(CachedReads::default());
     loop {
         // mix new orders into the sim_tree
@@ -356,8 +367,8 @@ pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
                 ctx,
                 &mut block_state,
             )?;
-            let (new_cache_reads, _, provider) = block_state.into_parts();
-            state_for_sim = provider;
+            let (new_cache_reads, _, providers) = block_state.into_parts();
+            state_for_sim = providers;
             cache_reads = Some(new_cache_reads);
             match sim_result.result {
                 OrderSimResult::Failed(err) => {

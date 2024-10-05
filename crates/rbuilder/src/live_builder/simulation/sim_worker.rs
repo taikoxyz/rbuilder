@@ -8,6 +8,7 @@ use crate::{
     telemetry::add_sim_thread_utilisation_timings,
     utils::ProviderFactoryReopener,
 };
+use ahash::HashMap;
 use reth_db::database::Database;
 use reth_payload_builder::database::CachedReads;
 use std::{
@@ -24,7 +25,7 @@ use tracing::error;
 pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
     worker_id: usize,
     ctx: Arc<Mutex<CurrentSimulationContexts>>,
-    provider_factory: ProviderFactoryReopener<DB>,
+    provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
     global_cancellation: CancellationToken,
 ) {
     loop {
@@ -45,8 +46,11 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             }
         };
 
-        let provider_factory = match provider_factory.check_consistency_and_reopen_if_needed(
-            current_sim_context.block_ctx.block_env.number.to(),
+        //TODO Brecht: fix
+        let chain_id = 167010;
+
+        let provider_factory = match provider_factory[&chain_id].check_consistency_and_reopen_if_needed(
+            current_sim_context.block_ctx[&chain_id].block_env.number.to(),
         ) {
             Ok(provider_factory) => provider_factory,
             Err(err) => {
@@ -62,7 +66,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             let sim_start = Instant::now();
 
             let state_provider = match provider_factory
-                .history_by_block_hash(current_sim_context.block_ctx.attributes.parent)
+                .history_by_block_hash(current_sim_context.block_ctx[&chain_id].attributes.parent)
             {
                 Ok(state_provider) => state_provider,
                 Err(err) => {
@@ -73,11 +77,11 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                 }
             };
             let start_time = Instant::now();
-            let mut block_state = BlockState::new(state_provider).with_cached_reads(cached_reads);
+            let mut block_state = BlockState::new(state_provider, chain_id).with_cached_reads(cached_reads);
             let sim_result = simulate_order(
                 task.parents.clone(),
                 task.order,
-                &current_sim_context.block_ctx,
+                &current_sim_context.block_ctx[&chain_id],
                 &mut block_state,
             );
             match sim_result {

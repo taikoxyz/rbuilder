@@ -468,6 +468,10 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         self.coinbase_profit += ok_result.coinbase_profit;
         self.executed_tx.extend(ok_result.txs.clone());
         self.receipts.extend(ok_result.receipts.clone());
+
+        //println!("self.executed_tx num: {:?}", self.executed_tx.len());
+        //println!("self.executed_tx: {:?}", self.executed_tx);
+
         Ok(Ok(ExecutionResult {
             coinbase_profit: ok_result.coinbase_profit,
             inplace_sim: inplace_sim_result,
@@ -487,9 +491,11 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         gas_limit: u64,
         ctx: &BlockBuildingContext,
     ) -> Result<U256, InsertPayoutTxErr> {
-        self.coinbase_profit
-            .checked_sub(U256::from(gas_limit) * ctx.block_env.basefee)
-            .ok_or_else(|| InsertPayoutTxErr::ProfitTooLow)
+        // TODO(Brecht): revert
+        Ok(self.coinbase_profit)
+        //self.coinbase_profit
+        //    .checked_sub(U256::from(gas_limit) * ctx.block_env.basefee)
+        //    .ok_or_else(|| InsertPayoutTxErr::ProfitTooLow)
     }
 
     /// Inserts payout tx to ctx.attributes.suggested_fee_recipient (should be called at the end of the block)
@@ -501,10 +507,12 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         ctx: &BlockBuildingContext,
         state: &mut BlockState,
     ) -> Result<(), InsertPayoutTxErr> {
+        //println!("insert_proposer_payout_tx");
         let builder_signer = ctx
             .builder_signer
             .as_ref()
             .ok_or(InsertPayoutTxErr::NoSigner)?;
+        //println!("insert_proposer_payout_tx: builder_signer: {:?}", builder_signer);
         self.free_reserved_gas();
         let nonce = state
             .nonce(builder_signer.address)
@@ -518,6 +526,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             gas_limit,
             value.to(),
         )?;
+        //println!("payout tx: {:?}", tx);
         // payout tx has no blobs so it's safe to unwrap
         let tx = TransactionSignedEcRecoveredWithBlobs::new_no_blobs(tx).unwrap();
         let mut fork = PartialBlockFork::new(state).with_tracer(&mut self.tracer);
@@ -531,6 +540,9 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         self.blob_gas_used += ok_result.blob_gas_used;
         self.executed_tx.push(ok_result.tx);
         self.receipts.push(ok_result.receipt);
+
+        //println!("self.executed_tx num: {:?}", self.executed_tx.len());
+        //println!("self.executed_tx: {:?}", self.executed_tx);
 
         Ok(())
     }
@@ -607,7 +619,9 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             provider_factory,
             ctx.attributes.parent,
             &execution_outcome,
-            root_hash_mode,
+            // TODO Brecht: Fix
+            //root_hash_mode,
+            RootHashMode::IgnoreParentHash,
             root_hash_task_pool,
         )?;
 
@@ -639,7 +653,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             }
             (ctx.excess_blob_gas, Some(self.blob_gas_used))
         } else {
-            (None, None)
+            (Some(0), Some(0))
         };
 
         let header = Header {
@@ -668,11 +682,13 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         let block = Block {
             header,
-            body: self.executed_tx.into_iter().map(|t| t.tx.into()).collect(),
+            body: self.executed_tx.clone().into_iter().map(|t| t.tx.into()).collect(),
             ommers: vec![],
             withdrawals,
             requests,
         };
+
+        //println!("self.executed_tx finalized [{}]: {:?}", self.executed_tx.len(), self.executed_tx);
 
         Ok(FinalizeResult {
             sealed_block: block.seal_slow(),

@@ -36,12 +36,16 @@ sbundle_mergeabe_signers = []
 # slot_delta_to_start_submits_ms = -5000
 live_builders = ["mp-ordering"]
 
+# Currently the l1_rpc_url, l1_proposer_pk and l1_smart_contract_address are static. If we change smth on the smart contract "system" it might changes (depending on the deployment).
 [[relays]]
 name = "gwyneth"
 url = "http://0xac6e77dfe25ecd6110b8e780608cce0dab71fdd5ebea22a16c0205200f2f8e2e3ad3b71d3499c54ad14d6c21b41a37ae@localhost:5555"
 priority = 0
 use_ssz_for_submit = false
 use_gzip_for_submit = false
+l1_rpc_url = "http://localhost:8545"
+l1_proposer_pk = "39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
+l1_smart_contract_address = "0x9fCF7D13d10dEdF17d0f24C62f0cf4ED462f65b7"
 
 [[builders]]
 name = "mgp-ordering"

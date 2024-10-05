@@ -24,7 +24,7 @@ pub async fn subscribe_to_txpool_with_blobs(
     results: mpsc::Sender<ReplaceableOrderPoolCommand>,
     global_cancel: CancellationToken,
 ) -> eyre::Result<JoinHandle<()>> {
-    let ipc = IpcConnect::new(config.ipc_path);
+    let ipc = IpcConnect::new(config.ipc_path.clone());
     let provider = ProviderBuilder::new().on_ipc(ipc).await?;
 
     let handle = tokio::spawn(async move {
@@ -42,7 +42,7 @@ pub async fn subscribe_to_txpool_with_blobs(
         let mut stream = pin!(stream);
 
         while let Some(tx_hash) = stream.next().await {
-            println!("Dani debug: Some txn arrived");
+            println!("Dani debug: Some txn arrived on {:?}", config.ipc_path);
             let start = Instant::now();
 
             let tx_with_blobs = match get_tx_with_blobs(tx_hash, &provider).await {
@@ -105,29 +105,22 @@ async fn get_tx_with_blobs(
 ) -> eyre::Result<Option<TransactionSignedEcRecoveredWithBlobs>> {
     // TODO: Use https://github.com/alloy-rs/alloy/pull/1168 when it gets cut
     // in a release
-    println!("Dani debug: get_tx_with_blobs_1");
     let string_representation = format!("{:x}", tx_hash);
-    println!("tx hash: {:?}", string_representation);
+    println!("get tx hash: {:?}", string_representation);
     let raw_tx: Option<String> = provider
         .client()
         .request("eth_getRawTransactionByHash", vec![tx_hash])
         .await?;
 
-    println!("Dani debug: get_tx_with_blobs_2");
     let raw_tx = if let Some(raw_tx) = raw_tx {
-
-        println!("Dani debug: get_tx_with_blobs_3_1");
         raw_tx
     } else {
-        println!("Dani debug: get_tx_with_blobs_3_2");
         return Ok(None);
       
     };
 
-    println!("Dani debug: get_tx_with_blobs_4");
     let raw_tx = hex::decode(raw_tx)?;
   
-    println!("Dani debug: get_tx_with_blobs_5");
     let raw_tx = Bytes::from(raw_tx);
     Ok(Some(
         TransactionSignedEcRecoveredWithBlobs::decode_enveloped_with_real_blobs(raw_tx)?,

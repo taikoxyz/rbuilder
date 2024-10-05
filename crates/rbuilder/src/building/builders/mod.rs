@@ -8,7 +8,7 @@ use crate::{
     primitives::{AccountNonce, OrderId, SimulatedOrder},
     utils::{is_provider_factory_health_error, NonceCache},
 };
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use alloy_primitives::{Address, B256};
 use block_building_helper::BlockBuildingHelper;
 use reth::{
@@ -35,9 +35,9 @@ pub struct Block {
 
 #[derive(Debug)]
 pub struct LiveBuilderInput<DB: Database> {
-    pub provider_factory: ProviderFactory<DB>,
+    pub provider_factory: HashMap<u64, ProviderFactory<DB>>,
     pub root_hash_task_pool: BlockingTaskPool,
-    pub ctx: BlockBuildingContext,
+    pub ctx: HashMap<u64, BlockBuildingContext>,
     pub input: broadcast::Receiver<SimulatedOrderCommand>,
     pub sink: Arc<dyn UnfinishedBlockBuildingSink>,
     pub builder_name: String,
@@ -115,9 +115,9 @@ pub struct OrderIntakeConsumer<DB> {
 impl<DB: Database + Clone> OrderIntakeConsumer<DB> {
     /// See [`ShareBundleMerger`] for sbundle_merger_selected_signers
     pub fn new(
-        provider_factory: ProviderFactory<DB>,
+        provider_factory: HashMap<u64, ProviderFactory<DB>>,
         orders: broadcast::Receiver<SimulatedOrderCommand>,
-        parent_block: B256,
+        parent_block: HashMap<u64, B256>,
         sorting: Sorting,
         sbundle_merger_selected_signers: &[Address],
     ) -> Self {
@@ -193,8 +193,8 @@ pub trait UnfinishedBlockBuildingSink: std::fmt::Debug + Send + Sync {
 
 #[derive(Debug)]
 pub struct BlockBuildingAlgorithmInput<DB: Database> {
-    pub provider_factory: ProviderFactory<DB>,
-    pub ctx: BlockBuildingContext,
+    pub provider_factory: HashMap<u64, ProviderFactory<DB>>,
+    pub ctx: HashMap<u64, BlockBuildingContext>,
     pub input: broadcast::Receiver<SimulatedOrderCommand>,
     /// output for the blocks
     pub sink: Arc<dyn UnfinishedBlockBuildingSink>,

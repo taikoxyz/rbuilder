@@ -115,6 +115,7 @@ impl OrderPool {
 
         let (order, target_block) = match &order {
             Order::Tx(..) => {
+                println!("Added to mempool: {:?}", order);
                 self.mempool_txs.push((order.clone(), Instant::now()));
                 (order, None)
             }

@@ -10,3 +10,4 @@ pub mod roothash;
 pub mod telemetry;
 pub mod utils;
 pub mod validation_api_client;
+pub mod proposing;
