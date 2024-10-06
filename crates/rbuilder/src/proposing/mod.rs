@@ -2,26 +2,22 @@
 use alloy_network::{EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_signer_local::PrivateKeySigner;
+//use alloy_sol_types::{sol, SolCall};
 use eyre::Result;
+//use revm_primitives::{Address, B256, U256};
 use alloy_primitives::{B256, U256, Address};
-use revm_primitives::address;
+//use revm_primitives::address;
 use url::Url;
-use crate::mev_boost::{SubmitBlockRequest};
-use alloy_rpc_types_engine::{ExecutionPayload};
+//use crate::mev_boost::{SubmitBlockRequest};
+//use alloy_rpc_types_engine::{ExecutionPayload};
+use alloy_rpc_types_engine::ExecutionPayload;
 use alloy_sol_types::{sol, SolCall, SolType};
 use alloy_network::eip2718::Encodable2718;
-use ethers::{
-    prelude::*,
-    types::{Address as EthersAddress}
-};  
-use ethers::signers::LocalWallet;
-use ethers::providers::{Http as EthersHttp, Provider as EthersProvider};
-use web3::ethabi;
-
-use ethers::prelude::*;
-use std::{convert::TryFrom, str::FromStr};
+use std::str::FromStr;
 
 use alloy_rpc_types::{TransactionInput, TransactionRequest};
+
+use crate::mev_boost::SubmitBlockRequest;
 
 // Using sol macro to use solidity code here.
 sol! {

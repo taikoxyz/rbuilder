@@ -1,12 +1,16 @@
 log_json = true
 log_level = "info,rbuilder=debug"
-telemetry_port = 6060
-telemetry_ip = "0.0.0.0"
+redacted_telemetry_server_port = 6061
+redacted_telemetry_server_ip = "0.0.0.0"
+full_telemetry_server_port = 6060
+full_telemetry_server_ip = "0.0.0.0"
 
 chain = "mainnet"
 reth_datadir = "/mnt/data/reth"
 
 coinbase_secret_key = "env:COINBASE_SECRET_KEY"
+relay_secret_key = "env:RELAY_SECRET_KEY"
+optimistic_relay_secret_key = "env:OPTIMISTIC_RELAY_SECRET_KEY"
 
 # cl_node_url can be a single value, array of values, or passed by an environment variables with values separated with a comma
 # cl_node_url = "http://localhost:3500"
@@ -21,10 +25,11 @@ blocklist_file_path = "./blocklist.json"
 dry_run = true
 dry_run_validation_url = "http://localhost:8545"
 
-# blocks_processor_url can be an API service to record bids and transactions. It is not required.
-# blocks_processor_url = "http://block_processor.internal"
-
 ignore_cancellable_orders = true
+
+max_concurrent_seals = 4
+
+# genesis_fork_version = "0x00112233"
 
 sbundle_mergeabe_signers = []
 # slot_delta_to_start_submits_ms is usually negative since we start bidding BEFORE the slot start

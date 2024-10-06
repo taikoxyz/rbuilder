@@ -3,6 +3,7 @@
 use crate::{
     building::builders::UnfinishedBlockBuildingSinkFactory,
     live_builder::{order_input::OrderInputConfig, LiveBuilder},
+    roothash::RootHashConfig,
     telemetry::{setup_reloadable_tracing_subscriber, LoggerConfig},
     utils::{http_provider, BoxedProvider, ProviderFactoryReopener, Signer},
 };
@@ -45,13 +46,17 @@ const ENV_PREFIX: &str = "env:";
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct BaseConfig {
-    pub telemetry_port: u16,
-    pub telemetry_ip: Option<String>,
+    pub full_telemetry_server_port: u16,
+    pub full_telemetry_server_ip: Option<String>,
+    pub redacted_telemetry_server_port: u16,
+    pub redacted_telemetry_server_ip: Option<String>,
     pub log_json: bool,
     log_level: EnvOrValue<String>,
     pub log_color: bool,
+    /// Enables dynamic logging (saving logs to a file)
+    pub log_enable_dynamic: bool,
 
-    pub error_storage_path: PathBuf,
+    pub error_storage_path: Option<PathBuf>,
 
     coinbase_secret_key: EnvOrValue<String>,
 
@@ -78,6 +83,10 @@ pub struct BaseConfig {
     /// Number of threads used for incoming order simulation
     pub simulation_threads: usize,
 
+    /// uses cached sparse trie for root hash
+    pub root_hash_use_sparse_trie: bool,
+    /// compares result of root hash using sparse trie and reference root hash
+    pub root_hash_compare_sparse_trie: bool,
     pub root_hash_task_pool_threads: usize,
 
     pub watchdog_timeout_sec: u64,
@@ -149,8 +158,18 @@ impl BaseConfig {
         Ok(())
     }
 
-    pub fn telemetry_address(&self) -> SocketAddr {
-        SocketAddr::V4(SocketAddrV4::new(self.telemetry_ip(), self.telemetry_port))
+    pub fn redacted_telemetry_server_address(&self) -> SocketAddr {
+        SocketAddr::V4(SocketAddrV4::new(
+            self.redacted_telemetry_server_ip(),
+            self.redacted_telemetry_server_port,
+        ))
+    }
+
+    pub fn full_telemetry_server_address(&self) -> SocketAddr {
+        SocketAddr::V4(SocketAddrV4::new(
+            self.full_telemetry_server_ip(),
+            self.full_telemetry_server_port,
+        ))
     }
 
     /// WARN: opens reth db
@@ -213,8 +232,12 @@ impl BaseConfig {
         parse_ip(&self.jsonrpc_server_ip)
     }
 
-    pub fn telemetry_ip(&self) -> Ipv4Addr {
-        parse_ip(&self.telemetry_ip)
+    pub fn redacted_telemetry_server_ip(&self) -> Ipv4Addr {
+        parse_ip(&self.redacted_telemetry_server_ip)
+    }
+
+    pub fn full_telemetry_server_ip(&self) -> Ipv4Addr {
+        parse_ip(&self.full_telemetry_server_ip)
     }
 
     pub fn chain_spec(&self) -> eyre::Result<Arc<ChainSpec>> {
@@ -246,6 +269,18 @@ impl BaseConfig {
             BlockingTaskPool::builder()
                 .num_threads(self.root_hash_task_pool_threads)
                 .build()?,
+        ))
+    }
+
+    pub fn live_root_hash_config(&self) -> eyre::Result<RootHashConfig> {
+        if self.root_hash_compare_sparse_trie && !self.root_hash_use_sparse_trie {
+            eyre::bail!(
+                "root_hash_compare_sparse_trie can't be set without root_hash_use_sparse_trie"
+            );
+        }
+        Ok(RootHashConfig::live_config(
+            self.root_hash_use_sparse_trie,
+            self.root_hash_compare_sparse_trie,
         ))
     }
 
@@ -381,7 +416,6 @@ where
     }
 }
 
-pub const DEFAULT_ERROR_STORAGE_PATH: &str = "/tmp/rbuilder-error.sqlite";
 pub const DEFAULT_CL_NODE_URL: &str = "http://127.0.0.1:3500";
 pub const DEFAULT_EL_NODE_IPC_PATH: &str = "/tmp/reth.ipc";
 pub const DEFAULT_INCOMING_BUNDLES_PORT: u16 = 8645;
@@ -390,12 +424,15 @@ pub const DEFAULT_RETH_DB_PATH: &str = "/mnt/data/reth";
 impl Default for BaseConfig {
     fn default() -> Self {
         Self {
-            telemetry_port: 6069,
-            telemetry_ip: None,
+            full_telemetry_server_port: 6069,
+            full_telemetry_server_ip: None,
+            redacted_telemetry_server_port: 6070,
+            redacted_telemetry_server_ip: None,
             log_json: false,
             log_level: "info".into(),
             log_color: false,
-            error_storage_path: DEFAULT_ERROR_STORAGE_PATH.parse().unwrap(),
+            log_enable_dynamic: false,
+            error_storage_path: None,
             coinbase_secret_key: "".into(),
             flashbots_db: None,
             el_node_ipc_path: "/tmp/reth.ipc".parse().unwrap(),
@@ -410,6 +447,8 @@ impl Default for BaseConfig {
             blocklist_file_path: None,
             extra_data: "extra_data_change_me".to_string(),
             root_hash_task_pool_threads: 1,
+            root_hash_use_sparse_trie: false,
+            root_hash_compare_sparse_trie: false,
             watchdog_timeout_sec: 60 * 3,
             backtest_fetch_mempool_data_dir: "/mnt/data/mempool".into(),
             backtest_fetch_eth_rpc_url: "http://127.0.0.1:8545".to_string(),

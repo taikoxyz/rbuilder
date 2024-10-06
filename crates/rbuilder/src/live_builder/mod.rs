@@ -7,7 +7,7 @@ pub mod config;
 pub mod order_input;
 pub mod payload_events;
 pub mod simulation;
-mod watchdog;
+pub mod watchdog;
 
 use crate::{
     building::{
@@ -64,7 +64,7 @@ pub trait SlotSource {
 #[derive(Debug)]
 pub struct LiveBuilder<DB, BlocksSourceType: SlotSource> {
     pub watchdog_timeout: Duration,
-    pub error_storage_path: PathBuf,
+    pub error_storage_path: Option<PathBuf>,
     pub simulation_threads: usize,
     pub order_input_config: OrderInputConfig,
     pub blocks_source: BlocksSourceType,
@@ -102,9 +102,11 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             self.coinbase_signer.address
         );
 
-        spawn_error_storage_writer(self.error_storage_path, self.global_cancellation.clone())
-            .await
-            .with_context(|| "Error spawning error storage writer")?;
+        if let Some(error_storage_path) = self.error_storage_path {
+            spawn_error_storage_writer(error_storage_path, self.global_cancellation.clone())
+                .await
+                .with_context(|| "Error spawning error storage writer")?;
+        }
 
         let mut inner_jobs_handles = Vec::new();
         let mut payload_events_channel = self.blocks_source.recv_slot_channel();
@@ -271,8 +273,8 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                     println!("updating ctx for {}", chain_id);
                     let latest_block = self.layer2_info.get_latest_block(gwyneth_chain_id).await?;
                     if let Some(latest_block) = latest_block {
-                        block_ctx.attributes.parent = latest_block.header.hash.unwrap();
-                        block_ctx.block_env.number = U256::from(latest_block.header.number.unwrap() + 1);
+                        block_ctx.attributes.parent = latest_block.header.hash;
+                        block_ctx.block_env.number = U256::from(latest_block.header.number + 1);
                     } else {
                         println!("failed to get latest block for {}", chain_id);
                     }

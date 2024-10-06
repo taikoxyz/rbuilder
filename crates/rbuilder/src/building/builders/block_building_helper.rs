@@ -18,11 +18,11 @@ use crate::{
     building::{
         estimate_payout_gas_limit, tracers::GasUsedSimulationTracer, BlockBuildingContext,
         BlockState, BuiltBlockTrace, BuiltBlockTraceError, CriticalCommitOrderError,
-        EstimatePayoutGasErr, ExecutionError, ExecutionResult, FinalizeResult, PartialBlock,
-        Sorting,
+        EstimatePayoutGasErr, ExecutionError, ExecutionResult, FinalizeError, FinalizeResult,
+        PartialBlock, Sorting,
     },
     primitives::SimulatedOrder,
-    roothash::RootHashMode,
+    roothash::RootHashConfig,
     telemetry,
 };
 
@@ -35,7 +35,9 @@ use super::Block;
 /// 2 - Call lots of commit_order.
 /// 3 - Call set_trace_fill_time when you are done calling commit_order (we still have to review this step).
 /// 4 - Call finalize_block.
-pub trait BlockBuildingHelper {
+pub trait BlockBuildingHelper: Send + Sync {
+    fn box_clone(&self) -> Box<dyn BlockBuildingHelper>;
+
     /// Tries to add an order to the end of the block.
     /// Block state changes only on Ok(Ok)
     fn commit_order(
@@ -73,6 +75,9 @@ pub trait BlockBuildingHelper {
 
     /// BlockBuildingContext used for building.
     fn building_context(&self) -> &BlockBuildingContext;
+
+    /// Updates the cached reads for the block state.
+    fn update_cached_reads(&mut self, cached_reads: CachedReads);
 }
 
 /// Implementation of BlockBuildingHelper based on a ProviderFactory<DB>
@@ -92,9 +97,9 @@ pub struct BlockBuildingHelperFromDB<DB> {
     building_ctx: HashMap<u64, BlockBuildingContext>,
     built_block_trace: BuiltBlockTrace,
     /// Needed to get the initial state and the final root hash calculation.
-    provider_factories: HashMap<u64, ProviderFactory<DB>>,
+    provider_factory: HashMap<u64, ProviderFactory<DB>>,
     root_hash_task_pool: BlockingTaskPool,
-    root_hash_mode: RootHashMode,
+    root_hash_config: RootHashConfig,
     /// Token to cancel in case of fatal error (if we believe that it's impossible to build for this block).
     cancel_on_fatal_error: CancellationToken,
     origin_chain_id: u64,
@@ -112,10 +117,25 @@ pub enum BlockBuildingHelperError {
     InsertPayoutTxErr(#[from] crate::building::InsertPayoutTxErr),
     #[error("Bundle consistency check failed: {0}")]
     BundleConsistencyCheckFailed(#[from] BuiltBlockTraceError),
-    #[error("Error finalizing block (eg:root hash): {0}")]
-    FinalizeError(#[from] eyre::Report),
+    #[error("Error finalizing block: {0}")]
+    FinalizeError(#[from] FinalizeError),
     #[error("Payout tx not allowed for block")]
     PayoutTxNotAllowed,
+}
+
+impl BlockBuildingHelperError {
+    /// Non critial error can happen during normal operations of the builder  
+    pub fn is_critical(&self) -> bool {
+        match self {
+            BlockBuildingHelperError::FinalizeError(finalize) => {
+                !finalize.is_consistent_db_view_err()
+            }
+            BlockBuildingHelperError::InsertPayoutTxErr(
+                crate::building::InsertPayoutTxErr::ProfitTooLow,
+            ) => false,
+            _ => true,
+        }
+    }
 }
 
 pub struct FinalizeBlockResult {
@@ -132,9 +152,9 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
     /// - Estimate payout tx cost.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        provider_factories: HashMap<u64, ProviderFactory<DB>>,
+        provider_factory: HashMap<u64, ProviderFactory<DB>>,
         root_hash_task_pool: BlockingTaskPool,
-        root_hash_mode: RootHashMode,
+        root_hash_config: RootHashConfig,
         building_ctx: HashMap<u64, BlockBuildingContext>,
         cached_reads: Option<CachedReads>,
         builder_name: String,
@@ -146,7 +166,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
 
         // @Maybe an issue - we have 2 db txs here (one for hash and one for finalize)
         let mut state_providers: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
-        for (chain_id, provider_factory) in provider_factories.iter() {
+        for (chain_id, provider_factory) in provider_factory.iter() {
             state_providers.insert(
                 *chain_id,
                 provider_factory.history_by_block_hash(building_ctx[chain_id].attributes.parent)?.into(),
@@ -188,9 +208,9 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
             builder_name,
             building_ctx,
             built_block_trace: BuiltBlockTrace::new(),
-            provider_factories,
+            provider_factory,
             root_hash_task_pool,
-            root_hash_mode,
+            root_hash_config,
             cancel_on_fatal_error,
             origin_chain_id,
         })
@@ -343,10 +363,9 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
             .verify_bundle_consistency(&self.building_ctx[&self.origin_chain_id].blocklist)?;
 
         let sim_gas_used = self.partial_block.tracer.used_gas;
-
         let mut blocks = HashMap::default();
         let mut cached_reads = CachedReads::default();
-        for (chain_id, provider_factory) in self.provider_factories.iter() {
+        for (chain_id, provider_factory) in self.provider_factory.iter() {
             // TODO Brecht: fix
             if *chain_id == 160010 {
                 continue;
@@ -359,15 +378,12 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
                 &mut self.block_state,
                 &self.building_ctx[&self.origin_chain_id],
                 provider_factory.clone(),
-                self.root_hash_mode,
+                self.root_hash_config.clone(),
                 self.root_hash_task_pool.clone(),
             ) {
                 Ok(finalized_block) => finalized_block,
                 Err(err) => {
-                    if err
-                        .to_string()
-                        .contains("failed to initialize consistent view")
-                    {
+                    if err.is_consistent_db_view_err() {
                         let last_block_number = provider_factory
                             .last_block_number()
                             .unwrap_or_default();
@@ -437,5 +453,13 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
 
     fn building_context(&self) -> &BlockBuildingContext {
         &self.building_ctx[&self.origin_chain_id]
+    }
+
+    fn box_clone(&self) -> Box<dyn BlockBuildingHelper> {
+        Box::new(self.clone())
+    }
+
+    fn update_cached_reads(&mut self, cached_reads: CachedReads) {
+        self.block_state = self.block_state.clone().with_cached_reads(cached_reads);
     }
 }

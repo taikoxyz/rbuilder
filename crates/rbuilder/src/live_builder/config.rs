@@ -4,7 +4,13 @@
 use super::{
     base_config::BaseConfig,
     block_output::{
-        bidding::BiddingService,
+        bid_observer::{BidObserver, NullBidObserver},
+        bid_value_source::null_bid_value_source::NullBidValueSource,
+        bidding::{
+            interfaces::BiddingService, true_block_value_bidder::TrueBlockValueBiddingService,
+            wallet_balance_watcher::WalletBalanceWatcher,
+        },
+        block_sealing_bidder_factory::BlockSealingBidderFactory,
         relay_submit::{RelaySubmitSinkFactory, SubmissionConfig},
     },
 };
@@ -14,22 +20,16 @@ use crate::{
         builders::{
             ordering_builder::{OrderingBuilderConfig, OrderingBuildingAlgorithm},
             BacktestSimulateBlockInput, Block, BlockBuildingAlgorithm,
-            UnfinishedBlockBuildingSinkFactory,
         },
         Sorting,
     },
-    flashbots::BlocksProcessorClient,
     live_builder::{
-        base_config::EnvOrValue,
-        block_output::{
-            bidding::DummyBiddingService, block_finisher_factory::BlockFinisherFactory,
-            relay_submit::BuilderSinkFactory,
-        },
-        cli::LiveBuilderConfig,
-        payload_events::MevBoostSlotDataGenerator,
+        base_config::EnvOrValue, block_output::relay_submit::BuilderSinkFactory,
+        cli::LiveBuilderConfig, payload_events::MevBoostSlotDataGenerator,
     },
     mev_boost::BLSBlockSigner,
     primitives::mev_boost::{MevBoostRelay, RelayConfig},
+    roothash::RootHashConfig,
     utils::{build_info::rbuilder_version, ProviderFactoryReopener, Signer},
     validation_api_client::ValidationAPIClient,
 };
@@ -55,12 +55,18 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
+    time::Duration,
 };
 use tracing::info;
 use url::Url;
 
 /// From experience (Vitaly's) all generated blocks before slot_time-8sec end loosing (due to last moment orders?)
 const DEFAULT_SLOT_DELTA_TO_START_SUBMITS: time::Duration = time::Duration::milliseconds(-8000);
+/// We initialize the wallet with the last full day. This should be enough for any bidder.
+/// On debug I measured this to be < 300ms so it's not big deal.
+pub const WALLET_INIT_HISTORY_SIZE: Duration = Duration::from_secs(60 * 60 * 24);
+/// 1 is easier for debugging.
+pub const DEFAULT_MAX_CONCURRENT_SEALS: u64 = 1;
 
 /// This example has a single building algorithm cfg but the idea of this enum is to have several builders
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -110,14 +116,20 @@ pub struct L1Config {
     pub optimistic_max_bid_value_eth: String,
     /// If true all optimistic submissions will be validated on nodes specified in `dry_run_validation_url`
     pub optimistic_prevalidate_optimistic_blocks: bool,
-    pub blocks_processor_url: Option<String>,
 
-    // See [`SubmissionConfig`]
+    /// See [`SubmissionConfig`]
     slot_delta_to_start_submits_ms: Option<i64>,
+
+    /// How many seals we are going to be doing in parallel.
+    /// Optimal value may change depending on the roothash computation caching strategies.
+    pub max_concurrent_seals: u64,
 
     ///Name kept singular for backwards compatibility
     #[serde_as(deserialize_as = "OneOrMany<EnvOrValue<String>>")]
     pub cl_node_url: Vec<EnvOrValue<String>>,
+
+    /// Genesis fork version for the chain. If not provided it will be fetched from the beacon client.
+    pub genesis_fork_version: Option<String>,
 }
 
 impl Default for L1Config {
@@ -131,9 +143,10 @@ impl Default for L1Config {
             optimistic_enabled: false,
             optimistic_max_bid_value_eth: "0.0".to_string(),
             optimistic_prevalidate_optimistic_blocks: false,
-            blocks_processor_url: None,
             slot_delta_to_start_submits_ms: None,
             cl_node_url: vec![EnvOrValue::from("http://127.0.0.1:3500")],
+            max_concurrent_seals: DEFAULT_MAX_CONCURRENT_SEALS,
+            genesis_fork_version: None,
         }
     }
 }
@@ -164,7 +177,11 @@ impl L1Config {
     }
 
     fn bls_signer(&self, chain_spec: &ChainSpec) -> eyre::Result<BLSBlockSigner> {
-        let signing_domain = get_signing_domain(chain_spec.chain, self.beacon_clients()?)?;
+        let signing_domain = get_signing_domain(
+            chain_spec.chain,
+            self.beacon_clients()?,
+            self.genesis_fork_version.clone(),
+        )?;
         let secret_key = self.relay_secret_key.value()?;
         let secret_key = SecretKey::try_from(secret_key)
             .map_err(|e| eyre::eyre!("Failed to parse relay key: {:?}", e.to_string()))?;
@@ -173,7 +190,11 @@ impl L1Config {
     }
 
     fn bls_optimistic_signer(&self, chain_spec: &ChainSpec) -> eyre::Result<BLSBlockSigner> {
-        let signing_domain = get_signing_domain(chain_spec.chain, self.beacon_clients()?)?;
+        let signing_domain = get_signing_domain(
+            chain_spec.chain,
+            self.beacon_clients()?,
+            self.genesis_fork_version.clone(),
+        )?;
         let secret_key = self.optimistic_relay_secret_key.value()?;
         let secret_key = SecretKey::try_from(secret_key).map_err(|e| {
             eyre::eyre!("Failed to parse optimistic relay key: {:?}", e.to_string())
@@ -188,7 +209,11 @@ impl L1Config {
             .unwrap_or(DEFAULT_SLOT_DELTA_TO_START_SUBMITS)
     }
 
-    fn submission_config(&self, chain_spec: Arc<ChainSpec>) -> eyre::Result<SubmissionConfig> {
+    fn submission_config(
+        &self,
+        chain_spec: Arc<ChainSpec>,
+        bid_observer: Box<dyn BidObserver + Send + Sync>,
+    ) -> eyre::Result<SubmissionConfig> {
         if (self.dry_run || self.optimistic_prevalidate_optimistic_blocks)
             && self.dry_run_validation_url.is_empty()
         {
@@ -232,26 +257,18 @@ impl L1Config {
             optimistic_signer,
             optimistic_max_bid_value: parse_ether(&self.optimistic_max_bid_value_eth)?,
             optimistic_prevalidate_optimistic_blocks: self.optimistic_prevalidate_optimistic_blocks,
-            blocks_processor: if let Some(url) = &self.blocks_processor_url {
-                let client = BlocksProcessorClient::try_from(url)?;
-                Some(client)
-            } else {
-                None
-            },
             slot_delta_to_start_submits: self.slot_delta_to_start_submits(),
+            bid_observer,
         })
     }
 
-    /// Creates the RelaySubmitSinkFactory and also returns the asociated relays.
-    pub fn create_relays_sink_factory(
+    /// Creates the RelaySubmitSinkFactory and also returns the associated relays.
+    pub fn create_relays_sealed_sink_factory(
         &self,
         chain_spec: Arc<ChainSpec>,
-        bidding_service: Box<dyn BiddingService>,
-    ) -> eyre::Result<(
-        Box<dyn UnfinishedBlockBuildingSinkFactory>,
-        Vec<MevBoostRelay>,
-    )> {
-        let submission_config = self.submission_config(chain_spec)?;
+        bid_observer: Box<dyn BidObserver + Send + Sync>,
+    ) -> eyre::Result<(Box<dyn BuilderSinkFactory>, Vec<MevBoostRelay>)> {
+        let submission_config = self.submission_config(chain_spec, bid_observer)?;
         info!(
             "Builder mev boost normal relay pubkey: {:?}",
             submission_config.signer.pub_key()
@@ -272,10 +289,7 @@ impl L1Config {
             submission_config,
             relays.clone(),
         ));
-        Ok((
-            Box::new(BlockFinisherFactory::new(bidding_service, sink_factory)),
-            relays,
-        ))
+        Ok((sink_factory, relays))
     }
 }
 
@@ -288,10 +302,27 @@ impl LiveBuilderConfig for Config {
         &self,
         cancellation_token: tokio_util::sync::CancellationToken,
     ) -> eyre::Result<super::LiveBuilder<Arc<DatabaseEnv>, MevBoostSlotDataGenerator>> {
-        let (sink_factory, relays) = self.l1_config.create_relays_sink_factory(
+        let provider_factory = self.base_config.provider_factory()?;
+        let (sink_sealed_factory, relays) = self.l1_config.create_relays_sealed_sink_factory(
             self.base_config.chain_spec()?,
-            Box::new(DummyBiddingService {}),
+            Box::new(NullBidObserver {}),
         )?;
+
+        let (wallet_balance_watcher, wallet_history) = WalletBalanceWatcher::new(
+            provider_factory.provider_factory_unchecked(),
+            self.base_config.coinbase_signer()?.address,
+            WALLET_INIT_HISTORY_SIZE,
+        )?;
+        let bidding_service: Box<dyn BiddingService> =
+            Box::new(TrueBlockValueBiddingService::new(&wallet_history));
+
+        let sink_factory = Box::new(BlockSealingBidderFactory::new(
+            bidding_service,
+            sink_sealed_factory,
+            Arc::new(NullBidValueSource {}),
+            wallet_balance_watcher,
+            self.l1_config.max_concurrent_seals as usize,
+        ));
 
         let payload_event = MevBoostSlotDataGenerator::new(
             self.l1_config.beacon_clients()?,
@@ -301,11 +332,19 @@ impl LiveBuilderConfig for Config {
         );
         let live_builder = self
             .base_config
-            .create_builder(cancellation_token, sink_factory, payload_event, vec![167010])
+            .create_builder_with_provider_factory(
+                cancellation_token,
+                sink_factory,
+                payload_event,
+                vec![167010],
+                provider_factory,
+            )
             .await?;
+        let root_hash_config = self.base_config.live_root_hash_config()?;
         let root_hash_task_pool = self.base_config.root_hash_task_pool()?;
         let builders = create_builders(
             self.live_builders()?,
+            root_hash_config,
             root_hash_task_pool,
             self.base_config.sbundle_mergeabe_signers(),
         );
@@ -437,23 +476,33 @@ pub fn coinbase_signer_from_secret_key(secret_key: &str) -> eyre::Result<Signer>
 
 fn create_builders(
     configs: Vec<BuilderConfig>,
+    root_hash_config: RootHashConfig,
     root_hash_task_pool: BlockingTaskPool,
     sbundle_mergeabe_signers: Vec<Address>,
 ) -> Vec<Arc<dyn BlockBuildingAlgorithm<Arc<DatabaseEnv>>>> {
     configs
         .into_iter()
-        .map(|cfg| create_builder(cfg, &root_hash_task_pool, &sbundle_mergeabe_signers))
+        .map(|cfg| {
+            create_builder(
+                cfg,
+                &root_hash_config,
+                &root_hash_task_pool,
+                &sbundle_mergeabe_signers,
+            )
+        })
         .collect()
 }
 
 fn create_builder(
     cfg: BuilderConfig,
+    root_hash_config: &RootHashConfig,
     root_hash_task_pool: &BlockingTaskPool,
     sbundle_mergeabe_signers: &[Address],
 ) -> Arc<dyn BlockBuildingAlgorithm<Arc<DatabaseEnv>>> {
     match cfg.builder {
         SpecificBuilderConfig::OrderingBuilder(order_cfg) => {
             Arc::new(OrderingBuildingAlgorithm::new(
+                root_hash_config.clone(),
                 root_hash_task_pool.clone(),
                 sbundle_mergeabe_signers.to_vec(),
                 order_cfg,
@@ -463,26 +512,34 @@ fn create_builder(
     }
 }
 
-fn get_signing_domain(chain: Chain, beacon_clients: Vec<Client>) -> eyre::Result<B256> {
+fn get_signing_domain(
+    chain: Chain,
+    beacon_clients: Vec<Client>,
+    genesis_fork_version: Option<String>,
+) -> eyre::Result<B256> {
     let cl_context = match chain.kind() {
         ChainKind::Named(NamedChain::Mainnet) => ContextEth::for_mainnet(),
         ChainKind::Named(NamedChain::Sepolia) => ContextEth::for_sepolia(),
         ChainKind::Named(NamedChain::Goerli) => ContextEth::for_goerli(),
         ChainKind::Named(NamedChain::Holesky) => ContextEth::for_holesky(),
         _ => {
-            let client = beacon_clients
-                .first()
-                .ok_or_else(|| eyre::eyre!("No beacon clients provided"))?;
+            let genesis_fork_version = if let Some(genesis_fork_version) = genesis_fork_version {
+                genesis_fork_version
+            } else {
+                let client = beacon_clients
+                    .first()
+                    .ok_or_else(|| eyre::eyre!("No beacon clients provided"))?;
 
-            let spec = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(client.get_spec())
-            })?;
+                let spec = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(client.get_spec())
+                })?;
 
-            let genesis_fork_version = spec
-                .get("GENESIS_FORK_VERSION")
-                .ok_or_else(|| eyre::eyre!("GENESIS_FORK_VERSION not found in spec"))?;
+                spec.get("GENESIS_FORK_VERSION")
+                    .ok_or_else(|| eyre::eyre!("GENESIS_FORK_VERSION not found in spec"))?
+                    .clone()
+            };
 
-            let version: FixedBytes<4> = FixedBytes::from_str(genesis_fork_version)
+            let version: FixedBytes<4> = FixedBytes::from_str(&genesis_fork_version)
                 .map_err(|e| eyre::eyre!("Failed to parse genesis fork version: {:?}", e))?;
 
             let version = Version::from(version);
@@ -587,16 +644,32 @@ mod test {
         ];
 
         for (chain, domain) in cases.iter() {
-            let found = get_signing_domain(Chain::from_named(*chain), vec![]).unwrap();
+            let found = get_signing_domain(Chain::from_named(*chain), vec![], None).unwrap();
             assert_eq!(found, *domain);
         }
+    }
+
+    #[test]
+    fn test_signing_domain_with_genesis_fork() {
+        let client = Client::new(Url::parse("http://localhost:8000").unwrap());
+        let found = get_signing_domain(
+            Chain::from_id(12345),
+            vec![client],
+            Some("0x00112233".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            found,
+            fixed_bytes!("0000000157eb3d0fd9a819dee70b5403ce939a22b4f25ec3fc841a16cc4eab3e")
+        );
     }
 
     #[ignore]
     #[test]
     fn test_signing_domain_custom_chain() {
         let client = Client::new(Url::parse("http://localhost:8000").unwrap());
-        let found = get_signing_domain(Chain::from_id(12345), vec![client]).unwrap();
+        let found = get_signing_domain(Chain::from_id(12345), vec![client], None).unwrap();
 
         assert_eq!(
             found,

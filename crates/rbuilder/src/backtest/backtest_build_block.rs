@@ -209,8 +209,7 @@ async fn read_block_data(
 
     println!(
         "Block: {} {:?}",
-        block_data.block_number,
-        block_data.onchain_block.header.hash.unwrap_or_default()
+        block_data.block_number, block_data.onchain_block.header.hash
     );
     println!(
         "bid value: {}",
@@ -243,8 +242,7 @@ fn print_order_and_timestamp(orders_with_ts: &[OrdersWithTimestamp], block_data:
             )
         );
         for (tx, optional) in owt.order.list_txs() {
-            let tx = &tx.tx;
-            println!("    {:?} {:?}", tx.hash, optional);
+            println!("    {:?} {:?}", tx.hash(), optional);
             println!(
                 "        from: {:?} to: {:?} nonce: {}",
                 tx.signer(),
@@ -326,7 +324,7 @@ fn print_onchain_block_data(
     let txs_to_idx: HashMap<_, _> = tx_sim_results
         .iter()
         .enumerate()
-        .map(|(idx, tx)| (tx.tx.hash(), idx))
+        .map(|(idx, tx)| (tx.hash(), idx))
         .collect();
 
     println!("Onchain block txs:");
@@ -334,7 +332,7 @@ fn print_onchain_block_data(
         println!(
             "{:>4}, {:>74} revert: {:>5} profit: {}",
             idx,
-            tx.tx.hash(),
+            tx.hash(),
             !tx.receipt.success,
             format_ether(tx.coinbase_profit)
         );
@@ -352,7 +350,7 @@ fn print_onchain_block_data(
             }
         }
         executed_orders.push(ExecutedBlockTx::new(
-            tx.tx.hash,
+            tx.hash(),
             tx.coinbase_profit,
             tx.receipt.success,
         ))
