@@ -1,22 +1,22 @@
 use crate::{
     building::builders::Block,
-    flashbots::BlocksProcessorClient,
     live_builder::payload_events::MevBoostSlotData,
     mev_boost::{
         sign_block_for_relay, BLSBlockSigner, RelayError, SubmitBlockErr, SubmitBlockRequest,
     },
     primitives::mev_boost::{MevBoostRelay, MevBoostRelayID},
     telemetry::{
-        add_relay_submit_time, add_subsidy_value, inc_blocks_api_errors, inc_conn_relay_errors,
+        add_relay_submit_time, add_subsidy_value, inc_conn_relay_errors,
         inc_failed_block_simulations, inc_initiated_submissions, inc_other_relay_errors,
         inc_relay_accepted_submissions, inc_subsidized_blocks, inc_too_many_req_relay_errors,
         measure_block_e2e_latency,
     },
-    utils::error_storage::store_error_event,
-    validation_api_client::{ValdationError, ValidationAPIClient},
+    utils::{error_storage::store_error_event, tracing::dynamic_event},
+    validation_api_client::{ValidationAPIClient, ValidationError},
 };
 use ahash::HashMap;
 use alloy_primitives::{utils::format_ether, U256};
+use mockall::automock;
 use reth_chainspec::ChainSpec;
 use reth_primitives::SealedBlock;
 use std::{
@@ -25,9 +25,12 @@ use std::{
 };
 use tokio::time::{sleep, Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info_span, trace, warn, Instrument};
+use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 
-use super::bidding::SlotBidder;
+use super::{
+    bid_observer::BidObserver,
+    bid_value_source::{best_bid_sync_source::BestBidSyncSource, interfaces::BidValueSource},
+};
 
 const SIM_ERROR_CATEGORY: &str = "submit_block_simulation";
 const VALIDATION_ERROR_CATEGORY: &str = "validate_block_simulation";
@@ -75,6 +78,7 @@ impl BestBlockCell {
 }
 
 /// Final destination of blocks (eg: submit to the relays).
+#[automock]
 pub trait BlockBuildingSink: std::fmt::Debug + Send + Sync {
     fn new_block(&self, block: Block);
 }
@@ -86,12 +90,12 @@ pub trait BuilderSinkFactory: std::fmt::Debug + Send + Sync {
     fn create_builder_sink(
         &self,
         slot_data: MevBoostSlotData,
-        slot_bidder: Arc<dyn SlotBidder>,
+        competition_bid_value_source: Arc<dyn BidValueSource + Send + Sync>,
         cancel: CancellationToken,
     ) -> Box<dyn BlockBuildingSink>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SubmissionConfig {
     pub chain_spec: Arc<ChainSpec>,
     pub signer: BLSBlockSigner,
@@ -104,7 +108,7 @@ pub struct SubmissionConfig {
     pub optimistic_max_bid_value: U256,
     pub optimistic_prevalidate_optimistic_blocks: bool,
 
-    pub blocks_processor: Option<BlocksProcessorClient>,
+    pub bid_observer: Box<dyn BidObserver + Send + Sync>,
     /// Delta relative to slot_time at which we start to submit blocks. Usually negative since we need to start submitting BEFORE the slot time.
     pub slot_delta_to_start_submits: time::Duration,
 }
@@ -133,12 +137,18 @@ async fn run_submit_to_relays_job(
     best_bid: BestBlockCell,
     slot_data: MevBoostSlotData,
     relays: Vec<MevBoostRelay>,
-    config: SubmissionConfig,
+    config: Arc<SubmissionConfig>,
     cancel: CancellationToken,
-    slot_bidder: Arc<dyn SlotBidder>,
+    competition_bid_value_source: Arc<dyn BidValueSource + Send + Sync>,
 ) -> Option<BuiltBlockInfo> {
     println!("run_submit_to_relays_job");
     // Brecht: block submission
+    
+    let best_bid_sync_source = BestBidSyncSource::new(
+        competition_bid_value_source,
+        slot_data.block(),
+        slot_data.slot(),
+    );
     let mut res = None;
     // first, sleep to slot time - slot_delta_to_start_submits
     {
@@ -209,7 +219,7 @@ async fn run_submit_to_relays_job(
             .count();
         let submission_optimistic =
             config.optimistic_enabled && block.trace.bid_value < config.optimistic_max_bid_value;
-        let best_bid_value = slot_bidder.best_bid_value().unwrap_or_default();
+        let best_bid_value = best_bid_sync_source.best_bid_value().unwrap_or_default();
         let submission_span = info_span!(
             "bid",
             bid_value = format_ether(block.trace.bid_value),
@@ -272,32 +282,16 @@ async fn run_submit_to_relays_job(
         //println!("normal_signed_submission: {:?}", normal_signed_submission);
 
         if config.dry_run {
-            println!("dry_run");
-            match validate_block(
+            validate_block(
                 &slot_data,
                 &normal_signed_submission,
                 block.sealed_block.clone(),
                 &config,
                 cancel.clone(),
+                "Dry run",
             )
-            .await
-            {
-                Ok(()) => {
-                    trace!(parent: &submission_span, "Dry run validation passed");
-                }
-                Err(ValdationError::UnableToValidate(err)) => {
-                    warn!(parent: &submission_span, err, "Failed to validate payload");
-                }
-                Err(ValdationError::ValidationFailed(err)) => {
-                    error!(parent: &submission_span, err = ?err, "Dry run validation failed");
-                    inc_failed_block_simulations();
-                    store_error_event(
-                        VALIDATION_ERROR_CATEGORY,
-                        &err.to_string(),
-                        &normal_signed_submission,
-                    );
-                }
-            }
+            .instrument(submission_span)
+            .await;
             continue 'submit;
         }
 
@@ -321,38 +315,16 @@ async fn run_submit_to_relays_job(
 
         if submission_optimistic {
             let can_submit = if config.optimistic_prevalidate_optimistic_blocks {
-                let start = Instant::now();
-                match validate_block(
+                validate_block(
                     &slot_data,
                     &optimistic_signed_submission,
                     block.sealed_block.clone(),
                     &config,
                     cancel.clone(),
+                    "Optimistic check",
                 )
+                .instrument(submission_span.clone())
                 .await
-                {
-                    Ok(()) => {
-                        trace!(parent: &submission_span,
-                            time_ms = start.elapsed().as_millis(),
-                            "Optimistic validation passed"
-                        );
-                        true
-                    }
-                    Err(ValdationError::UnableToValidate(err)) => {
-                        warn!(parent: &submission_span, err = ?err, "Failed to validate optimistic payload");
-                        false
-                    }
-                    Err(ValdationError::ValidationFailed(err)) => {
-                        error!(parent: &submission_span, err = ?err, "Optimistic Payload Validation failed");
-                        inc_failed_block_simulations();
-                        store_error_event(
-                            VALIDATION_ERROR_CATEGORY,
-                            &err.to_string(),
-                            &optimistic_signed_submission,
-                        );
-                        false
-                    }
-                }
             } else {
                 true
             };
@@ -387,22 +359,16 @@ async fn run_submit_to_relays_job(
             }
         }
 
-        if let Some(blocks_processor) = config.blocks_processor.clone() {
-            let cancel = cancel.clone();
-            tokio::spawn(async move {
-                let block_processor_result = tokio::select! {
-                    _ = cancel.cancelled() => {
-                        return;
-                    },
-                    // NOTE: we only store normal submission here because they have the same contents but different pubkeys
-                    res = blocks_processor.submit_built_block(&block.sealed_block, &normal_signed_submission, &block.trace, builder_name, best_bid_value) => res
-                };
-                if let Err(err) = block_processor_result {
-                    inc_blocks_api_errors();
-                    warn!(parent: &submission_span, "Failed to submit block to the blocks api: {}", err);
-                }
-            });
-        }
+        submission_span.in_scope(|| {
+            // NOTE: we only notify normal submission here because they have the same contents but different pubkeys
+            config.bid_observer.block_submitted(
+                block.sealed_block,
+                normal_signed_submission,
+                block.trace,
+                builder_name,
+                best_bid_value,
+            );
+        })
     }
 }
 
@@ -410,9 +376,9 @@ pub async fn run_submit_to_relays_job_and_metrics(
     best_bid: BestBlockCell,
     slot_data: MevBoostSlotData,
     relays: Vec<MevBoostRelay>,
-    config: SubmissionConfig,
+    config: Arc<SubmissionConfig>,
     cancel: CancellationToken,
-    slot_bidder: Arc<dyn SlotBidder>,
+    competition_bid_value_source: Arc<dyn BidValueSource + Send + Sync>,
 ) {
     println!("run_submit_to_relays_job_and_metrics");
     let best_bid = run_submit_to_relays_job(
@@ -421,7 +387,7 @@ pub async fn run_submit_to_relays_job_and_metrics(
         relays,
         config,
         cancel,
-        slot_bidder,
+        competition_bid_value_source,
     )
     .await;
     if let Some(best_bid) = best_bid {
@@ -432,16 +398,23 @@ pub async fn run_submit_to_relays_job_and_metrics(
     }
 }
 
+fn log_validation_error(err: ValidationError, level: Level, validation_use: &str) {
+    dynamic_event!(level,err = ?err, validation_use,"Validation failed");
+}
+
+/// Validates the blocks handling any logging.
+/// Answers if the block was validated ok.
 async fn validate_block(
     slot_data: &MevBoostSlotData,
     signed_submit_request: &SubmitBlockRequest,
     block: SealedBlock,
     config: &SubmissionConfig,
     cancellation_token: CancellationToken,
-) -> Result<(), ValdationError> {
+    validation_use: &str,
+) -> bool {
     let withdrawals_root = block.withdrawals_root.unwrap_or_default();
-
-    config
+    let start = Instant::now();
+    match config
         .validation_api
         .validate_block(
             signed_submit_request,
@@ -450,8 +423,35 @@ async fn validate_block(
             block.parent_beacon_block_root,
             cancellation_token,
         )
-        .await?;
-    Ok(())
+        .await
+    {
+        Ok(()) => {
+            trace!(
+                time_ms = start.elapsed().as_millis(),
+                validation_use,
+                "Validation passed"
+            );
+            true
+        }
+        Err(ValidationError::ValidationFailed(err)) => {
+            log_validation_error(
+                ValidationError::ValidationFailed(err.clone()),
+                Level::ERROR,
+                validation_use,
+            );
+            inc_failed_block_simulations();
+            store_error_event(
+                VALIDATION_ERROR_CATEGORY,
+                &err.to_string(),
+                signed_submit_request,
+            );
+            false
+        }
+        Err(err) => {
+            log_validation_error(err, Level::WARN, validation_use);
+            false
+        }
+    }
 }
 
 async fn submit_bid_to_the_relay(
@@ -488,12 +488,22 @@ async fn submit_bid_to_the_relay(
             cancel.cancel();
         }
         Err(SubmitBlockErr::BidBelowFloor | SubmitBlockErr::PayloadAttributesNotKnown) => {
-            trace!(err = ?relay_result.unwrap_err(), "Block not accepted by the relay");
+            trace!(
+                err = ?relay_result.unwrap_err(),
+                "Block not accepted by the relay"
+            );
         }
-        Err(SubmitBlockErr::SimError(err)) => {
+        Err(SubmitBlockErr::SimError(_)) => {
             inc_failed_block_simulations();
-            error!(err = ?err, "Error block simulation fail, cancelling");
-            store_error_event(SIM_ERROR_CATEGORY, &err.to_string(), &signed_submit_request);
+            store_error_event(
+                SIM_ERROR_CATEGORY,
+                relay_result.as_ref().unwrap_err().to_string().as_str(),
+                &signed_submit_request,
+            );
+            error!(
+                err = ?relay_result.unwrap_err(),
+                "Error block simulation fail, cancelling"
+            );
             cancel.cancel();
         }
         Err(SubmitBlockErr::RelayError(RelayError::TooManyRequests)) => {
@@ -508,19 +518,19 @@ async fn submit_bid_to_the_relay(
         Err(SubmitBlockErr::BlockKnown) => {
             trace!("Block already known");
         }
-        Err(SubmitBlockErr::RelayError(err)) => {
-            warn!(err = ?err, "Error submitting block to the relay");
+        Err(SubmitBlockErr::RelayError(_)) => {
+            warn!(err = ?relay_result.unwrap_err(), "Error submitting block to the relay");
             inc_other_relay_errors(&relay.id);
         }
-        Err(SubmitBlockErr::RPCConversionError(err)) => {
+        Err(SubmitBlockErr::RPCConversionError(_)) => {
             error!(
-                err = ?err,
+                err = ?relay_result.unwrap_err(),
                 "RPC conversion error (illegal submission?) submitting block to the relay",
             );
         }
-        Err(SubmitBlockErr::RPCSerializationError(err)) => {
+        Err(SubmitBlockErr::RPCSerializationError(_)) => {
             error!(
-                err = ?err,
+                err = ?relay_result.unwrap_err(),
                 "SubmitBlock serialization error submitting block to the relay",
             );
         }
@@ -533,7 +543,7 @@ async fn submit_bid_to_the_relay(
 /// Real life BuilderSinkFactory that send the blocks to the Relay
 #[derive(Debug)]
 pub struct RelaySubmitSinkFactory {
-    submission_config: SubmissionConfig,
+    submission_config: Arc<SubmissionConfig>,
     relays: HashMap<MevBoostRelayID, MevBoostRelay>,
 }
 
@@ -544,7 +554,7 @@ impl RelaySubmitSinkFactory {
             .map(|relay| (relay.id.clone(), relay))
             .collect();
         Self {
-            submission_config,
+            submission_config: Arc::new(submission_config),
             relays,
         }
     }
@@ -554,7 +564,7 @@ impl BuilderSinkFactory for RelaySubmitSinkFactory {
     fn create_builder_sink(
         &self,
         slot_data: MevBoostSlotData,
-        slot_bidder: Arc<dyn SlotBidder>,
+        competition_bid_value_source: Arc<dyn BidValueSource + Send + Sync>,
         cancel: CancellationToken,
     ) -> Box<dyn BlockBuildingSink> {
         let best_bid = BestBlockCell::default();
@@ -580,7 +590,7 @@ impl BuilderSinkFactory for RelaySubmitSinkFactory {
             relays,
             self.submission_config.clone(),
             cancel,
-            slot_bidder,
+            competition_bid_value_source,
         ));
         Box::new(best_bid)
     }

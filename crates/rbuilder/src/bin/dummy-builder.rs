@@ -19,8 +19,8 @@ use rbuilder::{
     },
     live_builder::{
         base_config::{
-            DEFAULT_EL_NODE_IPC_PATH, DEFAULT_ERROR_STORAGE_PATH, DEFAULT_INCOMING_BUNDLES_PORT,
-            DEFAULT_IP, DEFAULT_RETH_DB_PATH,
+            DEFAULT_EL_NODE_IPC_PATH, DEFAULT_INCOMING_BUNDLES_PORT, DEFAULT_IP,
+            DEFAULT_RETH_DB_PATH,
         }, config::create_provider_factory, layer2_info::Layer2Info, order_input::{
             OrderInputConfig, DEFAULT_INPUT_CHANNEL_BUFFER_SIZE, DEFAULT_RESULTS_CHANNEL_TIMEOUT,
             DEFAULT_SERVE_MAX_CONNECTIONS,
@@ -30,7 +30,7 @@ use rbuilder::{
         mev_boost::{MevBoostRelay, RelayConfig},
         SimulatedOrder,
     },
-    roothash::RootHashMode,
+    roothash::RootHashConfig,
     utils::Signer,
 };
 use reth::{providers::ProviderFactory, tasks::pool::BlockingTaskPool};
@@ -68,7 +68,7 @@ async fn main() -> eyre::Result<()> {
 
     let builder = LiveBuilder::<Arc<DatabaseEnv>, MevBoostSlotDataGenerator> {
         watchdog_timeout: Duration::from_secs(10000),
-        error_storage_path: DEFAULT_ERROR_STORAGE_PATH.parse().unwrap(),
+        error_storage_path: None,
         simulation_threads: 1,
         blocks_source: payload_event,
         order_input_config: OrderInputConfig::new(
@@ -197,7 +197,7 @@ impl DummyBuildingAlgorithm {
         let mut block_building_helper = BlockBuildingHelperFromDB::new(
             provider_factory.clone(),
             self.root_hash_task_pool.clone(),
-            RootHashMode::CorrectRoot,
+            RootHashConfig::live_config(false, false),
             ctx.clone(),
             None,
             BUILDER_NAME.to_string(),

@@ -11,11 +11,12 @@ pub mod sim;
 pub mod testing;
 pub mod tracers;
 pub use block_orders::BlockOrders;
+use eth_sparse_mpt::SparseTrieSharedCache;
 use reth_primitives::proofs::calculate_requests_root;
 
 use crate::{
     primitives::{Order, OrderId, SimValue, SimulatedOrder, TransactionSignedEcRecoveredWithBlobs},
-    roothash::calculate_state_root,
+    roothash::{calculate_state_root, RootHashConfig, RootHashError, RootHashMode},
     utils::{a2r_withdrawal, calc_gas_limit, timestamp_as_u64, Signer},
 };
 use ahash::HashSet;
@@ -35,7 +36,8 @@ use reth_basic_payload_builder::{commit_withdrawals, WithdrawalsOutcome};
 use reth_chainspec::{ChainSpec, EthereumHardforks};
 use reth_errors::ProviderError;
 use reth_evm::system_calls::{
-    post_block_withdrawal_requests_contract_call, pre_block_beacon_root_contract_call,
+    post_block_consolidation_requests_contract_call, post_block_withdrawal_requests_contract_call,
+    pre_block_beacon_root_contract_call, pre_block_blockhashes_contract_call,
 };
 use reth_evm_ethereum::{eip6110::parse_deposits_from_receipts, revm_spec, EthEvmConfig};
 use reth_node_api::PayloadBuilderAttributes;
@@ -50,7 +52,7 @@ use thiserror::Error;
 use time::OffsetDateTime;
 
 use self::tracers::SimulationTracer;
-use crate::{roothash::RootHashMode, utils::default_cfg_env};
+use crate::utils::default_cfg_env;
 pub use block_orders::*;
 pub use built_block_trace::*;
 #[cfg(test)]
@@ -76,6 +78,7 @@ pub struct BlockBuildingContext {
     pub excess_blob_gas: Option<u64>,
     /// Version of the EVM that we are going to use
     pub spec_id: SpecId,
+    pub shared_sparse_mpt_cache: SparseTrieSharedCache,
 }
 
 impl BlockBuildingContext {
@@ -141,6 +144,7 @@ impl BlockBuildingContext {
             extra_data,
             excess_blob_gas,
             spec_id,
+            shared_sparse_mpt_cache: Default::default(),
         }
     }
 
@@ -156,7 +160,7 @@ impl BlockBuildingContext {
         suggested_fee_recipient: Address,
         builder_signer: Option<Signer>,
     ) -> BlockBuildingContext {
-        let block_number = onchain_block.header.number.unwrap_or(1);
+        let block_number = onchain_block.header.number;
 
         let blob_excess_gas_and_price =
             if chain_spec.is_cancun_active_at_timestamp(onchain_block.header.timestamp) {
@@ -225,7 +229,23 @@ impl BlockBuildingContext {
             extra_data: Vec::new(),
             excess_blob_gas: onchain_block.header.excess_blob_gas.map(|b| b as u64),
             spec_id,
+            shared_sparse_mpt_cache: Default::default(),
         }
+    }
+
+    /// Useless BlockBuildingContext for testing in contexts where we can't avoid having a BlockBuildingContext.
+    pub fn dummy_for_testing() -> Self {
+        let mut onchain_block: alloy_rpc_types::Block = Default::default();
+        onchain_block.header.base_fee_per_gas = Some(0);
+        BlockBuildingContext::from_onchain_block(
+            onchain_block,
+            reth_chainspec::MAINNET.clone(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
     }
 
     pub fn modify_use_suggested_fee_recipient_as_coinbase(&mut self) {
@@ -361,7 +381,7 @@ impl ExecutionError {
                     tx: tx_nonce,
                     ..
                 }),
-            )) => Some((order.list_txs().first()?.0.tx.signer(), *tx_nonce)),
+            )) => Some((order.list_txs().first()?.0.signer(), *tx_nonce)),
             ExecutionError::OrderError(OrderErr::Bundle(BundleErr::InvalidTransaction(
                 hash,
                 TransactionErr::InvalidTransaction(InvalidTransaction::NonceTooHigh {
@@ -372,9 +392,8 @@ impl ExecutionError {
                 let signer = order
                     .list_txs()
                     .iter()
-                    .find(|(tx, _)| &tx.tx.hash == hash)?
+                    .find(|(tx, _)| TransactionSignedEcRecoveredWithBlobs::hash(tx) == *hash)?
                     .0
-                    .tx
                     .signer();
                 Some((signer, *tx_nonce))
             }
@@ -388,6 +407,24 @@ pub struct FinalizeResult {
     pub cached_reads: CachedReads,
     // sidecars for all txs in SealedBlock
     pub txs_blob_sidecars: Vec<Arc<BlobTransactionSidecar>>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum FinalizeError {
+    #[error("Root hash error: {0:?}")]
+    RootHash(#[from] RootHashError),
+    #[error("Other error: {0:?}")]
+    Other(#[from] eyre::Report),
+}
+
+impl FinalizeError {
+    /// see `RootHashError::is_consistent_db_view_err`
+    pub fn is_consistent_db_view_err(&self) -> bool {
+        match self {
+            FinalizeError::RootHash(root_hash) => root_hash.is_consistent_db_view_err(),
+            FinalizeError::Other(_) => false,
+        }
+    }
 }
 
 impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
@@ -554,9 +591,9 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         state: &mut BlockState,
         ctx: &BlockBuildingContext,
         provider_factory: ProviderFactory<DB>,
-        root_hash_mode: RootHashMode,
+        root_hash_config: RootHashConfig,
         root_hash_task_pool: BlockingTaskPool,
-    ) -> eyre::Result<FinalizeResult> {
+    ) -> Result<FinalizeResult, FinalizeError> {
         let (withdrawals_root, withdrawals) = {
             let mut db = state.new_db_ref();
             let WithdrawalsOutcome {
@@ -567,7 +604,8 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
                 &ctx.chain_spec,
                 ctx.attributes.timestamp,
                 ctx.attributes.withdrawals.clone(),
-            )?;
+            )
+            .map_err(|err| FinalizeError::Other(err.into()))?;
             db.as_mut().merge_transitions(PlainState);
             (withdrawals_root, withdrawals)
         };
@@ -576,18 +614,33 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             .chain_spec
             .is_prague_active_at_timestamp(ctx.attributes.timestamp())
         {
-            let deposit_requests =
-                parse_deposits_from_receipts(&ctx.chain_spec, self.receipts.iter())?;
+            let evm_config = EthEvmConfig::default();
             let mut db = state.new_db_ref();
 
+            let deposit_requests =
+                parse_deposits_from_receipts(&ctx.chain_spec, self.receipts.iter())
+                    .map_err(|err| FinalizeError::Other(err.into()))?;
             let withdrawal_requests = post_block_withdrawal_requests_contract_call(
-                &EthEvmConfig::default(),
+                &evm_config,
                 db.as_mut(),
                 &ctx.initialized_cfg,
                 &ctx.block_env,
-            )?;
+            )
+            .map_err(|err| FinalizeError::Other(err.into()))?;
+            let consolidation_requests = post_block_consolidation_requests_contract_call(
+                &evm_config,
+                db.as_mut(),
+                &ctx.initialized_cfg,
+                &ctx.block_env,
+            )
+            .map_err(|err| FinalizeError::Other(err.into()))?;
 
-            let requests = [deposit_requests, withdrawal_requests].concat();
+            let requests = [
+                deposit_requests,
+                withdrawal_requests,
+                consolidation_requests,
+            ]
+            .concat();
             let requests_root = calculate_requests_root(&requests);
             (Some(requests.into()), Some(requests_root))
         } else {
@@ -615,14 +668,16 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             .expect("Number is in range");
 
         // Brecht: state root calculation
+        // TODO Brecht: Fix
+        let mut root_hash_config = root_hash_config;
+        root_hash_config.mode = RootHashMode::IgnoreParentHash;
         let state_root = calculate_state_root(
             provider_factory,
             ctx.attributes.parent,
             &execution_outcome,
-            // TODO Brecht: Fix
-            //root_hash_mode,
-            RootHashMode::IgnoreParentHash,
             root_hash_task_pool,
+            ctx.shared_sparse_mpt_cache.clone(),
+            root_hash_config,
         )?;
 
         // create the block header
@@ -630,13 +685,14 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         // double check blocked txs
         for tx_with_blob in &self.executed_tx {
-            let tx = &tx_with_blob.tx;
-            if ctx.blocklist.contains(&tx.signer()) {
-                return Err(eyre::eyre!("To from blocked address."));
+            if ctx.blocklist.contains(&tx_with_blob.signer()) {
+                return Err(FinalizeError::Other(eyre::eyre!(
+                    "To from blocked address."
+                )));
             }
-            if let Some(to) = tx.to() {
+            if let Some(to) = tx_with_blob.to() {
                 if ctx.blocklist.contains(&to) {
-                    return Err(eyre::eyre!("Tx to blocked address"));
+                    return Err(FinalizeError::Other(eyre::eyre!("Tx to blocked address")));
                 }
             }
         }
@@ -682,7 +738,11 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         let block = Block {
             header,
-            body: self.executed_tx.clone().into_iter().map(|t| t.tx.into()).collect(),
+            body: self
+                .executed_tx
+                .into_iter()
+                .map(|t| t.into_internal_tx_unsecure().into())
+                .collect(),
             ommers: vec![],
             withdrawals,
             requests,
@@ -702,16 +762,23 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         ctx: &BlockBuildingContext,
         state: &mut BlockState,
     ) -> eyre::Result<()> {
+        let evm_config = EthEvmConfig::default();
         let mut db = state.new_db_ref();
         pre_block_beacon_root_contract_call(
             db.as_mut(),
-            &EthEvmConfig::default(),
+            &evm_config,
             &ctx.chain_spec,
             &ctx.initialized_cfg,
             &ctx.block_env,
-            ctx.block_env.number.to(),
-            ctx.attributes.timestamp(),
             ctx.attributes.parent_beacon_block_root(),
+        )?;
+        pre_block_blockhashes_contract_call(
+            db.as_mut(),
+            &evm_config,
+            &ctx.chain_spec,
+            &ctx.initialized_cfg,
+            &ctx.block_env,
+            ctx.attributes.parent,
         )?;
         db.as_mut().merge_transitions(BundleRetention::Reverts);
         Ok(())

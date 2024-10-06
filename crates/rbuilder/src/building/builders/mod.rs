@@ -1,11 +1,13 @@
 //! builders is a subprocess that builds a block
 pub mod block_building_helper;
+pub mod mock_block_building_helper;
 pub mod ordering_builder;
 
 use crate::{
     building::{BlockBuildingContext, BlockOrders, BuiltBlockTrace, SimulatedOrderSink, Sorting},
     live_builder::{payload_events::MevBoostSlotData, simulation::SimulatedOrderCommand},
     primitives::{AccountNonce, OrderId, SimulatedOrder},
+    roothash::RootHashConfig,
     utils::{is_provider_factory_health_error, NonceCache},
 };
 use ahash::{HashMap, HashSet};
@@ -36,6 +38,7 @@ pub struct Block {
 #[derive(Debug)]
 pub struct LiveBuilderInput<DB: Database> {
     pub provider_factory: HashMap<u64, ProviderFactory<DB>>,
+    pub root_hash_config: RootHashConfig,
     pub root_hash_task_pool: BlockingTaskPool,
     pub ctx: HashMap<u64, BlockBuildingContext>,
     pub input: broadcast::Receiver<SimulatedOrderCommand>,
