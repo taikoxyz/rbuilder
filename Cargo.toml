@@ -75,17 +75,11 @@ alloy-rpc-types-engine = { version = "0.3.0", features = [
 ] }
 alloy-rpc-types-eth = { version = "0.3.0" }
 alloy-signer-local = { version = "0.3.0" }
-alloy-sol-types = { version = "0.8.0", default-features = false }
+alloy-sol-types = { version = "0.8.2", default-features = false }
 
 [patch.crates-io]
-revm = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth", features = [
-    "std",
-    "secp256k1",
-    "blst",
-], default-features = false }
-revm-primitives = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth",  features = [
-    "std",
-], default-features = false }
+revm = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+revm-primitives = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
 revm-interpreter = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
 revm-precompile = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
 revm-inspectors = { git = "https://github.com/taikoxyz/revm-inspectors.git", branch = "main-rbuilder" }
