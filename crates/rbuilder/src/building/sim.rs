@@ -13,7 +13,7 @@ use rand::seq::SliceRandom;
 use reth::providers::ProviderFactory;
 use reth_db::database::Database;
 use reth_errors::ProviderError;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::{CachedReads, SyncCachedReads};
 use reth_provider::StateProvider;
 use std::{
     cmp::{max, min, Ordering},
@@ -338,7 +338,7 @@ pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
         ctx.chain_spec.chain.id(),
         Arc::<dyn StateProvider>::from(factory.history_by_block_hash(ctx.attributes.parent)?),
     );
-    let mut cache_reads = Some(CachedReads::default());
+    let mut cache_reads = Some(SyncCachedReads::default());
     loop {
         // mix new orders into the sim_tree
         if randomize_insertion && !orders.is_empty() {

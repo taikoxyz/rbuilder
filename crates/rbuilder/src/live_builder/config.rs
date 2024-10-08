@@ -46,7 +46,7 @@ use eyre::Context;
 use reth::tasks::pool::BlockingTaskPool;
 use reth_chainspec::{Chain, ChainSpec, NamedChain};
 use reth_db::DatabaseEnv;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::{CachedReads, SyncCachedReads};
 use reth_primitives::StaticFileSegment;
 use reth_provider::StaticFileProviderFactory;
 use serde::Deserialize;
@@ -364,7 +364,7 @@ impl LiveBuilderConfig for Config {
         &self,
         building_algorithm_name: &str,
         input: BacktestSimulateBlockInput<'_, Arc<DatabaseEnv>>,
-    ) -> eyre::Result<(Block, CachedReads)> {
+    ) -> eyre::Result<(Block, SyncCachedReads)> {
         let builder_cfg = self.builder(building_algorithm_name)?;
         match builder_cfg.builder {
             SpecificBuilderConfig::OrderingBuilder(config) => {

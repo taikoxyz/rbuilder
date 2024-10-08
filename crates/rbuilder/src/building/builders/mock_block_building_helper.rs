@@ -6,7 +6,7 @@ use crate::{
     primitives::SimulatedOrder,
 };
 use alloy_primitives::U256;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::{CachedReads, SyncCachedReads};
 use reth_primitives::SealedBlock;
 use time::OffsetDateTime;
 
@@ -85,12 +85,12 @@ impl BlockBuildingHelper for MockBlockBuildingHelper {
 
         Ok(FinalizeBlockResult {
             block,
-            cached_reads: CachedReads::default(),
+            cached_reads: SyncCachedReads::default(),
         })
     }
 
-    fn clone_cached_reads(&self) -> CachedReads {
-        CachedReads::default()
+    fn clone_cached_reads(&self) -> SyncCachedReads {
+        SyncCachedReads::default()
     }
 
     fn built_block_trace(&self) -> &BuiltBlockTrace {
@@ -101,7 +101,7 @@ impl BlockBuildingHelper for MockBlockBuildingHelper {
         &self.block_building_context
     }
 
-    fn update_cached_reads(&mut self, _cached_reads: CachedReads) {
+    fn update_cached_reads(&mut self, _cached_reads: SyncCachedReads) {
         unimplemented!()
     }
 }

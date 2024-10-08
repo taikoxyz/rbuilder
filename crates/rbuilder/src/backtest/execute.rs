@@ -15,7 +15,7 @@ use alloy_primitives::{Address, U256};
 use reth::providers::ProviderFactory;
 use reth_chainspec::ChainSpec;
 use reth_db::{database::Database, DatabaseEnv};
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::{CachedReads, SyncCachedReads};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -151,7 +151,7 @@ pub fn backtest_simulate_block<ConfigType: LiveBuilderConfig>(
     let simulated_total_gas = sim_orders.iter().map(|o| o.sim_value.gas_used).sum();
     let mut builder_outputs = Vec::new();
 
-    let mut cached_reads = Some(CachedReads::default());
+    let mut cached_reads = Some(SyncCachedReads::default());
     for building_algorithm_name in builders_names {
         let input = BacktestSimulateBlockInput {
             ctx: ctx.clone(),

@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{roothash::RootHashConfig, utils::check_provider_factory_health};
 use reth::tasks::pool::BlockingTaskPool;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::{CachedReads, SyncCachedReads};
 use serde::Deserialize;
 use std::{os::unix::fs::lchown, time::{Duration, Instant}};
 use tracing::{error, info_span, trace};
@@ -131,7 +131,7 @@ pub fn run_ordering_builder<DB: Database + Clone + 'static>(
 pub fn backtest_simulate_block<DB: Database + Clone + 'static>(
     ordering_config: OrderingBuilderConfig,
     input: BacktestSimulateBlockInput<'_, DB>,
-) -> eyre::Result<(Block, CachedReads)> {
+) -> eyre::Result<(Block, SyncCachedReads)> {
 
     let mut provider_factories = HashMap::default();
     provider_factories.insert(input.ctx.chain_spec.chain.id(), input.provider_factory.clone());
@@ -186,7 +186,7 @@ pub struct OrderingBuilderContext<DB> {
     root_hash_config: RootHashConfig,
 
     // caches
-    cached_reads: Option<CachedReads>,
+    cached_reads: Option<SyncCachedReads>,
 
     // scratchpad
     failed_orders: HashSet<OrderId>,
@@ -215,14 +215,14 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
         }
     }
 
-    pub fn with_cached_reads(self, cached_reads: CachedReads) -> Self {
+    pub fn with_cached_reads(self, cached_reads: SyncCachedReads) -> Self {
         Self {
             cached_reads: Some(cached_reads),
             ..self
         }
     }
 
-    pub fn take_cached_reads(&mut self) -> Option<CachedReads> {
+    pub fn take_cached_reads(&mut self) -> Option<SyncCachedReads> {
         self.cached_reads.take()
     }
 

@@ -12,9 +12,9 @@ use crate::{
 
 use alloy_primitives::{Address, B256, U256};
 
-use reth::revm::database::StateProviderDatabase;
+use reth::revm::database::{StateProviderDatabase, SyncStateProviderDatabase};
 use reth_errors::ProviderError;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::{CachedReads, SyncCachedReads};
 use reth_primitives::{
     constants::eip4844::{DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK},
     transaction::FillTxEnv,
@@ -24,9 +24,9 @@ use reth_provider::{StateProvider, StateProviderBox};
 use revm::{
     db::{states::bundle_state::BundleRetention, BundleState},
     inspector_handle_register,
-    primitives::{db::WrapDatabaseRef, EVMError, Env, ExecutionResult, InvalidTransaction, TxEnv},
-    Database, DatabaseCommit, State,
+    primitives::{db::WrapDatabaseRef, EVMError, Env, ExecutionResult, InvalidTransaction, TxEnv}, DatabaseCommit, State, SyncDatabase as Database,
 };
+use revm_primitives::ChainAddress;
 
 use crate::building::evm_inspector::{RBuilderEVMInspector, UsedStateTrace};
 use std::{sync::Arc};
@@ -36,7 +36,7 @@ use thiserror::Error;
 #[derive(Clone)]
 pub struct BlockState {
     providers: HashMap<u64, Arc<dyn StateProvider>>,
-    cached_reads: CachedReads,
+    cached_reads: SyncCachedReads,
     bundle_state: Option<BundleState>,
 }
 
@@ -50,7 +50,7 @@ impl BlockState {
     pub fn new_arc(providers: HashMap<u64, Arc<dyn StateProvider>>) -> Self {
         Self {
             providers,
-            cached_reads: CachedReads::default(),
+            cached_reads: SyncCachedReads::default(),
             bundle_state: Some(BundleState::default()),
         }
     }
@@ -69,7 +69,7 @@ impl BlockState {
         self.providers[&chain_id].clone()
     }
 
-    pub fn with_cached_reads(mut self, cached_reads: CachedReads) -> Self {
+    pub fn with_cached_reads(mut self, cached_reads:SyncCachedReads) -> Self {
         self.cached_reads = cached_reads;
         self
     }
@@ -79,11 +79,11 @@ impl BlockState {
         self
     }
 
-    pub fn into_parts(self) -> (CachedReads, BundleState, HashMap<u64, Arc<dyn StateProvider>>) {
+    pub fn into_parts(self) -> (SyncCachedReads, BundleState, HashMap<u64, Arc<dyn StateProvider>>) {
         (self.cached_reads, self.bundle_state.unwrap(), self.providers)
     }
 
-    pub fn clone_bundle_and_cache(&self) -> (CachedReads, BundleState) {
+    pub fn clone_bundle_and_cache(&self) -> (SyncCachedReads, BundleState) {
         (
             self.cached_reads.clone(),
             self.bundle_state.clone().unwrap(),
@@ -92,7 +92,10 @@ impl BlockState {
 
     pub fn new_db_ref(&mut self) -> BlockStateDBRef<impl Database<Error = ProviderError> + '_> {
         // TODO: Brecht fix
-        let state_provider = StateProviderDatabase::new(&self.providers[&167010]);
+        let state_provider = SyncStateProviderDatabase::new(
+            Some(167010),
+            StateProviderDatabase(&self.providers[&167010])
+        );
         let cachedb = WrapDatabaseRef(self.cached_reads.as_db(state_provider));
         let bundle_state = self.bundle_state.take().unwrap();
         let db = State::builder()
@@ -103,7 +106,7 @@ impl BlockState {
         BlockStateDBRef::new(db, &mut self.bundle_state)
     }
 
-    pub fn balance(&mut self, address: Address) -> Result<U256, ProviderError> {
+    pub fn balance(&mut self, address: ChainAddress) -> Result<U256, ProviderError> {
         let mut db = self.new_db_ref();
         Ok(db
             .as_mut()
@@ -112,7 +115,7 @@ impl BlockState {
             .unwrap_or_default())
     }
 
-    pub fn nonce(&mut self, address: Address) -> Result<u64, ProviderError> {
+    pub fn nonce(&mut self, address: ChainAddress) -> Result<u64, ProviderError> {
         let mut db = self.new_db_ref();
         Ok(db
             .as_mut()
@@ -121,7 +124,7 @@ impl BlockState {
             .unwrap_or_default())
     }
 
-    pub fn code_hash(&mut self, address: Address) -> Result<B256, ProviderError> {
+    pub fn code_hash(&mut self, address: ChainAddress) -> Result<B256, ProviderError> {
         let mut db = self.new_db_ref();
         Ok(db
             .as_mut()
@@ -130,7 +133,7 @@ impl BlockState {
             .unwrap_or_else(|| KECCAK_EMPTY))
     }
 
-    pub fn clone_cached_reads(&self) -> CachedReads {
+    pub fn clone_cached_reads(&self) -> SyncCachedReads {
         self.cached_reads.clone()
     }
 }
@@ -688,7 +691,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 return Ok(Err(BundleErr::NoSigner));
             };
 
-            let nonce = self.state.nonce(builder_signer.address)?;
+            let nonce = self.state.nonce(ChainAddress(ctx.chain_spec.chain.id(), builder_signer.address))?;
             let payout_tx = match create_payout_tx(
                 ctx.chain_spec.as_ref(),
                 ctx.block_env.basefee,

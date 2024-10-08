@@ -13,7 +13,7 @@ use rbuilder::{
     utils::{extract_onchain_block_txs, find_suggested_fee_recipient, http_provider},
 };
 use reth::providers::BlockNumReader;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::{CachedReads, SyncCachedReads};
 use reth_provider::StateProvider;
 use std::{path::PathBuf, sync::Arc, time::Instant};
 use tracing::{debug, info};
@@ -85,7 +85,7 @@ async fn main() -> eyre::Result<()> {
 
     let mut build_times_ms = Vec::new();
     let mut finalize_time_ms = Vec::new();
-    let mut cached_reads = Some(CachedReads::default());
+    let mut cached_reads = Some(SyncCachedReads::default());
     for _ in 0..cli.iters {
         let ctx = ctx.clone();
         let txs = txs.clone();

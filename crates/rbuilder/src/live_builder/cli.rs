@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use clap::Parser;
 use reth_db::DatabaseEnv;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::{CachedReads, SyncCachedReads};
 use tokio::signal::ctrl_c;
 use tokio_util::sync::CancellationToken;
 
@@ -52,7 +52,7 @@ pub trait LiveBuilderConfig: std::fmt::Debug + serde::de::DeserializeOwned {
         &self,
         building_algorithm_name: &str,
         input: BacktestSimulateBlockInput<'_, Arc<DatabaseEnv>>,
-    ) -> eyre::Result<(Block, CachedReads)>;
+    ) -> eyre::Result<(Block, SyncCachedReads)>;
 }
 
 /// print_version_info func that will be called on command Cli::Version
