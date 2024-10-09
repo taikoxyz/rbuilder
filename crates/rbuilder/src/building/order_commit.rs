@@ -91,7 +91,7 @@ impl BlockState {
     }
 
     pub fn new_db_ref(&mut self) -> BlockStateDBRef<impl Database<Error = ProviderError> + '_> {
-        println!("Setting up a db for {:?}", self.providers);
+        // println!("Setting up a db for {:?}", self.providers);
         // TODO: Brecht fix
         //let state_provider = SyncStateProviderDatabase::new(
         //    Some(167010),
