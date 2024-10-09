@@ -66,7 +66,7 @@ impl BlockProposer {
     }
 
     pub async fn propose_block(&self, request: &SubmitBlockRequest) -> Result<()> {
-        println!("Dani debug: Trying to propose blocks");
+        println!("propose_block");
 
         let execution_payload = request.execution_payload();
         
