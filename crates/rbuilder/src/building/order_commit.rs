@@ -93,11 +93,12 @@ impl BlockState {
     pub fn new_db_ref(&mut self) -> BlockStateDBRef<impl Database<Error = ProviderError> + '_> {
         println!("Setting up a db for {:?}", self.providers);
         // TODO: Brecht fix
-        let state_provider = SyncStateProviderDatabase::new(
-            Some(167010),
-            StateProviderDatabase(&self.providers[&167010])
-        );
-        let cachedb = WrapDatabaseRef(self.cached_reads.as_db(state_provider));
+        //let state_provider = SyncStateProviderDatabase::new(
+        //    Some(167010),
+        //    StateProviderDatabase(&self.providers[&167010])
+        //);
+        let state_providers = SyncStateProviderDatabase(self.providers.iter().map(|(chain_id, provider)| (*chain_id, StateProviderDatabase(provider))).collect());
+        let cachedb = WrapDatabaseRef(self.cached_reads.as_db(state_providers));
         let bundle_state = self.bundle_state.take().unwrap();
         let db = State::builder()
             .with_database(cachedb)
