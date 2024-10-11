@@ -75,5 +75,32 @@ alloy-rpc-types-engine = { version = "0.3.0", features = [
 ] }
 alloy-rpc-types-eth = { version = "0.3.0" }
 alloy-signer-local = { version = "0.3.0" }
-alloy-sol-types = { version = "0.8.0", default-features = false }
-#alloy-contract = { version = "0.3.0", default-features = false }
+alloy-sol-types = { version = "0.8.2", default-features = false }
+
+[patch.crates-io]
+revm = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+revm-primitives = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+revm-interpreter = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+revm-precompile = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+revm-inspectors = { git = "https://github.com/taikoxyz/revm-inspectors.git", branch = "main-rbuilder" }
+
+[patch."https://github.com/paradigmxyz/reth"]
+reth = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-db = {git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-db-common = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-errors = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-libmdbx = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-payload-builder = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-node-api = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-trie = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-trie-parallel = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-basic-payload-builder = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-node-core = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-primitives = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-provider = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-chainspec = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-evm = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-evm-ethereum = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-db-api = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-execution-errors = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }
+reth-trie-db = { git = "https://github.com/taikoxyz/taiko-reth", branch = "rbuilderV3" }

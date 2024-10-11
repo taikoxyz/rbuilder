@@ -13,6 +13,7 @@ pub mod tracers;
 pub use block_orders::BlockOrders;
 use eth_sparse_mpt::SparseTrieSharedCache;
 use reth_primitives::proofs::calculate_requests_root;
+use revm_primitives::ChainAddress;
 
 use crate::{
     primitives::{Order, OrderId, SimValue, SimulatedOrder, TransactionSignedEcRecoveredWithBlobs},
@@ -41,7 +42,7 @@ use reth_evm::system_calls::{
 };
 use reth_evm_ethereum::{eip6110::parse_deposits_from_receipts, revm_spec, EthEvmConfig};
 use reth_node_api::PayloadBuilderAttributes;
-use reth_payload_builder::{database::CachedReads, EthPayloadBuilderAttributes};
+use reth_payload_builder::{database::SyncCachedReads as CachedReads, EthPayloadBuilderAttributes};
 use revm::{
     db::states::bundle_state::BundleRetention::{self, PlainState},
     primitives::{BlobExcessGasAndPrice, BlockEnv, CfgEnvWithHandlerCfg, SpecId},
@@ -100,7 +101,7 @@ impl BlockBuildingContext {
         )
         .expect("PayloadBuilderAttributes::try_new");
         let (initialized_cfg, mut block_env) = attributes.cfg_and_block_env(&chain_spec, parent);
-        block_env.coinbase = signer.address;
+        block_env.coinbase = ChainAddress(chain_spec.chain.id(), signer.address);
         if let Some(desired_limit) = prefer_gas_limit {
             block_env.gas_limit =
                 U256::from(calc_gas_limit(block_env.gas_limit.to(), desired_limit));
@@ -172,7 +173,7 @@ impl BlockBuildingContext {
             };
         let block_env = BlockEnv {
             number: U256::from(block_number),
-            coinbase,
+            coinbase: ChainAddress(chain_spec.chain.id(), coinbase),
             timestamp: U256::from(onchain_block.header.timestamp),
             difficulty: onchain_block.header.difficulty,
             prevrandao: onchain_block.header.mix_hash,
@@ -250,7 +251,7 @@ impl BlockBuildingContext {
 
     pub fn modify_use_suggested_fee_recipient_as_coinbase(&mut self) {
         self.builder_signer = None;
-        self.block_env.coinbase = self.attributes.suggested_fee_recipient;
+        self.block_env.coinbase = ChainAddress(self.chain_spec.chain.id(), self.attributes.suggested_fee_recipient);
     }
 
     pub fn timestamp(&self) -> OffsetDateTime {
@@ -263,7 +264,7 @@ impl BlockBuildingContext {
     }
 
     pub fn coinbase_is_suggested_fee_recipient(&self) -> bool {
-        self.block_env.coinbase == self.attributes.suggested_fee_recipient
+        self.block_env.coinbase == ChainAddress(self.chain_spec.chain.id(), self.attributes.suggested_fee_recipient)
     }
 }
 
@@ -552,7 +553,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         //println!("insert_proposer_payout_tx: builder_signer: {:?}", builder_signer);
         self.free_reserved_gas();
         let nonce = state
-            .nonce(builder_signer.address)
+            .nonce(ChainAddress(ctx.chain_spec.chain.id(), builder_signer.address))
             .map_err(CriticalCommitOrderError::Reth)?;
         let tx = create_payout_tx(
             ctx.chain_spec.as_ref(),
@@ -649,6 +650,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         let (cached_reads, bundle) = state.clone_bundle_and_cache();
         let execution_outcome = ExecutionOutcome::new(
+            Some(ctx.chain_spec.chain.id()),
             bundle,
             Receipts::from(vec![self
                 .receipts
@@ -715,7 +717,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         let header = Header {
             parent_hash: ctx.attributes.parent,
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
-            beneficiary: ctx.block_env.coinbase,
+            beneficiary: ctx.block_env.coinbase.1,
             state_root,
             transactions_root,
             receipts_root,

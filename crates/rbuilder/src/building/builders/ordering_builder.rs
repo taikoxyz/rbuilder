@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{roothash::RootHashConfig, utils::check_provider_factory_health};
 use reth::tasks::pool::BlockingTaskPool;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use serde::Deserialize;
 use std::{os::unix::fs::lchown, time::{Duration, Instant}};
 use tracing::{error, info_span, trace};

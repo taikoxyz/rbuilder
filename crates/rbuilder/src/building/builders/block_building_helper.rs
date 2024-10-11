@@ -6,9 +6,10 @@ use ahash::HashMap;
 use alloy_primitives::U256;
 use reth::tasks::pool::BlockingTaskPool;
 use reth_db::database::Database;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_primitives::format_ether;
 use reth_provider::{BlockNumReader, ProviderFactory, StateProvider};
+use revm_primitives::ChainAddress;
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace};
@@ -283,7 +284,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         // we check the fee_recipient delta and make our bid include that! This is supposed to be what the relay will check.
         let fee_recipient_balance_after = self
             .block_state
-            .balance(self.building_ctx[&self.origin_chain_id].attributes.suggested_fee_recipient)?;
+            .balance(ChainAddress(self.origin_chain_id, self.building_ctx[&self.origin_chain_id].attributes.suggested_fee_recipient))?;
         let fee_recipient_balance_diff = fee_recipient_balance_after
             .checked_sub(self._fee_recipient_balance_start)
             .unwrap_or_default();

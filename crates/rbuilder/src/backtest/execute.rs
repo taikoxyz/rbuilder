@@ -15,7 +15,7 @@ use alloy_primitives::{Address, U256};
 use reth::providers::ProviderFactory;
 use reth_chainspec::ChainSpec;
 use reth_db::{database::Database, DatabaseEnv};
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

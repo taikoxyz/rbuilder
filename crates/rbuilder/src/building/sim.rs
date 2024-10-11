@@ -13,7 +13,7 @@ use rand::seq::SliceRandom;
 use reth::providers::ProviderFactory;
 use reth_db::database::Database;
 use reth_errors::ProviderError;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_provider::StateProvider;
 use std::{
     cmp::{max, min, Ordering},

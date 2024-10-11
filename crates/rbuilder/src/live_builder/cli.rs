@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use clap::Parser;
 use reth_db::DatabaseEnv;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use tokio::signal::ctrl_c;
 use tokio_util::sync::CancellationToken;
 

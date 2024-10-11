@@ -10,7 +10,7 @@ use crate::{
 };
 use ahash::HashMap;
 use reth_db::database::Database;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use std::{
     sync::{Arc, Mutex},
     thread::sleep,
