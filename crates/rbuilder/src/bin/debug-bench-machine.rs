@@ -2,8 +2,6 @@
 //! This only works when reth node is stopped and the chain moved forward form its synced state
 //! It downloads block aftre the last one synced and re-executes all the txs in it.
 use alloy_provider::Provider;
-use ahash::HashMap;
-use alloy_primitives::{B256, U256};
 use clap::Parser;
 use eyre::Context;
 use itertools::Itertools;
@@ -13,7 +11,7 @@ use rbuilder::{
     utils::{extract_onchain_block_txs, find_suggested_fee_recipient, http_provider},
 };
 use reth::providers::BlockNumReader;
-use reth_payload_builder::database::{CachedReads, SyncCachedReads};
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_provider::StateProvider;
 use std::{path::PathBuf, sync::Arc, time::Instant};
 use tracing::{debug, info};
@@ -85,7 +83,7 @@ async fn main() -> eyre::Result<()> {
 
     let mut build_times_ms = Vec::new();
     let mut finalize_time_ms = Vec::new();
-    let mut cached_reads = Some(SyncCachedReads::default());
+    let mut cached_reads = Some(CachedReads::default());
     for _ in 0..cli.iters {
         let ctx = ctx.clone();
         let txs = txs.clone();

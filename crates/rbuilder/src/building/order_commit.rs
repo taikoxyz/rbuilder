@@ -14,7 +14,7 @@ use alloy_primitives::{Address, B256, U256};
 
 use reth::revm::database::{StateProviderDatabase, SyncStateProviderDatabase};
 use reth_errors::ProviderError;
-use reth_payload_builder::database::{CachedReads, SyncCachedReads};
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_primitives::{
     constants::eip4844::{DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK},
     transaction::FillTxEnv,
@@ -36,7 +36,7 @@ use thiserror::Error;
 #[derive(Clone)]
 pub struct BlockState {
     providers: HashMap<u64, Arc<dyn StateProvider>>,
-    cached_reads: SyncCachedReads,
+    cached_reads: CachedReads,
     bundle_state: Option<BundleState>,
 }
 
@@ -50,7 +50,7 @@ impl BlockState {
     pub fn new_arc(providers: HashMap<u64, Arc<dyn StateProvider>>) -> Self {
         Self {
             providers,
-            cached_reads: SyncCachedReads::default(),
+            cached_reads: CachedReads::default(),
             bundle_state: Some(BundleState::default()),
         }
     }
@@ -69,7 +69,7 @@ impl BlockState {
         self.providers[&chain_id].clone()
     }
 
-    pub fn with_cached_reads(mut self, cached_reads:SyncCachedReads) -> Self {
+    pub fn with_cached_reads(mut self, cached_reads:CachedReads) -> Self {
         self.cached_reads = cached_reads;
         self
     }
@@ -79,11 +79,11 @@ impl BlockState {
         self
     }
 
-    pub fn into_parts(self) -> (SyncCachedReads, BundleState, HashMap<u64, Arc<dyn StateProvider>>) {
+    pub fn into_parts(self) -> (CachedReads, BundleState, HashMap<u64, Arc<dyn StateProvider>>) {
         (self.cached_reads, self.bundle_state.unwrap(), self.providers)
     }
 
-    pub fn clone_bundle_and_cache(&self) -> (SyncCachedReads, BundleState) {
+    pub fn clone_bundle_and_cache(&self) -> (CachedReads, BundleState) {
         (
             self.cached_reads.clone(),
             self.bundle_state.clone().unwrap(),
@@ -129,7 +129,7 @@ impl BlockState {
             .unwrap_or_else(|| KECCAK_EMPTY))
     }
 
-    pub fn clone_cached_reads(&self) -> SyncCachedReads {
+    pub fn clone_cached_reads(&self) -> CachedReads {
         self.cached_reads.clone()
     }
 }

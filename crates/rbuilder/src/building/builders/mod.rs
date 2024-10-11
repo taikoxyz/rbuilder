@@ -19,7 +19,7 @@ use reth::{
     tasks::pool::BlockingTaskPool,
 };
 use reth_db::database::Database;
-use reth_payload_builder::database::{CachedReads, SyncCachedReads};
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use std::sync::Arc;
 use tokio::sync::{broadcast, broadcast::error::TryRecvError};
 use tokio_util::sync::CancellationToken;
@@ -230,7 +230,7 @@ pub struct BacktestSimulateBlockInput<'a, DB> {
     pub sbundle_mergeabe_signers: Vec<Address>,
     pub sim_orders: &'a Vec<SimulatedOrder>,
     pub provider_factory: ProviderFactory<DB>,
-    pub cached_reads: Option<SyncCachedReads>,
+    pub cached_reads: Option<CachedReads>,
 }
 
 /// Handles error from block filling stage.

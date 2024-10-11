@@ -42,7 +42,7 @@ use reth_evm::system_calls::{
 };
 use reth_evm_ethereum::{eip6110::parse_deposits_from_receipts, revm_spec, EthEvmConfig};
 use reth_node_api::PayloadBuilderAttributes;
-use reth_payload_builder::{database::{CachedReads, SyncCachedReads}, EthPayloadBuilderAttributes};
+use reth_payload_builder::{database::SyncCachedReads as CachedReads, EthPayloadBuilderAttributes};
 use revm::{
     db::states::bundle_state::BundleRetention::{self, PlainState},
     primitives::{BlobExcessGasAndPrice, BlockEnv, CfgEnvWithHandlerCfg, SpecId},
@@ -405,7 +405,7 @@ impl ExecutionError {
 
 pub struct FinalizeResult {
     pub sealed_block: SealedBlock,
-    pub cached_reads: SyncCachedReads,
+    pub cached_reads: CachedReads,
     // sidecars for all txs in SealedBlock
     pub txs_blob_sidecars: Vec<Arc<BlobTransactionSidecar>>,
 }

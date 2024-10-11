@@ -10,7 +10,7 @@ use crate::{
 };
 use ahash::HashMap;
 use reth_db::database::Database;
-use reth_payload_builder::database::{CachedReads, SyncCachedReads};
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use std::{
     sync::{Arc, Mutex},
     thread::sleep,
@@ -59,7 +59,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             }
         };
 
-        let mut cached_reads = SyncCachedReads::default();
+        let mut cached_reads = CachedReads::default();
         let mut last_sim_finished = Instant::now();
         while let Ok(task) = current_sim_context.requests.recv() {
             let sim_thread_wait_time = last_sim_finished.elapsed();

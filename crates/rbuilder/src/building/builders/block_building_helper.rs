@@ -6,7 +6,7 @@ use ahash::HashMap;
 use alloy_primitives::U256;
 use reth::tasks::pool::BlockingTaskPool;
 use reth_db::database::Database;
-use reth_payload_builder::database::{CachedReads, SyncCachedReads};
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_primitives::format_ether;
 use reth_provider::{BlockNumReader, ProviderFactory, StateProvider};
 use revm_primitives::ChainAddress;
@@ -69,7 +69,7 @@ pub trait BlockBuildingHelper: Send + Sync {
     ) -> Result<FinalizeBlockResult, BlockBuildingHelperError>;
 
     /// Useful if we want to give away this object but keep on building some other way.
-    fn clone_cached_reads(&self) -> SyncCachedReads;
+    fn clone_cached_reads(&self) -> CachedReads;
 
     /// BuiltBlockTrace for current state.
     fn built_block_trace(&self) -> &BuiltBlockTrace;
@@ -78,7 +78,7 @@ pub trait BlockBuildingHelper: Send + Sync {
     fn building_context(&self) -> &BlockBuildingContext;
 
     /// Updates the cached reads for the block state.
-    fn update_cached_reads(&mut self, cached_reads: SyncCachedReads);
+    fn update_cached_reads(&mut self, cached_reads: CachedReads);
 }
 
 /// Implementation of BlockBuildingHelper based on a ProviderFactory<DB>
@@ -142,7 +142,7 @@ impl BlockBuildingHelperError {
 pub struct FinalizeBlockResult {
     pub block: Block,
     /// Since finalize_block eats the object we need the cached_reads in case we create a new
-    pub cached_reads: SyncCachedReads,
+    pub cached_reads: CachedReads,
 }
 
 impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
@@ -157,7 +157,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         root_hash_task_pool: BlockingTaskPool,
         root_hash_config: RootHashConfig,
         building_ctx: HashMap<u64, BlockBuildingContext>,
-        cached_reads: Option<SyncCachedReads>,
+        cached_reads: Option<CachedReads>,
         builder_name: String,
         discard_txs: bool,
         enforce_sorting: Option<Sorting>,
@@ -365,7 +365,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
 
         let sim_gas_used = self.partial_block.tracer.used_gas;
         let mut blocks = HashMap::default();
-        let mut cached_reads = SyncCachedReads::default();
+        let mut cached_reads = CachedReads::default();
         for (chain_id, provider_factory) in self.provider_factory.iter() {
             // TODO Brecht: fix
             if *chain_id == 160010 {
@@ -444,7 +444,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         })
     }
 
-    fn clone_cached_reads(&self) -> SyncCachedReads {
+    fn clone_cached_reads(&self) -> CachedReads {
         self.block_state.clone_cached_reads()
     }
 
@@ -460,7 +460,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         Box::new(self.clone())
     }
 
-    fn update_cached_reads(&mut self, cached_reads: SyncCachedReads) {
+    fn update_cached_reads(&mut self, cached_reads: CachedReads) {
         self.block_state = self.block_state.clone().with_cached_reads(cached_reads);
     }
 }
