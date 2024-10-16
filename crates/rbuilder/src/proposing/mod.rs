@@ -1,11 +1,13 @@
 
 use alloy_network::{EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rlp::Encodable;
 use alloy_signer_local::PrivateKeySigner;
 //use alloy_sol_types::{sol, SolCall};
 use eyre::Result;
 //use revm_primitives::{Address, B256, U256};
 use alloy_primitives::{B256, U256, Address};
+use reth_primitives::TransactionSigned;
 //use revm_primitives::address;
 use url::Url;
 //use crate::mev_boost::{SubmitBlockRequest};
@@ -147,7 +149,9 @@ impl BlockProposer {
         };
 
         // Create tx_list from transactions -> Are they RLP encoded alredy ? I guess not so doing now.
-        let tx_list = self.rlp_encode_transactions(&execution_payload.transactions);
+        //let tx_list = self.rlp_encode_transactions(&execution_payload.transactions);
+        let mut tx_list = Vec::new();
+        execution_payload.transactions.encode(&mut tx_list);
         let tx_list_hash = B256::from(alloy_primitives::keccak256(&tx_list));
 
         println!("proposing for block: {}", execution_payload.block_number);
