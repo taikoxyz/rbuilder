@@ -1,7 +1,7 @@
 
 use alloy_network::{EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rlp::Encodable;
+use alloy_rlp::{Decodable, Encodable};
 use alloy_signer_local::PrivateKeySigner;
 //use alloy_sol_types::{sol, SolCall};
 use eyre::Result;
@@ -81,22 +81,33 @@ impl BlockProposer {
             return Ok(());
         }
 
-        //println!("meta: {:?}", meta);
-        //println!("proposing tx_list: {:?}", tx_list);
+        println!("meta: {:?}", meta);
+        println!("proposing tx_list: {:?}", meta.txList);
+
+        let decoded_transactions: Vec<TransactionSigned> = decode_transactions(&meta.txList);
+        println!("decoded_transactions: {:?}", decoded_transactions);
 
         let provider = ProviderBuilder::new().on_http(Url::parse(&self.rpc_url.clone()).unwrap());
+
+        println!("A");
 
         // Create a signer from a random private key.
         let signer = PrivateKeySigner::from_str(&self.private_key).unwrap();
         let wallet = EthereumWallet::from(signer.clone());
 
+        println!("B");
+
         // Sign the transaction
         let chain_id = provider.get_chain_id().await?;
         let nonce = provider.get_transaction_count(signer.address()).await.unwrap();
+
+        println!("C");
         
         //let rollup = Rollup::(Address::from_str(&self.contract_address).unwrap(), provider);
         let propose_data = Rollup::proposeBlockCall { data: vec![meta] };
         let propose_data = propose_data.abi_encode();
+
+        println!("D");
 
         // Build a transaction to send 100 wei from Alice to Bob.
         // The `from` field is automatically filled to the first signer's address (Alice).
@@ -110,12 +121,18 @@ impl BlockProposer {
             .with_max_priority_fee_per_gas(1_000_000_000)
             .with_max_fee_per_gas(20_000_000_000);
 
+        println!("E");
+
         // Build the transaction with the provided wallet. Flashbots Protect requires the transaction to
         // be signed locally and send using `eth_sendRawTransaction`.
         let tx_envelope = tx.build(&wallet).await?;
 
+        println!("F");
+
         // Encode the transaction using EIP-2718 encoding.
         let tx_encoded = tx_envelope.encoded_2718();
+
+        println!("G");
 
         // Send the transaction and wait for the broadcast.
         let pending_tx = provider.send_raw_transaction(&tx_encoded).await?;
@@ -178,6 +195,8 @@ impl BlockProposer {
             txList: tx_list.into(),
         };
 
+        println!("meta ok");
+
         Ok((meta, execution_payload.transactions.len()))
     }
 
@@ -202,4 +221,13 @@ pub enum ProposeBlockError {
     #[error("Failed to propose block: {0}")]
     ProposalFailed(String),
     // Add other error variants as needed
+}
+
+fn decode_transactions(tx_list: &[u8]) -> Vec<TransactionSigned> {
+    #[allow(clippy::useless_asref)]
+    Vec::<TransactionSigned>::decode(&mut tx_list.as_ref()).unwrap_or_else(|e| {
+        // If decoding fails we need to make an empty block
+        println!("decode_transactions not successful: {e:?}, use empty tx_list");
+        vec![]
+    })
 }

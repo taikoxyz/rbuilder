@@ -50,7 +50,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
         //TODO Brecht: fix
         let chain_id = 167010;
 
-        println!("Brecht: simming 2");
+        println!("Brecht: simming 3");
 
         let provider_factory = match provider_factory[&chain_id].check_consistency_and_reopen_if_needed(
             current_sim_context.block_ctx[&chain_id].block_env.number.to(),
