@@ -75,11 +75,11 @@ impl BlockProposer {
         // Create the transaction data
         let (meta, num_txs) = self.create_propose_block_tx_data(&execution_payload)?;
 
-        if num_txs == 1 {
-            println!("skip propose");
-            // If there's only the payout tx, don't propose
-            return Ok(());
-        }
+        // if num_txs == 1 {
+        //     println!("skip propose");
+        //     // If there's only the payout tx, don't propose
+        //     return Ok(());
+        // }
 
         println!("meta: {:?}", meta);
         println!("proposing tx_list: {:?}", meta.txList);
@@ -89,25 +89,17 @@ impl BlockProposer {
 
         let provider = ProviderBuilder::new().on_http(Url::parse(&self.rpc_url.clone()).unwrap());
 
-        println!("A");
-
         // Create a signer from a random private key.
         let signer = PrivateKeySigner::from_str(&self.private_key).unwrap();
         let wallet = EthereumWallet::from(signer.clone());
 
-        println!("B");
-
         // Sign the transaction
         let chain_id = provider.get_chain_id().await?;
         let nonce = provider.get_transaction_count(signer.address()).await.unwrap();
-
-        println!("C");
         
         //let rollup = Rollup::(Address::from_str(&self.contract_address).unwrap(), provider);
         let propose_data = Rollup::proposeBlockCall { data: vec![meta] };
         let propose_data = propose_data.abi_encode();
-
-        println!("D");
 
         // Build a transaction to send 100 wei from Alice to Bob.
         // The `from` field is automatically filled to the first signer's address (Alice).
@@ -121,18 +113,12 @@ impl BlockProposer {
             .with_max_priority_fee_per_gas(1_000_000_000)
             .with_max_fee_per_gas(20_000_000_000);
 
-        println!("E");
-
         // Build the transaction with the provided wallet. Flashbots Protect requires the transaction to
         // be signed locally and send using `eth_sendRawTransaction`.
         let tx_envelope = tx.build(&wallet).await?;
 
-        println!("F");
-
         // Encode the transaction using EIP-2718 encoding.
         let tx_encoded = tx_envelope.encoded_2718();
-
-        println!("G");
 
         // Send the transaction and wait for the broadcast.
         let pending_tx = provider.send_raw_transaction(&tx_encoded).await?;
