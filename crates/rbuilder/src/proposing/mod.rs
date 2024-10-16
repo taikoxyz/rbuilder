@@ -167,8 +167,14 @@ impl BlockProposer {
 
         // Create tx_list from transactions -> Are they RLP encoded alredy ? I guess not so doing now.
         //let tx_list = self.rlp_encode_transactions(&execution_payload.transactions);
+
+        let mut transactions = Vec::new();
+        for tx_data in execution_payload.transactions.iter() {
+            transactions.push(TransactionSigned::decode(&mut tx_data.to_vec().as_slice()).unwrap());
+        }
+
         let mut tx_list = Vec::new();
-        execution_payload.transactions.encode(&mut tx_list);
+        transactions.encode(&mut tx_list);
         let tx_list_hash = B256::from(alloy_primitives::keccak256(&tx_list));
 
         println!("proposing for block: {}", execution_payload.block_number);
