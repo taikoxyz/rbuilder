@@ -49,6 +49,8 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
         //TODO Brecht: fix
         let chain_id = 167010;
 
+        println!("Brecht: simming");
+
         let provider_factory = match provider_factory[&chain_id].check_consistency_and_reopen_if_needed(
             current_sim_context.block_ctx[&chain_id].block_env.number.to(),
         ) {
@@ -110,7 +112,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                     telemetry::inc_simulation_gas_used(sim_result.gas_used);
                 }
                 Err(err) => {
-                    error!(?err, "Critical error while simulating order");
+                    error!(?err, "Critical error while simulating order Brecht");
                     // @Metric
                     break;
                 }
