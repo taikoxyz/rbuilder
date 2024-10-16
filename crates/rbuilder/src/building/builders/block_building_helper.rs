@@ -261,25 +261,27 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         &mut self,
         payout_tx_value: Option<U256>,
     ) -> Result<(), BlockBuildingHelperError> {
-        let (bid_value, true_value) = if let (Some(payout_tx_gas), Some(payout_tx_value)) =
-            (self.payout_tx_gas, payout_tx_value)
-        {
-            //println!("insert_proposer_payout_tx");
-            match self.partial_block.insert_proposer_payout_tx(
-                payout_tx_gas,
-                payout_tx_value,
-                &self.building_ctx[&self.origin_chain_id],
-                &mut self.block_state,
-            ) {
-                Ok(()) => (payout_tx_value, self.true_block_value()?),
-                Err(err) => return Err(err.into()),
-            }
-        } else {
-            (
-                self.partial_block.coinbase_profit,
-                self.partial_block.coinbase_profit,
-            )
-        };
+        // let (bid_value, true_value) = if let (Some(payout_tx_gas), Some(payout_tx_value)) =
+        //     (self.payout_tx_gas, payout_tx_value)
+        // {
+        //     //println!("insert_proposer_payout_tx");
+        //     match self.partial_block.insert_proposer_payout_tx(
+        //         payout_tx_gas,
+        //         payout_tx_value,
+        //         &self.building_ctx[&self.origin_chain_id],
+        //         &mut self.block_state,
+        //     ) {
+        //         Ok(()) => (payout_tx_value, self.true_block_value()?),
+        //         Err(err) => return Err(err.into()),
+        //     }
+        // } else {
+        //     (
+        //         self.partial_block.coinbase_profit,
+        //         self.partial_block.coinbase_profit,
+        //     )
+        // };
+        let bid_value = U256::ZERO;
+        let true_value = U256::ZERO;
         // Since some extra money might arrived directly the suggested_fee_recipient (when suggested_fee_recipient != coinbase)
         // we check the fee_recipient delta and make our bid include that! This is supposed to be what the relay will check.
         let fee_recipient_balance_after = self
