@@ -73,11 +73,11 @@ impl BlockProposer {
         // Create the transaction data
         let (meta, num_txs) = self.create_propose_block_tx_data(&execution_payload)?;
 
-        // if num_txs == 1 {
-        //     println!("skip propose");
-        //     // If there's only the payout tx, don't propose
-        //     return Ok(());
-        // }
+        if num_txs == 1 {
+            println!("skip propose");
+            // If there's only the payout tx, don't propose
+            return Ok(());
+        }
 
         //println!("meta: {:?}", meta);
         //println!("proposing tx_list: {:?}", tx_list);
