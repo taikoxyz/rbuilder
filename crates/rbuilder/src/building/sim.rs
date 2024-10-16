@@ -334,8 +334,14 @@ pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
 
     let mut sim_errors = Vec::new();
     let mut state_for_sim: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
+    println!("sim chain_id: {}", ctx.chain_spec.chain.id());
+    // TODO(Brecht)
     state_for_sim.insert(
-        ctx.chain_spec.chain.id(),
+        160010,
+        Arc::<dyn StateProvider>::from(factory.history_by_block_hash(ctx.attributes.parent)?),
+    );
+    state_for_sim.insert(
+        167010,
         Arc::<dyn StateProvider>::from(factory.history_by_block_hash(ctx.attributes.parent)?),
     );
     let mut cache_reads = Some(CachedReads::default());
