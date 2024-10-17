@@ -85,22 +85,22 @@ revm-precompile = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-
 revm-inspectors = { git = "https://github.com/taikoxyz/revm-inspectors.git", branch = "main-rbuilder" }
 
 [patch."https://github.com/paradigmxyz/reth"]
-reth = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-db = {git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-db-common = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-errors = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-libmdbx = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-payload-builder = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-node-api = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-trie = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-trie-parallel = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-basic-payload-builder = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-node-core = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-primitives = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-provider = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-chainspec = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-evm = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-evm-ethereum = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-db-api = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-execution-errors = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
-reth-trie-db = { git = "https://github.com/taikoxyz/taiko-reth", branch = "gwyneth" }
+reth = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-db = {git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-db-common = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-libmdbx = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-node-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-trie = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-trie-parallel = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-basic-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-node-core = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-primitives = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-provider = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-chainspec = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-evm = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-evm-ethereum = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-db-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-execution-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-trie-db = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }

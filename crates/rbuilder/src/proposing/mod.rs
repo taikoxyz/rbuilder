@@ -1,11 +1,13 @@
 
 use alloy_network::{EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rlp::{Decodable, Encodable};
 use alloy_signer_local::PrivateKeySigner;
 //use alloy_sol_types::{sol, SolCall};
 use eyre::Result;
 //use revm_primitives::{Address, B256, U256};
 use alloy_primitives::{B256, U256, Address};
+use reth_primitives::TransactionSigned;
 //use revm_primitives::address;
 use url::Url;
 //use crate::mev_boost::{SubmitBlockRequest};
@@ -69,17 +71,18 @@ impl BlockProposer {
         println!("propose_block");
 
         let execution_payload = request.execution_payload();
-        
+
         // Create the transaction data
         let (meta, num_txs) = self.create_propose_block_tx_data(&execution_payload)?;
-        
-        if num_txs == 1 {
-            // If there's only the payout tx, don't propose
-            return Ok(());
-        }
 
-        //println!("meta: {:?}", meta);
-        //println!("proposing tx_list: {:?}", tx_list);
+        // if num_txs == 1 {
+        //     println!("skip propose");
+        //     // If there's only the payout tx, don't propose
+        //     return Ok(());
+        // }
+
+        let decoded_transactions: Vec<TransactionSigned> = decode_transactions(&meta.txList);
+        println!("decoded_transactions: {:?}", decoded_transactions);
 
         let provider = ProviderBuilder::new().on_http(Url::parse(&self.rpc_url.clone()).unwrap());
 
@@ -90,7 +93,7 @@ impl BlockProposer {
         // Sign the transaction
         let chain_id = provider.get_chain_id().await?;
         let nonce = provider.get_transaction_count(signer.address()).await.unwrap();
-        
+
         //let rollup = Rollup::(Address::from_str(&self.contract_address).unwrap(), provider);
         let propose_data = Rollup::proposeBlockCall { data: vec![meta] };
         let propose_data = propose_data.abi_encode();
@@ -126,7 +129,7 @@ impl BlockProposer {
             "Transaction included in block {}",
             receipt.block_number.expect("Failed to get block number")
         );
-        
+
         Ok(())
     }
 
@@ -145,8 +148,13 @@ impl BlockProposer {
             }
         };
 
-        // Create tx_list from transactions -> Are they RLP encoded alredy ? I guess not so doing now.
-        let tx_list = self.rlp_encode_transactions(&execution_payload.transactions);
+        let mut transactions = Vec::new();
+        for tx_data in execution_payload.transactions.iter() {
+            transactions.push(TransactionSigned::decode(&mut tx_data.to_vec().as_slice()).unwrap());
+        }
+
+        let mut tx_list = Vec::new();
+        transactions.encode(&mut tx_list);
         let tx_list_hash = B256::from(alloy_primitives::keccak256(&tx_list));
 
         println!("proposing for block: {}", execution_payload.block_number);
@@ -173,23 +181,10 @@ impl BlockProposer {
             txList: tx_list.into(),
         };
 
+        println!("meta: {:?}", meta);
+
         Ok((meta, execution_payload.transactions.len()))
     }
-
-    // This one handles '&[ethers::types::Bytes]' and '&Vec<alloy_primitives::Bytes>' types
-    fn rlp_encode_transactions<B>(&self, transactions: &[B]) -> Vec<u8>
-    where
-        B: AsRef<[u8]>,
-    {
-        let mut rlp_stream = rlp::RlpStream::new_list(transactions.len());
-
-        for tx in transactions {
-            rlp_stream.append(&tx.as_ref());
-        }
-
-        rlp_stream.out().to_vec()
-    }
-    
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -197,4 +192,13 @@ pub enum ProposeBlockError {
     #[error("Failed to propose block: {0}")]
     ProposalFailed(String),
     // Add other error variants as needed
+}
+
+fn decode_transactions(tx_list: &[u8]) -> Vec<TransactionSigned> {
+    #[allow(clippy::useless_asref)]
+    Vec::<TransactionSigned>::decode(&mut tx_list.as_ref()).unwrap_or_else(|e| {
+        // If decoding fails we need to make an empty block
+        println!("decode_transactions not successful: {e:?}, use empty tx_list");
+        vec![]
+    })
 }
