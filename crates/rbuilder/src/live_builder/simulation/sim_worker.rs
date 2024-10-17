@@ -129,7 +129,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                     telemetry::inc_simulation_gas_used(sim_result.gas_used);
                 }
                 Err(err) => {
-                    error!(?err, "Critical error while simulating order Brecht");
+                    error!(?err, "Critical error while simulating order");
                     // @Metric
                     break;
                 }

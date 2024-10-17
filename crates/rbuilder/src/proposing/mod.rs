@@ -71,7 +71,7 @@ impl BlockProposer {
         println!("propose_block");
 
         let execution_payload = request.execution_payload();
-        
+
         // Create the transaction data
         let (meta, num_txs) = self.create_propose_block_tx_data(&execution_payload)?;
 
@@ -80,9 +80,6 @@ impl BlockProposer {
         //     // If there's only the payout tx, don't propose
         //     return Ok(());
         // }
-
-        println!("meta: {:?}", meta);
-        println!("proposing tx_list: {:?}", meta.txList);
 
         let decoded_transactions: Vec<TransactionSigned> = decode_transactions(&meta.txList);
         println!("decoded_transactions: {:?}", decoded_transactions);
@@ -96,7 +93,7 @@ impl BlockProposer {
         // Sign the transaction
         let chain_id = provider.get_chain_id().await?;
         let nonce = provider.get_transaction_count(signer.address()).await.unwrap();
-        
+
         //let rollup = Rollup::(Address::from_str(&self.contract_address).unwrap(), provider);
         let propose_data = Rollup::proposeBlockCall { data: vec![meta] };
         let propose_data = propose_data.abi_encode();
@@ -132,7 +129,7 @@ impl BlockProposer {
             "Transaction included in block {}",
             receipt.block_number.expect("Failed to get block number")
         );
-        
+
         Ok(())
     }
 
@@ -150,9 +147,6 @@ impl BlockProposer {
                 return Err(eyre::eyre!("Unsupported ExecutionPayload version"))
             }
         };
-
-        // Create tx_list from transactions -> Are they RLP encoded alredy ? I guess not so doing now.
-        //let tx_list = self.rlp_encode_transactions(&execution_payload.transactions);
 
         let mut transactions = Vec::new();
         for tx_data in execution_payload.transactions.iter() {
@@ -187,25 +181,10 @@ impl BlockProposer {
             txList: tx_list.into(),
         };
 
-        println!("meta ok");
+        println!("meta: {:?}", meta);
 
         Ok((meta, execution_payload.transactions.len()))
     }
-
-    // This one handles '&[ethers::types::Bytes]' and '&Vec<alloy_primitives::Bytes>' types
-    fn rlp_encode_transactions<B>(&self, transactions: &[B]) -> Vec<u8>
-    where
-        B: AsRef<[u8]>,
-    {
-        let mut rlp_stream = rlp::RlpStream::new_list(transactions.len());
-
-        for tx in transactions {
-            rlp_stream.append(&tx.as_ref());
-        }
-
-        rlp_stream.out().to_vec()
-    }
-    
 }
 
 #[derive(Debug, thiserror::Error)]
