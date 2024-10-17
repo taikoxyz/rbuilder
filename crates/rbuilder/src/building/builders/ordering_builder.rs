@@ -25,7 +25,7 @@ use crate::{roothash::RootHashConfig, utils::check_provider_factory_health};
 use reth::tasks::pool::BlockingTaskPool;
 use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use serde::Deserialize;
-use std::{os::unix::fs::lchown, time::{Duration, Instant}};
+use std::{os::unix::fs::lchown, thread::sleep, time::{Duration, Instant}};
 use tracing::{error, info_span, trace};
 
 use super::{
@@ -86,6 +86,8 @@ pub fn run_ordering_builder<DB: Database + Clone + 'static>(
     let mut removed_orders = Vec::new();
     let mut use_suggested_fee_recipient_as_coinbase = config.coinbase_payment;
     'building: loop {
+        sleep(Duration::from_millis(1000));
+
         if input.cancel.is_cancelled() {
             break 'building;
         }
