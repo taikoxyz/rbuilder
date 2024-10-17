@@ -19,13 +19,15 @@ use ahash::{HashMap, HashSet};
 use alloy_primitives::Address;
 use reth::providers::ProviderFactory;
 use reth_db::database::Database;
+use reth_provider::StateProvider;
+use revm_primitives::ChainAddress;
 use tokio_util::sync::CancellationToken;
 
 use crate::{roothash::RootHashConfig, utils::check_provider_factory_health};
 use reth::tasks::pool::BlockingTaskPool;
 use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use serde::Deserialize;
-use std::{os::unix::fs::lchown, thread::sleep, time::{Duration, Instant}};
+use std::{os::unix::fs::lchown, sync::Arc, thread::sleep, time::{Duration, Instant}};
 use tracing::{error, info_span, trace};
 
 use super::{
@@ -146,37 +148,46 @@ pub fn backtest_simulate_block<DB: Database + Clone + 'static>(
     let state_provider = input
         .provider_factory
         .history_by_block_number(input.ctx.block_env.number.to::<u64>() - 1)?;
-    let block_orders = block_orders_from_sim_orders(
-        input.sim_orders,
-        ordering_config.sorting,
-        &state_provider,
-        &input.sbundle_mergeabe_signers,
-    )?;
-    let mut builder = OrderingBuilderContext::new(
-        provider_factories.clone(),
-        BlockingTaskPool::build()?,
-        input.builder_name,
-        ctxs,
-        ordering_config,
-        RootHashConfig::skip_root_hash(),
-    )
-    .with_cached_reads(input.cached_reads.unwrap_or_default());
-    let block_builder = builder.build_block(
-        block_orders,
-        use_suggested_fee_recipient_as_coinbase,
-        CancellationToken::new(),
-    )?;
 
-    let payout_tx_value = if use_suggested_fee_recipient_as_coinbase {
-        None
-    } else {
-        Some(block_builder.true_block_value()?)
-    };
-    let finalize_block_result = block_builder.finalize_block(payout_tx_value)?;
-    Ok((
-        finalize_block_result.block,
-        finalize_block_result.cached_reads,
-    ))
+    todo!()
+
+    // let mut state_for_sim: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
+    // state_for_sim.insert(
+    //     160010,
+    //     Arc::<dyn StateProvider>::from(provider_factory.history_by_block_hash(current_sim_context.block_ctx[&chain_id].attributes.parent).expect("failed to open state provider")),
+    // );
+
+    // let block_orders = block_orders_from_sim_orders(
+    //     input.sim_orders,
+    //     ordering_config.sorting,
+    //     &state_provider,
+    //     &input.sbundle_mergeabe_signers,
+    // )?;
+    // let mut builder = OrderingBuilderContext::new(
+    //     provider_factories.clone(),
+    //     BlockingTaskPool::build()?,
+    //     input.builder_name,
+    //     ctxs,
+    //     ordering_config,
+    //     RootHashConfig::skip_root_hash(),
+    // )
+    // .with_cached_reads(input.cached_reads.unwrap_or_default());
+    // let block_builder = builder.build_block(
+    //     block_orders,
+    //     use_suggested_fee_recipient_as_coinbase,
+    //     CancellationToken::new(),
+    // )?;
+
+    // let payout_tx_value = if use_suggested_fee_recipient_as_coinbase {
+    //     None
+    // } else {
+    //     Some(block_builder.true_block_value()?)
+    // };
+    // let finalize_block_result = block_builder.finalize_block(payout_tx_value)?;
+    // Ok((
+    //     finalize_block_result.block,
+    //     finalize_block_result.cached_reads,
+    // ))
 }
 
 #[derive(Debug)]
@@ -308,7 +319,7 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
                         .nonces_updated
                         .iter()
                         .map(|(account, nonce)| AccountNonce {
-                            account: *account,
+                            account: ChainAddress(res.order.chain_id().unwrap(), *account),
                             nonce: *nonce,
                         })
                         .collect();

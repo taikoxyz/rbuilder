@@ -12,6 +12,7 @@ use ahash::HashMap;
 use reth_db::database::Database;
 use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_provider::StateProvider;
+use revm_primitives::ChainAddress;
 use std::{
     sync::{Arc, Mutex},
     thread::sleep,
@@ -115,7 +116,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                                 previous_orders: task.parents,
                                 nonces_after: nonces_after
                                     .into_iter()
-                                    .map(|(address, nonce)| NonceKey { address: address.clone(), nonce: nonce.clone() })
+                                    .map(|(address, nonce)| NonceKey { address: ChainAddress(task.order.chain_id().unwrap(), address.clone()), nonce: nonce.clone() })
                                     .collect(),
                                 simulation_time: start_time.elapsed(),
                             };

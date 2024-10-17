@@ -169,10 +169,10 @@ impl OrderPool {
                 self.process_remove_bundle(key)
             },
         }
-        
+
         let target_block = command.target_block();
         println!("Dani debug: Command target block: {:?}", target_block);
-        
+
         let initial_sink_count = self.sinks.len();
         self.sinks.retain(|_, sub| {
             if !sub.sink.is_alive() {
@@ -259,7 +259,7 @@ impl OrderPool {
                     continue;
                 }
                 let onchain_nonce = new_state
-                    .account_nonce(nonce.address)
+                    .account_nonce(nonce.address.1)
                     .map_err(|e| error!("Failed to get a nonce: {}", e))
                     .unwrap_or_default()
                     .unwrap_or_default();

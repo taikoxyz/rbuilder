@@ -15,6 +15,7 @@ use reth_db::database::Database;
 use reth_errors::ProviderError;
 use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_provider::StateProvider;
+use revm_primitives::ChainAddress;
 use std::{
     cmp::{max, min, Ordering},
     collections::hash_map::Entry,
@@ -38,7 +39,7 @@ pub struct OrderSimResultWithGas {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NonceKey {
-    pub address: Address,
+    pub address: ChainAddress,
     pub nonce: u64,
 }
 
@@ -151,7 +152,7 @@ impl<DB: Database> SimTree<DB> {
         for nonce in order.nonces() {
             let onchain_nonce = nonces.nonce(nonce.address)?;
 
-            println!("onchain nonce: {} == tx nonce {}", onchain_nonce, nonce.nonce);
+            println!("{:?}: onchain nonce: {} == tx nonce {}", nonce.address, onchain_nonce, nonce.nonce);
             match onchain_nonce.cmp(&nonce.nonce) {
                 Ordering::Equal => {
                     // nonce, valid
@@ -316,11 +317,14 @@ pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
     orders: &[Order],
     randomize_insertion: bool,
 ) -> Result<(Vec<SimulatedOrder>, Vec<OrderErr>), CriticalCommitOrderError> {
+    // TODO(Brecht)
+    let chain_id = 167010;
+    //let chain_id = ctx.chain_spec.chain.id(;
     let mut provider_factories = HashMap::default();
-    provider_factories.insert(ctx.chain_spec.chain.id(), factory.clone());
+    provider_factories.insert(chain_id, factory.clone());
 
     let mut ctxs = HashMap::default();
-    ctxs.insert(ctx.chain_spec.chain.id(), ctx.clone());
+    ctxs.insert(chain_id, ctx.clone());
 
     let parent_block_hashes = ctxs.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect();
 
@@ -338,7 +342,7 @@ pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
 
     let mut sim_errors = Vec::new();
     let mut state_for_sim: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
-    println!("sim chain_id: {}", ctx.chain_spec.chain.id());
+    println!("sim chain_id: {}", chain_id);
     // TODO(Brecht)
     state_for_sim.insert(
         160010,
@@ -397,7 +401,7 @@ pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
                         previous_orders: sim_task.parents,
                         nonces_after: nonces
                             .into_iter()
-                            .map(|(address, nonce)| NonceKey { address, nonce })
+                            .map(|(address, nonce)| NonceKey { address: ChainAddress(sim_task.order.chain_id().unwrap(), address), nonce })
                             .collect(),
 
                         simulation_time: start_time.elapsed(),

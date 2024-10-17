@@ -3,6 +3,7 @@ use std::{cmp::Ordering, collections::hash_map::Entry};
 use ahash::{HashMap, HashSet};
 use alloy_primitives::Address;
 use priority_queue::PriorityQueue;
+use revm_primitives::ChainAddress;
 
 use crate::{
     building::Sorting,
@@ -49,11 +50,11 @@ pub struct PrioritizedOrderStore {
     /// For each account we store all the orders from main_queue which contain a tx from this account.
     /// Since the orders belong to main_queue these are orders ready to execute.
     /// As soon as we execute an order from main_queue all orders for all the accounts the order used (order.nonces()) could get invalidated (if tx is not optional).
-    main_queue_nonces: HashMap<Address, Vec<OrderId>>,
+    main_queue_nonces: HashMap<ChainAddress, Vec<OrderId>>,
 
     /// Up to date "onchain" nonces for the current block we are building.
     /// Special care must be taken to keep this in sync.
-    onchain_nonces: HashMap<Address, u64>,
+    onchain_nonces: HashMap<ChainAddress, u64>,
 
     /// Orders waiting for an account to reach a particular nonce.
     pending_orders: HashMap<AccountNonce, Vec<OrderId>>,
@@ -65,7 +66,7 @@ pub struct PrioritizedOrderStore {
 }
 
 impl PrioritizedOrderStore {
-    pub fn new(priority: Sorting, onchain_nonces: HashMap<Address, u64>) -> Self {
+    pub fn new(priority: Sorting, onchain_nonces: HashMap<ChainAddress, u64>) -> Self {
         Self {
             main_queue: PriorityQueue::new(),
             main_queue_nonces: HashMap::default(),

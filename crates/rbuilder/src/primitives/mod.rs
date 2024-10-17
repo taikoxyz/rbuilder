@@ -17,7 +17,7 @@ use reth_primitives::{
     Address, BlobTransactionSidecar, PooledTransactionsElement, TransactionSigned,
     TransactionSignedEcRecovered, B256,
 };
-use revm_primitives::U256;
+use revm_primitives::{ChainAddress, U256};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
@@ -48,7 +48,7 @@ impl Default for Metadata {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct AccountNonce {
     pub nonce: u64,
-    pub account: Address,
+    pub account: ChainAddress,
 }
 impl AccountNonce {
     pub fn with_nonce(self, nonce: u64) -> Self {
@@ -71,7 +71,7 @@ pub struct BundledTxInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Nonce {
     pub nonce: u64,
-    pub address: Address,
+    pub address: ChainAddress,
     pub optional: bool,
 }
 
@@ -664,7 +664,7 @@ impl Order {
             Order::Bundle(bundle) => bundle.nonces(),
             Order::Tx(tx) => vec![Nonce {
                 nonce: tx.tx_with_blobs.tx.nonce(),
-                address: tx.tx_with_blobs.tx.signer(),
+                address: ChainAddress(tx.tx_with_blobs.tx.chain_id().unwrap(), tx.tx_with_blobs.tx.signer()),
                 optional: false,
             }],
             Order::ShareBundle(bundle) => bundle.nonces(),
@@ -743,6 +743,15 @@ impl Order {
             Order::Bundle(bundle) => &bundle.metadata,
             Order::Tx(tx) => &tx.tx_with_blobs.metadata,
             Order::ShareBundle(bundle) => &bundle.metadata,
+        }
+    }
+
+    /// Address that signed the bundle request
+    pub fn chain_id(&self) -> Option<u64> {
+        match self {
+            Order::Bundle(_bundle) => None,
+            Order::ShareBundle(_bundle) => None,
+            Order::Tx(tx) => tx.tx_with_blobs.tx.chain_id(),
         }
     }
 }
@@ -900,7 +909,7 @@ fn bundle_nonces<'a>(
             })
             .or_insert(Nonce {
                 nonce: tx.nonce(),
-                address: tx.signer(),
+                address: ChainAddress(tx.chain_id().unwrap(), tx.signer()),
                 optional,
             });
     }
