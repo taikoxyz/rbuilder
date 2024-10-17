@@ -151,13 +151,16 @@ impl<DB: Database> SimTree<DB> {
         for nonce in order.nonces() {
             let onchain_nonce = nonces.nonce(nonce.address)?;
 
+            println!("onchain nonce: {} == tx nonce {}", onchain_nonce, nonce.nonce);
             match onchain_nonce.cmp(&nonce.nonce) {
                 Ordering::Equal => {
                     // nonce, valid
+                    println!("nonce value");
                     onchain_nonces_incremented.insert(nonce.address);
                     continue;
                 }
                 Ordering::Greater => {
+                    println!("nonce invalid");
                     // nonce invalid, maybe its optional
                     if !nonce.optional {
                         // this order will never be valid
@@ -173,6 +176,7 @@ impl<DB: Database> SimTree<DB> {
                     }
                 }
                 Ordering::Less => {
+                    println!("nonce invalid");
                     if onchain_nonces_incremented.contains(&nonce.address) {
                         // we already considered this account nonce
                         continue;
