@@ -189,18 +189,19 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         partial_block
             .pre_block_call(&building_ctx[&origin_chain_id], &mut block_state)
             .map_err(|_| BlockBuildingHelperError::PreBlockCallFailed)?;
-        let payout_tx_gas = if building_ctx[&origin_chain_id].coinbase_is_suggested_fee_recipient() {
-            None
-        } else {
-            let payout_tx_gas = estimate_payout_gas_limit(
-                building_ctx[&origin_chain_id].attributes.suggested_fee_recipient,
-                &building_ctx[&origin_chain_id],
-                &mut block_state,
-                0,
-            )?;
-            partial_block.reserve_gas(payout_tx_gas);
-            Some(payout_tx_gas)
-        };
+        // let payout_tx_gas = if building_ctx[&origin_chain_id].coinbase_is_suggested_fee_recipient() {
+        //     None
+        // } else {
+        //     let payout_tx_gas = estimate_payout_gas_limit(
+        //         building_ctx[&origin_chain_id].attributes.suggested_fee_recipient,
+        //         &building_ctx[&origin_chain_id],
+        //         &mut block_state,
+        //         0,
+        //     )?;
+        //     partial_block.reserve_gas(payout_tx_gas);
+        //     Some(payout_tx_gas)
+        // };
+        let payout_tx_gas = None;
         Ok(Self {
             _fee_recipient_balance_start: fee_recipient_balance_start,
             block_state,
@@ -311,6 +312,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         let result =
             self.partial_block
                 .commit_order(order, &self.building_ctx[&self.origin_chain_id], &mut self.block_state);
+        println!("commit order: {:?}", order);
         match result {
             Ok(ok_result) => match ok_result {
                 Ok(res) => {

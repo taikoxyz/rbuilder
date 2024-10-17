@@ -313,7 +313,7 @@ pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
     randomize_insertion: bool,
 ) -> Result<(Vec<SimulatedOrder>, Vec<OrderErr>), CriticalCommitOrderError> {
     let mut provider_factories = HashMap::default();
-    provider_factories.insert(ctx.chain_spec.chain.id(), factory.clone());    
+    provider_factories.insert(ctx.chain_spec.chain.id(), factory.clone());
 
     let mut ctxs = HashMap::default();
     ctxs.insert(ctx.chain_spec.chain.id(), ctx.clone());
@@ -441,6 +441,8 @@ pub fn simulate_order_using_fork<Tracer: SimulationTracer>(
     ctx: &BlockBuildingContext,
     fork: &mut PartialBlockFork<'_, '_, Tracer>,
 ) -> Result<OrderSimResult, CriticalCommitOrderError> {
+    println!("simulate_order_using_fork");
+
     // simulate parents
     let mut prev_order = None;
     let mut gas_used = 0;

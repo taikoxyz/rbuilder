@@ -45,6 +45,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                 // contexts are created for a duration of the slot so this is not a problem
                 sleep(Duration::from_millis(50));
             }
+            sleep(Duration::from_millis(500));
         };
 
         //TODO Brecht: fix

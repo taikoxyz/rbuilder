@@ -132,6 +132,7 @@ pub fn backtest_simulate_block<DB: Database + Clone + 'static>(
     ordering_config: OrderingBuilderConfig,
     input: BacktestSimulateBlockInput<'_, DB>,
 ) -> eyre::Result<(Block, CachedReads)> {
+    println!("backtest_simulate_block");
 
     let mut provider_factories = HashMap::default();
     provider_factories.insert(input.ctx.chain_spec.chain.id(), input.provider_factory.clone());
@@ -281,6 +282,7 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
         mut block_orders: BlockOrders,
         build_start: Instant,
     ) -> eyre::Result<()> {
+        println!("fill_orders: {:?}", block_orders);
         let mut order_attempts: HashMap<OrderId, usize> = HashMap::default();
         // @Perf when gas left is too low we should break.
         while let Some(sim_order) = block_orders.pop_order() {
