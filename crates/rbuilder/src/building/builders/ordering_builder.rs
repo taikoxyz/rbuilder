@@ -295,7 +295,9 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
         mut block_orders: BlockOrders,
         build_start: Instant,
     ) -> eyre::Result<()> {
-        println!("fill_orders: {:?}", block_orders);
+        if block_orders.get_all_orders().len() > 0 {
+            println!("fill_orders: {:?}", block_orders);
+        }
         let mut order_attempts: HashMap<OrderId, usize> = HashMap::default();
         // @Perf when gas left is too low we should break.
         while let Some(sim_order) = block_orders.pop_order() {
