@@ -119,10 +119,10 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                                     .collect(),
                                 simulation_time: start_time.elapsed(),
                             };
-                            current_sim_context
+                            let result_send = current_sim_context
                                 .results
-                                .try_send(result)
-                                .unwrap_or_default();
+                                .try_send(result);
+                            println!("sending result: {:?}", result_send);
                             true
                         }
                         OrderSimResult::Failed(_) => false,
