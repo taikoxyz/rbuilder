@@ -59,14 +59,14 @@ impl BlockBuildingSink for BestBlockCell {
 
 impl BestBlockCell {
     pub fn compare_and_update(&self, block: Block) {
-        //println!("compare_and_update");
         let mut best_block = self.val.lock().unwrap();
         let old_value = best_block
             .as_ref()
             .map(|b| b.trace.bid_value)
             .unwrap_or_default();
+        println!("compare_and_update: {:?} > {:?}", block.trace.bid_value, old_value);
         if block.trace.bid_value > old_value {
-            //println!("best_block update: {:?} > {:?}", block.trace.bid_value, old_value);
+            println!("best_block update: {:?} > {:?}", block.trace.bid_value, old_value);
             *best_block = Some(block);
         }
     }
@@ -143,7 +143,7 @@ async fn run_submit_to_relays_job(
 ) -> Option<BuiltBlockInfo> {
     println!("run_submit_to_relays_job");
     // Brecht: block submission
-    
+
     let best_bid_sync_source = BestBidSyncSource::new(
         competition_bid_value_source,
         slot_data.block(),

@@ -125,7 +125,7 @@ pub enum BlockBuildingHelperError {
 }
 
 impl BlockBuildingHelperError {
-    /// Non critial error can happen during normal operations of the builder  
+    /// Non critial error can happen during normal operations of the builder
     pub fn is_critical(&self) -> bool {
         match self {
             BlockBuildingHelperError::FinalizeError(finalize) => {
@@ -282,6 +282,8 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         // };
         let bid_value = U256::from(self.partial_block.gas_used);
         let true_value = U256::from(self.partial_block.gas_used);
+
+        println!("gas used: {:?}", self.partial_block.gas_used);
         // Since some extra money might arrived directly the suggested_fee_recipient (when suggested_fee_recipient != coinbase)
         // we check the fee_recipient delta and make our bid include that! This is supposed to be what the relay will check.
         let fee_recipient_balance_after = self
@@ -295,7 +297,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
 
         self.built_block_trace.bid_value = U256::from(self.partial_block.gas_used);
         self.built_block_trace.true_bid_value = self.built_block_trace.bid_value;
-        
+
         Ok(())
     }
 }
