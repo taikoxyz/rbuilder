@@ -43,6 +43,11 @@ pub async fn subscribe_to_txpool_with_blobs(
 
         while let Some(tx_hash) = stream.next().await {
             println!("Dani debug: Some txn arrived on {:?}", config.ipc_path);
+
+            if config.ipc_path.to_str().unwrap() == "/tmp/reth.ipc" {
+                println!("skipping!");
+                continue;
+            }
             let start = Instant::now();
 
             let tx_with_blobs = match get_tx_with_blobs(tx_hash, &provider).await {
@@ -69,7 +74,7 @@ pub async fn subscribe_to_txpool_with_blobs(
 
             let parse_duration = start.elapsed();
             trace!(order = ?order.id(), parse_duration_mus = parse_duration.as_micros(), "Mempool transaction received with blobs");
-       
+
             add_txfetcher_time_to_query(parse_duration);
             println!("Dani debug: About to send order to results channel. Order ID: {:?}", order_id);
             match results
@@ -116,11 +121,11 @@ async fn get_tx_with_blobs(
         raw_tx
     } else {
         return Ok(None);
-      
+
     };
 
     let raw_tx = hex::decode(raw_tx)?;
-  
+
     let raw_tx = Bytes::from(raw_tx);
     Ok(Some(
         TransactionSignedEcRecoveredWithBlobs::decode_enveloped_with_real_blobs(raw_tx)?,

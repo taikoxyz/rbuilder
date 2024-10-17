@@ -6,6 +6,11 @@ members = [
 ]
 resolver = "2"
 
+[profile.release]
+opt-level = 1
+debug = true
+lto = false
+
 # Like release, but with full debug symbols. Useful for e.g. `perf`.
 [profile.debug-fast]
 inherits = "release"
