@@ -44,6 +44,7 @@ pub async fn subscribe_to_txpool_with_blobs(
         while let Some(tx_hash) = stream.next().await {
             println!("Dani debug: Some txn arrived on {:?}", config.ipc_path);
 
+            // TODO: Skip L1 transactions for now because circular
             if config.ipc_path.to_str().unwrap() == "/tmp/reth.ipc" {
                 println!("skipping!");
                 continue;

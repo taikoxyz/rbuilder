@@ -156,7 +156,7 @@ impl<DB: Database> SimTree<DB> {
             match onchain_nonce.cmp(&nonce.nonce) {
                 Ordering::Equal => {
                     // nonce, valid
-                    println!("nonce value");
+                    println!("nonce ok");
                     onchain_nonces_incremented.insert(nonce.address);
                     continue;
                 }
