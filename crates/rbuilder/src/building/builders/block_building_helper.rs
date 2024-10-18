@@ -125,7 +125,7 @@ pub enum BlockBuildingHelperError {
 }
 
 impl BlockBuildingHelperError {
-    /// Non critial error can happen during normal operations of the builder  
+    /// Non critial error can happen during normal operations of the builder
     pub fn is_critical(&self) -> bool {
         match self {
             BlockBuildingHelperError::FinalizeError(finalize) => {
@@ -189,18 +189,19 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         partial_block
             .pre_block_call(&building_ctx[&origin_chain_id], &mut block_state)
             .map_err(|_| BlockBuildingHelperError::PreBlockCallFailed)?;
-        let payout_tx_gas = if building_ctx[&origin_chain_id].coinbase_is_suggested_fee_recipient() {
-            None
-        } else {
-            let payout_tx_gas = estimate_payout_gas_limit(
-                building_ctx[&origin_chain_id].attributes.suggested_fee_recipient,
-                &building_ctx[&origin_chain_id],
-                &mut block_state,
-                0,
-            )?;
-            partial_block.reserve_gas(payout_tx_gas);
-            Some(payout_tx_gas)
-        };
+        // let payout_tx_gas = if building_ctx[&origin_chain_id].coinbase_is_suggested_fee_recipient() {
+        //     None
+        // } else {
+        //     let payout_tx_gas = estimate_payout_gas_limit(
+        //         building_ctx[&origin_chain_id].attributes.suggested_fee_recipient,
+        //         &building_ctx[&origin_chain_id],
+        //         &mut block_state,
+        //         0,
+        //     )?;
+        //     partial_block.reserve_gas(payout_tx_gas);
+        //     Some(payout_tx_gas)
+        // };
+        let payout_tx_gas = None;
         Ok(Self {
             _fee_recipient_balance_start: fee_recipient_balance_start,
             block_state,
@@ -282,6 +283,8 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         // };
         let bid_value = U256::from(self.partial_block.gas_used);
         let true_value = U256::from(self.partial_block.gas_used);
+
+        println!("gas used: {:?}", self.partial_block.gas_used);
         // Since some extra money might arrived directly the suggested_fee_recipient (when suggested_fee_recipient != coinbase)
         // we check the fee_recipient delta and make our bid include that! This is supposed to be what the relay will check.
         let fee_recipient_balance_after = self
@@ -295,7 +298,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
 
         self.built_block_trace.bid_value = U256::from(self.partial_block.gas_used);
         self.built_block_trace.true_bid_value = self.built_block_trace.bid_value;
-        
+
         Ok(())
     }
 }
@@ -309,6 +312,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         let result =
             self.partial_block
                 .commit_order(order, &self.building_ctx[&self.origin_chain_id], &mut self.block_state);
+        println!("commit order: {:?}", order);
         match result {
             Ok(ok_result) => match ok_result {
                 Ok(res) => {

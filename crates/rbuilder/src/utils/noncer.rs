@@ -3,6 +3,7 @@ use alloy_primitives::{Address, B256};
 use reth::providers::{ProviderFactory, StateProviderBox};
 use reth_db::database::Database;
 use reth_errors::ProviderResult;
+use revm_primitives::ChainAddress;
 use std::sync::{Arc, Mutex};
 
 /// Struct to get nonces for Addresses, caching the results.
@@ -16,7 +17,7 @@ pub struct NonceCache<DB> {
     provider_factory: HashMap<u64, ProviderFactory<DB>>,
     // We have to use Arc<Mutex here because Rc are not Send (so can't be used in futures)
     // and borrows don't work when nonce cache is a field in a struct.
-    cache: Arc<Mutex<HashMap<Address, u64>>>,
+    cache: Arc<Mutex<HashMap<ChainAddress, u64>>>,
     block: HashMap<u64, B256>,
 }
 
@@ -43,11 +44,11 @@ impl<DB: Database> NonceCache<DB> {
 
 pub struct NonceCacheRef {
     states: HashMap<u64, StateProviderBox>,
-    cache: Arc<Mutex<HashMap<Address, u64>>>,
+    cache: Arc<Mutex<HashMap<ChainAddress, u64>>>,
 }
 
 impl NonceCacheRef {
-    pub fn nonce(&self, address: Address) -> ProviderResult<u64> {
+    pub fn nonce(&self, address: ChainAddress) -> ProviderResult<u64> {
         let mut cache = self.cache.lock().unwrap();
         if let Some(nonce) = cache.get(&address) {
             return Ok(*nonce);
@@ -59,7 +60,7 @@ impl NonceCacheRef {
                 default_chain_id = *chain_id;
             }
         }
-        let nonce = self.states[&default_chain_id].account_nonce(address)?.unwrap_or_default();
+        let nonce = self.states[&address.0].account_nonce(address.1)?.unwrap_or_default();
         cache.insert(address, nonce);
         Ok(nonce)
     }

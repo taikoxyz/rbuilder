@@ -1,5 +1,5 @@
 pub mod base_config;
-pub mod layer2_info; 
+pub mod layer2_info;
 pub mod block_output;
 pub mod building;
 pub mod cli;
@@ -36,7 +36,7 @@ use reth::{
 use reth_chainspec::ChainSpec;
 use reth_db::database::Database;
 use reth_evm::provider;
-use std::{cmp::min, path::PathBuf, sync::Arc, time::Duration};
+use std::{cmp::min, path::PathBuf, sync::Arc, thread::sleep, time::Duration};
 use time::OffsetDateTime;
 use tokio::{sync::mpsc, task::spawn_blocking};
 use tokio_util::sync::CancellationToken;
@@ -261,6 +261,9 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 self.extra_data.clone(),
                 None,
             );
+
+            // TODO(Brecht): hack to wait until latest L2 block is also created, which is later then when we get the payload build event
+            sleep(Duration::from_millis(4000));
 
             // TODO: Brecht
             let mut ctxs = HashMap::default();

@@ -20,6 +20,7 @@ use reth::{
 };
 use reth_db::database::Database;
 use reth_payload_builder::database::SyncCachedReads as CachedReads;
+use revm_primitives::ChainAddress;
 use std::sync::Arc;
 use tokio::sync::{broadcast, broadcast::error::TryRecvError};
 use tokio_util::sync::CancellationToken;
@@ -110,7 +111,7 @@ pub struct OrderIntakeConsumer<DB> {
     nonce_cache: NonceCache<DB>,
 
     block_orders: BlockOrders,
-    onchain_nonces_updated: HashSet<Address>,
+    onchain_nonces_updated: HashSet<ChainAddress>,
 
     order_consumer: OrderConsumer,
 }

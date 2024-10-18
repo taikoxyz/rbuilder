@@ -12,6 +12,7 @@ use ahash::HashMap;
 use reth_db::database::Database;
 use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_provider::StateProvider;
+use revm_primitives::ChainAddress;
 use std::{
     sync::{Arc, Mutex},
     thread::sleep,
@@ -45,6 +46,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                 // contexts are created for a duration of the slot so this is not a problem
                 sleep(Duration::from_millis(50));
             }
+            sleep(Duration::from_millis(500));
         };
 
         //TODO Brecht: fix
@@ -99,28 +101,29 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             let mut block_state = BlockState::new_arc(state_for_sim).with_cached_reads(cached_reads);
             let sim_result = simulate_order(
                 task.parents.clone(),
-                task.order,
+                task.order.clone(),
                 &current_sim_context.block_ctx[&chain_id],
                 &mut block_state,
             );
             match sim_result {
                 Ok(sim_result) => {
-                    let sim_ok = match sim_result.result {
+                    let sim_ok = match &sim_result.result {
                         OrderSimResult::Success(simulated_order, nonces_after) => {
+                            println!("sim okay for: {:?} -> {:?}", task, sim_result);
                             let result = SimulatedResult {
                                 id: task.id,
-                                simulated_order,
+                                simulated_order: simulated_order.clone(),
                                 previous_orders: task.parents,
                                 nonces_after: nonces_after
                                     .into_iter()
-                                    .map(|(address, nonce)| NonceKey { address, nonce })
+                                    .map(|(address, nonce)| NonceKey { address: ChainAddress(task.order.chain_id().unwrap(), address.clone()), nonce: nonce.clone() })
                                     .collect(),
                                 simulation_time: start_time.elapsed(),
                             };
-                            current_sim_context
+                            let result_send = current_sim_context
                                 .results
-                                .try_send(result)
-                                .unwrap_or_default();
+                                .try_send(result);
+                            println!("sending result: {:?}", result_send);
                             true
                         }
                         OrderSimResult::Failed(_) => false,
