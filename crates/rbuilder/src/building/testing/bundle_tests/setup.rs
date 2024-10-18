@@ -207,7 +207,7 @@ impl TestSetup {
     }
     fn try_commit_order(&mut self) -> eyre::Result<Result<ExecutionResult, ExecutionError>> {
         let state_provider = self.test_chain.provider_factory().latest()?;
-        let mut block_state = BlockState::new(state_provider)
+        let mut block_state = BlockState::new(state_provider, self.test_chain.block_building_context().chain_spec.chain.id())
             .with_bundle_state(self.bundle_state.take().unwrap_or_default())
             .with_cached_reads(self.cached_reads.take().unwrap_or_default());
 
@@ -277,7 +277,7 @@ impl TestSetup {
 
     pub fn current_nonce(&self, named_addr: NamedAddr) -> eyre::Result<u64> {
         let state_provider = self.test_chain.provider_factory().latest()?;
-        let mut block_state = BlockState::new(state_provider)
+        let mut block_state = BlockState::new(state_provider, self.test_chain.block_building_context().chain_spec.chain.id())
             .with_bundle_state(self.bundle_state.clone().unwrap_or_default())
             .with_cached_reads(self.cached_reads.clone().unwrap_or_default());
 

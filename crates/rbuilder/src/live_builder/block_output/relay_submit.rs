@@ -52,6 +52,7 @@ impl Default for BestBlockCell {
 
 impl BlockBuildingSink for BestBlockCell {
     fn new_block(&self, block: Block) {
+        //println!("BestBlockCell::new_block");
         self.compare_and_update(block);
     }
 }
@@ -63,12 +64,15 @@ impl BestBlockCell {
             .as_ref()
             .map(|b| b.trace.bid_value)
             .unwrap_or_default();
+        //println!("compare_and_update: {:?} > {:?}", block.trace.bid_value, old_value);
         if block.trace.bid_value > old_value {
+            println!("best_block update: {:?} > {:?}", block.trace.bid_value, old_value);
             *best_block = Some(block);
         }
     }
 
     pub fn take_best_block(&self) -> Option<Block> {
+        //println!("take_best_block update");
         self.val.lock().unwrap().take()
     }
 }
@@ -137,6 +141,9 @@ async fn run_submit_to_relays_job(
     cancel: CancellationToken,
     competition_bid_value_source: Arc<dyn BidValueSource + Send + Sync>,
 ) -> Option<BuiltBlockInfo> {
+    println!("run_submit_to_relays_job");
+    // Brecht: block submission
+
     let best_bid_sync_source = BestBidSyncSource::new(
         competition_bid_value_source,
         slot_data.block(),
@@ -147,11 +154,13 @@ async fn run_submit_to_relays_job(
     {
         let submit_start_time = slot_data.timestamp() + config.slot_delta_to_start_submits;
         let sleep_duration = submit_start_time - time::OffsetDateTime::now_utc();
+        //println!("Sleeping for {:?}", sleep_duration);
         if sleep_duration.is_positive() {
-            sleep(sleep_duration.try_into().unwrap()).await;
+            //sleep(sleep_duration.try_into().unwrap()).await;
         }
     }
 
+    //println!("Sleeping done");
     let (normal_relays, optimistic_relays) = {
         let mut normal_relays = Vec::new();
         let mut optimistic_relays = Vec::new();
@@ -164,10 +173,14 @@ async fn run_submit_to_relays_job(
         }
         (normal_relays, optimistic_relays)
     };
+    //println!("normal_relays: {:?}", normal_relays);
+    //println!("optimistic_relays: {:?}", optimistic_relays);
 
     let mut last_bid_value = U256::from(0);
     let mut last_submit_time = Instant::now();
     'submit: loop {
+        //println!("poll loop");
+
         if cancel.is_cancelled() {
             break 'submit res;
         }
@@ -188,6 +201,8 @@ async fn run_submit_to_relays_job(
         } else {
             continue 'submit;
         };
+
+        println!("submit block!");
 
         res = Some(BuiltBlockInfo {
             bid_value: block.trace.bid_value,
@@ -225,6 +240,8 @@ async fn run_submit_to_relays_job(
         );
         inc_initiated_submissions(submission_optimistic);
 
+        //println!("submit block 2!");
+
         let (normal_signed_submission, optimistic_signed_submission) = {
             let normal_signed_submission = match sign_block_for_relay(
                 &config.signer,
@@ -237,10 +254,12 @@ async fn run_submit_to_relays_job(
             ) {
                 Ok(res) => res,
                 Err(err) => {
+                    println!("couldn't sign block for relay: {:?}", err);
                     error!(parent: &submission_span, err = ?err, "Error signing block for relay");
                     continue 'submit;
                 }
             };
+            //println!("normal_signed_submission ok");
             let optimistic_signed_submission = match sign_block_for_relay(
                 &config.optimistic_signer,
                 &block.sealed_block,
@@ -256,8 +275,11 @@ async fn run_submit_to_relays_job(
                     continue 'submit;
                 }
             };
+            //println!("optimistic_signed_submission ok");
             (normal_signed_submission, optimistic_signed_submission)
         };
+
+        //println!("normal_signed_submission: {:?}", normal_signed_submission);
 
         if config.dry_run {
             validate_block(
@@ -273,9 +295,12 @@ async fn run_submit_to_relays_job(
             continue 'submit;
         }
 
+        //println!("submit block 3!");
+
         measure_block_e2e_latency(&block.trace.included_orders);
 
         for relay in &normal_relays {
+            //println!("relay: {:?}", relay);
             let span = info_span!(parent: &submission_span, "relay_submit", relay = &relay.id, optimistic = false);
             let relay = relay.clone();
             let cancel = cancel.clone();
@@ -355,6 +380,7 @@ pub async fn run_submit_to_relays_job_and_metrics(
     cancel: CancellationToken,
     competition_bid_value_source: Arc<dyn BidValueSource + Send + Sync>,
 ) {
+    println!("run_submit_to_relays_job_and_metrics");
     let best_bid = run_submit_to_relays_job(
         best_bid.clone(),
         slot_data,
@@ -434,6 +460,7 @@ async fn submit_bid_to_the_relay(
     signed_submit_request: SubmitBlockRequest,
     optimistic: bool,
 ) {
+    println!("submit_bid_to_the_relay");
     let submit_start = Instant::now();
 
     if let Some(limiter) = &relay.submission_rate_limiter {
@@ -542,6 +569,8 @@ impl BuilderSinkFactory for RelaySubmitSinkFactory {
     ) -> Box<dyn BlockBuildingSink> {
         let best_bid = BestBlockCell::default();
 
+        //println!("builder relays: {:?}", self.relays);
+
         let relays = slot_data
             .relays
             .iter()
@@ -552,6 +581,9 @@ impl BuilderSinkFactory for RelaySubmitSinkFactory {
                     .clone()
             })
             .collect();
+
+        //println!("filtered relays: {:?}", self.relays);
+
         tokio::spawn(run_submit_to_relays_job_and_metrics(
             best_bid.clone(),
             slot_data,

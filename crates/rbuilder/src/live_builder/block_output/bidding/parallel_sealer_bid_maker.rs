@@ -117,6 +117,7 @@ impl ParallelSealerBidMakerProcess {
             return;
         }
         if let Some(bid) = self.pending_bid.consume_bid() {
+            println!("check_for_new_bid");
             let payout_tx_val = bid.payout_tx_value();
             let block = bid.block();
             let block_number = block.building_context().block();

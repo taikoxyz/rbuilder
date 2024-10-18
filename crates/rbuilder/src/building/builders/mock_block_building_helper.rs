@@ -6,7 +6,7 @@ use crate::{
     primitives::SimulatedOrder,
 };
 use alloy_primitives::U256;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_primitives::SealedBlock;
 use time::OffsetDateTime;
 

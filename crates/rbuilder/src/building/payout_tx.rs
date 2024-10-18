@@ -8,7 +8,7 @@ use reth_primitives::{
     transaction::FillTxEnv, Transaction, TransactionSignedEcRecovered, TxEip1559,
     TxKind as TransactionKind, KECCAK_EMPTY,
 };
-use revm_primitives::{EVMError, Env, ExecutionResult, TxEnv};
+use revm_primitives::{ChainAddress, EVMError, Env, ExecutionResult, TxEnv};
 
 pub fn create_payout_tx(
     chain_spec: &ChainSpec,
@@ -53,7 +53,9 @@ pub fn insert_test_payout_tx(
 ) -> Result<Option<u64>, PayoutTxErr> {
     let builder_signer = ctx.builder_signer.as_ref().ok_or(PayoutTxErr::NoSigner)?;
 
-    let nonce = state.nonce(builder_signer.address)?;
+    println!("builder_signer: {:?}", builder_signer);
+
+    let nonce = state.nonce(ChainAddress(ctx.chain_spec.chain.id(), builder_signer.address))?;
 
     let mut cfg = ctx.initialized_cfg.clone();
     // disable balance check so we can estimate the gas cost without having any funds
@@ -80,6 +82,10 @@ pub fn insert_test_payout_tx(
     };
 
     let mut db = state.new_db_ref();
+
+    let mut env = env.clone();
+    env.cfg.chain_id = tx.chain_id().unwrap();
+    //println!("active remv chain_id: {}", env.cfg.chain_id);
 
     let mut evm = revm::Evm::builder()
         .with_spec_id(ctx.spec_id)
@@ -113,7 +119,7 @@ pub fn estimate_payout_gas_limit(
     gas_used: u64,
 ) -> Result<u64, EstimatePayoutGasErr> {
     tracing::trace!(address = ?to, "Estimating payout gas");
-    if state.code_hash(to)? == KECCAK_EMPTY {
+    if state.code_hash(ChainAddress(ctx.chain_spec.chain.id(), to))? == KECCAK_EMPTY {
         return Ok(21_000);
     }
 

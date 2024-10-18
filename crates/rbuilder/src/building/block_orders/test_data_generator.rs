@@ -1,4 +1,5 @@
 use alloy_primitives::U256;
+use revm_primitives::ChainAddress;
 
 use crate::primitives::{AccountNonce, Order, SimValue, SimulatedOrder};
 
@@ -12,7 +13,7 @@ impl TestDataGenerator {
     pub fn create_account_nonce(&mut self, nonce: u64) -> AccountNonce {
         AccountNonce {
             nonce,
-            account: self.base.base.create_address(),
+            account: ChainAddress(1, self.base.base.create_address()),
         }
     }
 

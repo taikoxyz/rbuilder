@@ -3,13 +3,14 @@ use alloy_primitives::{Address, B256, U256};
 use reth_primitives::TransactionSignedEcRecovered;
 use revm::{
     interpreter::{opcode, CallInputs, CallOutcome, Interpreter},
-    Database, EvmContext, Inspector,
+    Database, EvmContext, Inspector, SyncDatabase,
 };
 use revm_inspectors::access_list::AccessListInspector;
+use revm_primitives::ChainAddress;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SlotKey {
-    pub address: Address,
+    pub address: ChainAddress,
     pub key: B256,
 }
 
@@ -23,12 +24,12 @@ pub struct UsedStateTrace {
     /// write slot values contains last write
     pub written_slot_values: HashMap<SlotKey, B256>,
     /// balance of first read
-    pub read_balances: HashMap<Address, U256>,
+    pub read_balances: HashMap<ChainAddress, U256>,
     /// number of `wei` sent or received during execution
-    pub received_amount: HashMap<Address, U256>,
-    pub sent_amount: HashMap<Address, U256>,
-    pub created_contracts: Vec<Address>,
-    pub destructed_contracts: Vec<Address>,
+    pub received_amount: HashMap<ChainAddress, U256>,
+    pub sent_amount: HashMap<ChainAddress, U256>,
+    pub created_contracts: Vec<ChainAddress>,
+    pub destructed_contracts: Vec<ChainAddress>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -36,7 +37,7 @@ enum NextStepAction {
     #[default]
     None,
     ReadSloadKeyResult(B256),
-    ReadBalanceResult(Address),
+    ReadBalanceResult(ChainAddress),
 }
 
 #[derive(Debug)]
@@ -57,16 +58,17 @@ impl<'a> UsedStateEVMInspector<'a> {
     /// Txs with the same nonce are in conflict and origin address is EOA that does not have storage.
     /// We convert nonce change to the slot 0 read and write of the signer
     fn use_tx_nonce(&mut self, tx: &TransactionSignedEcRecovered) {
+        let signer = ChainAddress(tx.chain_id().unwrap(), tx.signer());
         self.used_state_trace.read_slot_values.insert(
             SlotKey {
-                address: tx.signer(),
+                address: signer,
                 key: Default::default(),
             },
             U256::from(tx.nonce()).into(),
         );
         self.used_state_trace.written_slot_values.insert(
             SlotKey {
-                address: tx.signer(),
+                address: signer,
                 key: Default::default(),
             },
             U256::from(tx.nonce() + 1).into(),
@@ -76,7 +78,7 @@ impl<'a> UsedStateEVMInspector<'a> {
 
 impl<'a, DB> Inspector<DB> for UsedStateEVMInspector<'a>
 where
-    DB: Database,
+    DB: SyncDatabase,
 {
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EvmContext<DB>) {
         match std::mem::take(&mut self.next_step_action) {
@@ -134,7 +136,7 @@ where
             opcode::BALANCE => {
                 if let Ok(addr) = interpreter.stack().peek(0) {
                     let addr = Address::from_word(B256::from(addr.to_be_bytes()));
-                    self.next_step_action = NextStepAction::ReadBalanceResult(addr);
+                    self.next_step_action = NextStepAction::ReadBalanceResult(ChainAddress(interpreter.chain_id, addr));
                 }
             }
             opcode::SELFBALANCE => {
@@ -165,17 +167,17 @@ where
 
     fn create_end(
         &mut self,
-        _: &mut EvmContext<DB>,
+        ctx: &mut EvmContext<DB>,
         _: &revm::interpreter::CreateInputs,
         outcome: revm::interpreter::CreateOutcome,
     ) -> revm::interpreter::CreateOutcome {
         if let Some(addr) = outcome.address {
-            self.used_state_trace.created_contracts.push(addr);
+            self.used_state_trace.created_contracts.push(ChainAddress(ctx.env.cfg.chain_id, addr));
         }
         outcome
     }
 
-    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+    fn selfdestruct(&mut self, contract: ChainAddress, target: ChainAddress, value: U256) {
         // selfdestruct can be called multiple times during transaction execution
         if self
             .used_state_trace
@@ -238,7 +240,7 @@ impl<'a> RBuilderEVMInspector<'a> {
 
 impl<'a, DB> Inspector<DB> for RBuilderEVMInspector<'a>
 where
-    DB: Database,
+    DB: SyncDatabase,
     UsedStateEVMInspector<'a>: Inspector<DB>,
 {
     #[inline]
@@ -277,7 +279,7 @@ where
     }
 
     #[inline]
-    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+    fn selfdestruct(&mut self, contract: ChainAddress, target: ChainAddress, value: U256) {
         if let Some(used_state_inspector) = &mut self.used_state_inspector {
             used_state_inspector.selfdestruct(contract, target, value)
         }

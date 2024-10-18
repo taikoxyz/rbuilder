@@ -13,10 +13,11 @@ pub mod tracers;
 pub use block_orders::BlockOrders;
 use eth_sparse_mpt::SparseTrieSharedCache;
 use reth_primitives::proofs::calculate_requests_root;
+use revm_primitives::ChainAddress;
 
 use crate::{
     primitives::{Order, OrderId, SimValue, SimulatedOrder, TransactionSignedEcRecoveredWithBlobs},
-    roothash::{calculate_state_root, RootHashConfig, RootHashError},
+    roothash::{calculate_state_root, RootHashConfig, RootHashError, RootHashMode},
     utils::{a2r_withdrawal, calc_gas_limit, timestamp_as_u64, Signer},
 };
 use ahash::HashSet;
@@ -41,7 +42,7 @@ use reth_evm::system_calls::{
 };
 use reth_evm_ethereum::{eip6110::parse_deposits_from_receipts, revm_spec, EthEvmConfig};
 use reth_node_api::PayloadBuilderAttributes;
-use reth_payload_builder::{database::CachedReads, EthPayloadBuilderAttributes};
+use reth_payload_builder::{database::SyncCachedReads as CachedReads, EthPayloadBuilderAttributes};
 use revm::{
     db::states::bundle_state::BundleRetention::{self, PlainState},
     primitives::{BlobExcessGasAndPrice, BlockEnv, CfgEnvWithHandlerCfg, SpecId},
@@ -100,7 +101,7 @@ impl BlockBuildingContext {
         )
         .expect("PayloadBuilderAttributes::try_new");
         let (initialized_cfg, mut block_env) = attributes.cfg_and_block_env(&chain_spec, parent);
-        block_env.coinbase = signer.address;
+        block_env.coinbase = ChainAddress(chain_spec.chain.id(), signer.address);
         if let Some(desired_limit) = prefer_gas_limit {
             block_env.gas_limit =
                 U256::from(calc_gas_limit(block_env.gas_limit.to(), desired_limit));
@@ -172,7 +173,7 @@ impl BlockBuildingContext {
             };
         let block_env = BlockEnv {
             number: U256::from(block_number),
-            coinbase,
+            coinbase: ChainAddress(chain_spec.chain.id(), coinbase),
             timestamp: U256::from(onchain_block.header.timestamp),
             difficulty: onchain_block.header.difficulty,
             prevrandao: onchain_block.header.mix_hash,
@@ -250,7 +251,7 @@ impl BlockBuildingContext {
 
     pub fn modify_use_suggested_fee_recipient_as_coinbase(&mut self) {
         self.builder_signer = None;
-        self.block_env.coinbase = self.attributes.suggested_fee_recipient;
+        self.block_env.coinbase = ChainAddress(self.chain_spec.chain.id(), self.attributes.suggested_fee_recipient);
     }
 
     pub fn timestamp(&self) -> OffsetDateTime {
@@ -263,7 +264,7 @@ impl BlockBuildingContext {
     }
 
     pub fn coinbase_is_suggested_fee_recipient(&self) -> bool {
-        self.block_env.coinbase == self.attributes.suggested_fee_recipient
+        self.block_env.coinbase == ChainAddress(self.chain_spec.chain.id(), self.attributes.suggested_fee_recipient)
     }
 }
 
@@ -459,6 +460,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         ctx: &BlockBuildingContext,
         state: &mut BlockState,
     ) -> Result<Result<ExecutionResult, ExecutionError>, CriticalCommitOrderError> {
+        println!("commit_order: {:?}", order.order);
         if ctx.builder_signer.is_none() && !order.sim_value.paid_kickbacks.is_empty() {
             // Return here to avoid wasting time on a call to fork.commit_order that 99% will fail
             return Ok(Err(ExecutionError::OrderError(OrderErr::Bundle(
@@ -505,6 +507,10 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         self.coinbase_profit += ok_result.coinbase_profit;
         self.executed_tx.extend(ok_result.txs.clone());
         self.receipts.extend(ok_result.receipts.clone());
+
+        //println!("self.executed_tx num: {:?}", self.executed_tx.len());
+        //println!("self.executed_tx: {:?}", self.executed_tx);
+
         Ok(Ok(ExecutionResult {
             coinbase_profit: ok_result.coinbase_profit,
             inplace_sim: inplace_sim_result,
@@ -524,9 +530,11 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         gas_limit: u64,
         ctx: &BlockBuildingContext,
     ) -> Result<U256, InsertPayoutTxErr> {
-        self.coinbase_profit
-            .checked_sub(U256::from(gas_limit) * ctx.block_env.basefee)
-            .ok_or_else(|| InsertPayoutTxErr::ProfitTooLow)
+        // TODO(Brecht): revert
+        Ok(self.coinbase_profit)
+        //self.coinbase_profit
+        //    .checked_sub(U256::from(gas_limit) * ctx.block_env.basefee)
+        //    .ok_or_else(|| InsertPayoutTxErr::ProfitTooLow)
     }
 
     /// Inserts payout tx to ctx.attributes.suggested_fee_recipient (should be called at the end of the block)
@@ -538,13 +546,15 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         ctx: &BlockBuildingContext,
         state: &mut BlockState,
     ) -> Result<(), InsertPayoutTxErr> {
+        //println!("insert_proposer_payout_tx");
         let builder_signer = ctx
             .builder_signer
             .as_ref()
             .ok_or(InsertPayoutTxErr::NoSigner)?;
+        //println!("insert_proposer_payout_tx: builder_signer: {:?}", builder_signer);
         self.free_reserved_gas();
         let nonce = state
-            .nonce(builder_signer.address)
+            .nonce(ChainAddress(ctx.chain_spec.chain.id(), builder_signer.address))
             .map_err(CriticalCommitOrderError::Reth)?;
         let tx = create_payout_tx(
             ctx.chain_spec.as_ref(),
@@ -555,6 +565,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             gas_limit,
             value.to(),
         )?;
+        //println!("payout tx: {:?}", tx);
         // payout tx has no blobs so it's safe to unwrap
         let tx = TransactionSignedEcRecoveredWithBlobs::new_no_blobs(tx).unwrap();
         let mut fork = PartialBlockFork::new(state).with_tracer(&mut self.tracer);
@@ -569,9 +580,13 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         self.executed_tx.push(ok_result.tx);
         self.receipts.push(ok_result.receipt);
 
+        //println!("self.executed_tx num: {:?}", self.executed_tx.len());
+        //println!("self.executed_tx: {:?}", self.executed_tx);
+
         Ok(())
     }
 
+    // Brecht: Builds actual block
     #[allow(clippy::too_many_arguments)]
     pub fn finalize<DB: reth_db::database::Database + Clone + 'static>(
         self,
@@ -636,6 +651,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         let (cached_reads, bundle) = state.clone_bundle_and_cache();
         let execution_outcome = ExecutionOutcome::new(
+            Some(ctx.chain_spec.chain.id()),
             bundle,
             Receipts::from(vec![self
                 .receipts
@@ -654,6 +670,10 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             .block_logs_bloom(block_number)
             .expect("Number is in range");
 
+        // Brecht: state root calculation
+        // TODO Brecht: Fix
+        let mut root_hash_config = root_hash_config;
+        root_hash_config.mode = RootHashMode::IgnoreParentHash;
         let state_root = calculate_state_root(
             provider_factory,
             ctx.attributes.parent,
@@ -692,13 +712,13 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             }
             (ctx.excess_blob_gas, Some(self.blob_gas_used))
         } else {
-            (None, None)
+            (Some(0), Some(0))
         };
 
         let header = Header {
             parent_hash: ctx.attributes.parent,
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
-            beneficiary: ctx.block_env.coinbase,
+            beneficiary: ctx.block_env.coinbase.1,
             state_root,
             transactions_root,
             receipts_root,
@@ -730,6 +750,8 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             withdrawals,
             requests,
         };
+
+        //println!("self.executed_tx finalized [{}]: {:?}", self.executed_tx.len(), self.executed_tx);
 
         Ok(FinalizeResult {
             sealed_block: block.seal_slow(),

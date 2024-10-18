@@ -46,7 +46,7 @@ use eyre::Context;
 use reth::tasks::pool::BlockingTaskPool;
 use reth_chainspec::{Chain, ChainSpec, NamedChain};
 use reth_db::DatabaseEnv;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_primitives::StaticFileSegment;
 use reth_provider::StaticFileProviderFactory;
 use serde::Deserialize;
@@ -160,6 +160,7 @@ impl L1Config {
         self.cl_node_url
             .iter()
             .map(|url| {
+                println!("cl_node_url: {:?} {:?}", url, url.value());
                 let url = Url::parse(&url.value()?)?;
                 Ok(Client::new(url))
             })
@@ -169,6 +170,7 @@ impl L1Config {
     pub fn create_relays(&self) -> eyre::Result<Vec<MevBoostRelay>> {
         let mut results = Vec::new();
         for relay in &self.relays {
+            println!("Dani debug - create relays: {:?}", relay);
             results.push(MevBoostRelay::from_config(relay)?);
         }
         Ok(results)
@@ -334,6 +336,7 @@ impl LiveBuilderConfig for Config {
                 cancellation_token,
                 sink_factory,
                 payload_event,
+                vec![167010],
                 provider_factory,
             )
             .await?;
@@ -345,7 +348,12 @@ impl LiveBuilderConfig for Config {
             root_hash_task_pool,
             self.base_config.sbundle_mergeabe_signers(),
         );
-        Ok(live_builder.with_builders(builders))
+
+        let (l2_ipc_paths, l2_data_dirs) = self.base_config.resolve_l2_paths()?;
+        println!("Dani debug: l2_el_node_ipc_paths are: {:?}", l2_ipc_paths);
+        println!("Dani debug: l2_reth_datadirs are: {:?}", l2_data_dirs);
+
+        Ok(live_builder.with_builders_and_layer2_info(builders))
     }
 
     fn version_for_telemetry(&self) -> crate::utils::build_info::Version {

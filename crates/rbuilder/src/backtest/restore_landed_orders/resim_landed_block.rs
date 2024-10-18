@@ -6,10 +6,12 @@ use crate::utils::{extract_onchain_block_txs, find_suggested_fee_recipient};
 use ahash::{HashMap, HashSet};
 use alloy_primitives::{B256, I256};
 use eyre::Context;
+use reth::blockchain_tree::chain;
 use reth_chainspec::ChainSpec;
 use reth_db::DatabaseEnv;
 use reth_primitives::{Receipt, TransactionSignedEcRecovered, TxHash};
 use reth_provider::ProviderFactory;
+use revm_primitives::ChainAddress;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -40,7 +42,7 @@ pub fn sim_historical_block(
 
     let ctx = BlockBuildingContext::from_onchain_block(
         onchain_block,
-        chain_spec,
+        chain_spec.clone(),
         None,
         HashSet::default(),
         coinbase,
@@ -50,7 +52,7 @@ pub fn sim_historical_block(
 
     let state_provider = provider_factory.history_by_block_hash(ctx.attributes.parent)?;
     let mut partial_block = PartialBlock::new(true, None);
-    let mut state = BlockState::new(state_provider);
+    let mut state = BlockState::new(state_provider, chain_spec.chain().id());
 
     partial_block
         .pre_block_call(&ctx, &mut state)
@@ -59,6 +61,8 @@ pub fn sim_historical_block(
     let mut cumulative_gas_used = 0;
     let mut cumulative_blob_gas_used = 0;
     let mut written_slots: HashMap<SlotKey, Vec<B256>> = HashMap::default();
+
+    let coinbase = ChainAddress(chain_spec.chain.id(), coinbase);
 
     for (idx, tx) in txs.into_iter().enumerate() {
         let coinbase_balance_before = state.balance(coinbase)?;

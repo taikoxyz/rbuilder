@@ -344,7 +344,7 @@ fn print_onchain_block_data(
                 println!(
                     "   {:>4} address: {:?>24}, key: {:?}",
                     txs_to_idx.get(tx).unwrap(),
-                    slot.address,
+                    slot.address.1,
                     slot.key
                 );
             }

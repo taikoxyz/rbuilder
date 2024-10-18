@@ -24,7 +24,7 @@ pub async fn subscribe_to_txpool_with_blobs(
     results: mpsc::Sender<ReplaceableOrderPoolCommand>,
     global_cancel: CancellationToken,
 ) -> eyre::Result<JoinHandle<()>> {
-    let ipc = IpcConnect::new(config.ipc_path);
+    let ipc = IpcConnect::new(config.ipc_path.clone());
     let provider = ProviderBuilder::new().on_ipc(ipc).await?;
 
     let handle = tokio::spawn(async move {
@@ -42,26 +42,42 @@ pub async fn subscribe_to_txpool_with_blobs(
         let mut stream = pin!(stream);
 
         while let Some(tx_hash) = stream.next().await {
+            println!("Dani debug: Some txn arrived on {:?}", config.ipc_path);
+
+            // TODO: Skip L1 transactions for now because circular
+            if config.ipc_path.to_str().unwrap() == "/tmp/reth.ipc" {
+                println!("skipping!");
+                continue;
+            }
             let start = Instant::now();
 
             let tx_with_blobs = match get_tx_with_blobs(tx_hash, &provider).await {
-                Ok(Some(tx_with_blobs)) => tx_with_blobs,
+                Ok(Some(tx_with_blobs)) => {
+                    println!("Dani debug: tx retrieved");
+                    tx_with_blobs
+                },
                 Ok(None) => {
+                    println!("Dani debug: tx not found in tx pool");
                     trace!(?tx_hash, "tx not found in tx pool");
                     continue;
                 }
                 Err(err) => {
+                    println!("Dani debug: Failed to get tx pool");
                     error!(?tx_hash, ?err, "Failed to get tx pool");
                     continue;
                 }
             };
 
             let tx = MempoolTx::new(tx_with_blobs);
+
             let order = Order::Tx(tx);
+            let order_id = order.id();
+
             let parse_duration = start.elapsed();
             trace!(order = ?order.id(), parse_duration_mus = parse_duration.as_micros(), "Mempool transaction received with blobs");
-            add_txfetcher_time_to_query(parse_duration);
 
+            add_txfetcher_time_to_query(parse_duration);
+            println!("Dani debug: About to send order to results channel. Order ID: {:?}", order_id);
             match results
                 .send_timeout(
                     ReplaceableOrderPoolCommand::Order(order),
@@ -77,6 +93,7 @@ pub async fn subscribe_to_txpool_with_blobs(
                     break;
                 }
             }
+            println!("Dani debug: Successfully sent order to results channel. Order ID: {:?}", order_id);
         }
 
         // stream is closed, cancelling token because builder can't work without this stream
@@ -94,6 +111,8 @@ async fn get_tx_with_blobs(
 ) -> eyre::Result<Option<TransactionSignedEcRecoveredWithBlobs>> {
     // TODO: Use https://github.com/alloy-rs/alloy/pull/1168 when it gets cut
     // in a release
+    let string_representation = format!("{:x}", tx_hash);
+    println!("get tx hash: {:?}", string_representation);
     let raw_tx: Option<String> = provider
         .client()
         .request("eth_getRawTransactionByHash", vec![tx_hash])
@@ -103,9 +122,11 @@ async fn get_tx_with_blobs(
         raw_tx
     } else {
         return Ok(None);
+
     };
 
     let raw_tx = hex::decode(raw_tx)?;
+
     let raw_tx = Bytes::from(raw_tx);
     Ok(Some(
         TransactionSignedEcRecoveredWithBlobs::decode_enveloped_with_real_blobs(raw_tx)?,
