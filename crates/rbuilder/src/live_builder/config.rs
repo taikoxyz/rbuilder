@@ -310,7 +310,7 @@ impl LiveBuilderConfig for Config {
 
         let (wallet_balance_watcher, wallet_history) = WalletBalanceWatcher::new(
             provider_factory.provider_factory_unchecked(),
-            self.base_config.coinbase_signer()?.address,
+            self.base_config.coinbase_signer()?.address.1,
             WALLET_INIT_HISTORY_SIZE,
         )?;
         let bidding_service: Box<dyn BiddingService> =
@@ -469,9 +469,9 @@ fn open_reth_db(reth_db_path: &Path) -> eyre::Result<Arc<DatabaseEnv>> {
     ))
 }
 
-pub fn coinbase_signer_from_secret_key(secret_key: &str) -> eyre::Result<Signer> {
+pub fn coinbase_signer_from_secret_key(chain_id: u64, secret_key: &str) -> eyre::Result<Signer> {
     let secret_key = B256::from_str(secret_key)?;
-    Ok(Signer::try_from_secret(secret_key)?)
+    Ok(Signer::try_from_secret(chain_id, secret_key)?)
 }
 
 fn create_builders(
@@ -603,7 +603,7 @@ mod test {
                 .base_config
                 .coinbase_signer()
                 .expect("Coinbase signer")
-                .address,
+                .address.1,
             address!("75618c70B1BBF111F6660B0E3760387fb494102B")
         );
 

@@ -10,6 +10,7 @@ use crate::{
     utils::get_percent,
 };
 
+use alloy_chains::Chain;
 use alloy_primitives::{Address, B256, U256};
 
 use reth::revm::database::{StateProviderDatabase, SyncStateProviderDatabase};
@@ -399,12 +400,14 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         gas_reserved: u64,
         mut cumulative_blob_gas_used: u64,
     ) -> Result<Result<TransactionOk, TransactionErr>, CriticalCommitOrderError> {
-        //println!("Dani debug: Apply tx to state!");
+        //println!("commit_tx!");
         // Use blobs.len() instead of checking for tx type just in case in the future some other new txs have blobs
         let blob_gas_used = tx_with_blobs.blobs_sidecar.blobs.len() as u64 * DATA_GAS_PER_BLOB;
         if cumulative_blob_gas_used + blob_gas_used > MAX_DATA_GAS_PER_BLOCK {
             return Ok(Err(TransactionErr::BlobGasLeft));
         }
+
+        let ctx = &ctx.chains[&tx_with_blobs.as_ref().chain_id().unwrap()];
 
         let mut db = self.state.new_db_ref();
         let tx = &tx_with_blobs.internal_tx_unsecure();
@@ -517,7 +520,9 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         cumulative_blob_gas_used: u64,
         allow_tx_skip: bool,
     ) -> Result<Result<BundleOk, BundleErr>, CriticalCommitOrderError> {
-        let current_block = ctx.block_env.number.to::<u64>();
+        // TODO(Brecht): support bundles with multiple chains
+        let chain_ctx = &ctx.chains[&bundle.txs[0].as_ref().chain_id().unwrap()];
+        let current_block = chain_ctx.block_env.number.to::<u64>();
         if bundle.block != current_block {
             return Ok(Err(BundleErr::TargetBlockIncorrect {
                 block: current_block,
@@ -529,7 +534,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         let (min_ts, max_ts, block_ts) = (
             bundle.min_timestamp.unwrap_or(0),
             bundle.max_timestamp.unwrap_or(u64::MAX),
-            ctx.block_env.timestamp.to::<u64>(),
+            chain_ctx.block_env.timestamp.to::<u64>(),
         );
         if !(min_ts <= block_ts && block_ts <= max_ts) {
             return Ok(Err(BundleErr::IncorrectTimestamp {
@@ -624,7 +629,9 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         cumulative_blob_gas_used: u64,
         allow_tx_skip: bool,
     ) -> Result<Result<BundleOk, BundleErr>, CriticalCommitOrderError> {
-        let current_block = ctx.block_env.number.to::<u64>();
+        // TODO(Brecht): support bundles with multiple chains
+        let chain_ctx = &ctx.chains[&bundle.original_orders[0].chain_id().unwrap()];
+        let current_block = chain_ctx.block_env.number.to::<u64>();
         if !(bundle.block <= current_block && current_block <= bundle.max_block) {
             return Ok(Err(BundleErr::TargetBlockIncorrect {
                 block: current_block,
@@ -687,13 +694,17 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 return Ok(Err(BundleErr::NoSigner));
             };
 
-            let nonce = self.state.nonce(ChainAddress(ctx.chain_spec.chain.id(), builder_signer.address))?;
+            // TODO(Brecht): support bundles with multiple chains
+            let chain_id = bundle.original_orders[0].chain_id().unwrap();
+            let chain_ctx = &ctx.chains[&chain_id];
+
+            let nonce = self.state.nonce(builder_signer.address)?;
             let payout_tx = match create_payout_tx(
-                ctx.chain_spec.as_ref(),
-                ctx.block_env.basefee,
+                chain_ctx.chain_spec.as_ref(),
+                chain_ctx.block_env.basefee,
                 builder_signer,
                 nonce,
-                to,
+                ChainAddress(chain_id, to),
                 gas_limit,
                 value.to(),
             ) {
@@ -774,6 +785,10 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         cumulative_blob_gas_used: u64,
         allow_tx_skip: bool,
     ) -> Result<Result<ShareBundleCommitResult, BundleErr>, CriticalCommitOrderError> {
+        // TODO(Brecht): support bundles with multiple chains
+        let chain_id = ctx.parent_chain_id;
+        let chain_ctx = &ctx.chains[&chain_id];
+
         let mut insert = BundleOk {
             gas_used: 0,
             cumulative_gas_used,
@@ -785,7 +800,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             paid_kickbacks: Vec::new(),
             original_order_ids: Vec::new(),
         };
-        let coinbase_balance_before = self.state.balance(ctx.block_env.coinbase)?;
+        let coinbase_balance_before = self.state.balance(chain_ctx.block_env.coinbase)?;
         let refundable_elements = bundle
             .refund
             .iter()
@@ -798,7 +813,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 ShareBundleBody::Tx(sbundle_tx) => {
                     let rollback_point = self.rollback_point();
                     let tx = &sbundle_tx.tx;
-                    let coinbase_balance_before = self.state.balance(ctx.block_env.coinbase)?;
+                    let coinbase_balance_before = self.state.balance(chain_ctx.block_env.coinbase)?;
                     let result = self.commit_tx(
                         tx,
                         ctx,
@@ -823,7 +838,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
 
                             let coinbase_profit = {
                                 let coinbase_balance_after =
-                                    self.state.balance(ctx.block_env.coinbase)?;
+                                    self.state.balance(chain_ctx.block_env.coinbase)?;
                                 coinbase_balance_after.checked_sub(coinbase_balance_before)
                             };
                             if let Some(profit) = coinbase_profit {
@@ -933,13 +948,13 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         let mut payouts_promised = HashMap::default();
         for (to, refundable_value) in inner_payouts.drain() {
             let gas_limit =
-                match estimate_payout_gas_limit(to, ctx, self.state, insert.cumulative_gas_used) {
+                match estimate_payout_gas_limit(ChainAddress(chain_id, to), ctx, self.state, insert.cumulative_gas_used) {
                     Ok(gas_limit) => gas_limit,
                     Err(err) => {
                         return Ok(Err(BundleErr::EstimatePayoutGas(err)));
                     }
                 };
-            let base_fee = ctx.block_env.basefee * U256::from(gas_limit);
+            let base_fee = chain_ctx.block_env.basefee * U256::from(gas_limit);
             if base_fee > refundable_value {
                 return Ok(Err(BundleErr::NotEnoughRefundForGas {
                     to,
@@ -959,7 +974,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         }
 
         let coinbase_diff_before_payouts = {
-            let coinbase_balance_after = self.state.balance(ctx.block_env.coinbase)?;
+            let coinbase_balance_after = self.state.balance(chain_ctx.block_env.coinbase)?;
             coinbase_balance_after
                 .checked_sub(coinbase_balance_before)
                 .unwrap_or_default()
@@ -1014,7 +1029,10 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         cumulative_blob_gas_used: u64,
         allow_tx_skip: bool,
     ) -> Result<Result<OrderOk, OrderErr>, CriticalCommitOrderError> {
-        let coinbase_balance_before = self.state.balance(ctx.block_env.coinbase)?;
+        // TODO(Brecht): support bundles with multiple chains
+        let chain_ctx = &ctx.chains[&order.chain_id().unwrap()];
+
+        let coinbase_balance_before = self.state.balance(chain_ctx.block_env.coinbase)?;
         match order {
             Order::Tx(tx) => {
                 let res = self.commit_tx(
@@ -1026,7 +1044,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 )?;
                 match res {
                     Ok(ok) => {
-                        let coinbase_balance_after = self.state.balance(ctx.block_env.coinbase)?;
+                        let coinbase_balance_after = self.state.balance(chain_ctx.block_env.coinbase)?;
                         let coinbase_profit = match coinbase_profit(
                             coinbase_balance_before,
                             coinbase_balance_after,
@@ -1064,7 +1082,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 )?;
                 match res {
                     Ok(ok) => {
-                        let coinbase_balance_after = self.state.balance(ctx.block_env.coinbase)?;
+                        let coinbase_balance_after = self.state.balance(chain_ctx.block_env.coinbase)?;
                         let coinbase_profit = match coinbase_profit(
                             coinbase_balance_before,
                             coinbase_balance_after,
@@ -1102,7 +1120,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 )?;
                 match res {
                     Ok(ok) => {
-                        let coinbase_balance_after = self.state.balance(ctx.block_env.coinbase)?;
+                        let coinbase_balance_after = self.state.balance(chain_ctx.block_env.coinbase)?;
                         let coinbase_profit = match coinbase_profit(
                             coinbase_balance_before,
                             coinbase_balance_after,

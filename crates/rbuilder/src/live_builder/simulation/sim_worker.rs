@@ -49,15 +49,12 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             sleep(Duration::from_millis(500));
         };
 
-        //TODO Brecht: fix
-        let chain_id = 167010;
-
         println!("Brecht: simming 3");
 
         let mut provider_factories = HashMap::default();
         for (chain_id, provider_factory) in provider_factory.iter() {
             match provider_factory.check_consistency_and_reopen_if_needed(
-                current_sim_context.block_ctx[chain_id].block_env.number.to(),
+                current_sim_context.block_ctx.chains[chain_id].block_env.number.to(),
             ) {
                 Ok(provider_factory) => {
                     provider_factories.insert(*chain_id, provider_factory);
@@ -79,7 +76,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             let state_for_sim = provider_factories.iter().map(|(chain_id, provider_factory)| {
                 (*chain_id, Arc::<dyn StateProvider>::from(
                     provider_factory.history_by_block_hash(
-                        current_sim_context.block_ctx[chain_id].attributes.parent
+                        current_sim_context.block_ctx.chains[chain_id].attributes.parent
                     ).expect("failed to open state provider")
                 ))
             }).collect();
@@ -90,7 +87,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             let sim_result = simulate_order(
                 task.parents.clone(),
                 task.order.clone(),
-                &current_sim_context.block_ctx[&chain_id],
+                &current_sim_context.block_ctx,
                 &mut block_state,
             );
             match sim_result {

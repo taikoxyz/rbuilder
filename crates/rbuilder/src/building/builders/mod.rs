@@ -41,7 +41,7 @@ pub struct LiveBuilderInput<DB: Database> {
     pub provider_factory: HashMap<u64, ProviderFactory<DB>>,
     pub root_hash_config: RootHashConfig,
     pub root_hash_task_pool: BlockingTaskPool,
-    pub ctx: HashMap<u64, BlockBuildingContext>,
+    pub ctx: BlockBuildingContext,
     pub input: broadcast::Receiver<SimulatedOrderCommand>,
     pub sink: Arc<dyn UnfinishedBlockBuildingSink>,
     pub builder_name: String,
@@ -198,7 +198,7 @@ pub trait UnfinishedBlockBuildingSink: std::fmt::Debug + Send + Sync {
 #[derive(Debug)]
 pub struct BlockBuildingAlgorithmInput<DB: Database> {
     pub provider_factory: HashMap<u64, ProviderFactory<DB>>,
-    pub ctx: HashMap<u64, BlockBuildingContext>,
+    pub ctx: BlockBuildingContext,
     pub input: broadcast::Receiver<SimulatedOrderCommand>,
     /// output for the blocks
     pub sink: Arc<dyn UnfinishedBlockBuildingSink>,

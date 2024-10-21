@@ -13,6 +13,7 @@ use rbuilder::{
 use reth::providers::BlockNumReader;
 use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_provider::StateProvider;
+use revm_primitives::ChainAddress;
 use std::{path::PathBuf, sync::Arc, time::Instant};
 use tracing::{debug, info};
 
@@ -62,7 +63,7 @@ async fn main() -> eyre::Result<()> {
         txs.len()
     );
 
-    let coinbase = onchain_block.header.miner;
+    let coinbase = ChainAddress(chain_spec.chain.id(), onchain_block.header.miner);
 
     let ctx = BlockBuildingContext::from_onchain_block(
         onchain_block,
