@@ -110,6 +110,8 @@ pub struct BaseConfig {
 
     #[serde_as(as = "Vec<EnvOrValue<String>>")]
     pub l2_reth_datadirs: Vec<EnvOrValue<String>>,
+
+    pub gwyneth_chain_ids: Vec<u64>,
 }
 
 lazy_static! {
@@ -463,6 +465,7 @@ impl Default for BaseConfig {
             //L2 related
             l2_el_node_ipc_paths: vec!["/tmp/reth.ipc".into()],
             l2_reth_datadirs: vec![DEFAULT_RETH_DB_PATH.into()],
+            gwyneth_chain_ids: Vec::new(),
         }
     }
 }

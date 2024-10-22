@@ -374,7 +374,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         let mut cached_reads = CachedReads::default();
         for (chain_id, provider_factory) in self.provider_factory.iter() {
             // TODO Brecht: fix
-            if *chain_id == 160010 {
+            if *chain_id == self.building_ctx.parent_chain_id {
                 continue;
             }
 
