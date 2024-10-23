@@ -401,7 +401,7 @@ impl ShareBundle {
 #[derive(Derivative)]
 #[derivative(Clone, PartialEq, Eq)]
 pub struct TransactionSignedEcRecoveredWithBlobs {
-    tx: TransactionSignedEcRecovered,
+    pub tx: TransactionSignedEcRecovered,
     /// Will have a non empty BlobTransactionSidecar if TransactionSignedEcRecovered is 4844
     pub blobs_sidecar: Arc<BlobTransactionSidecar>,
 

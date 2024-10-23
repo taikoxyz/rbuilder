@@ -256,9 +256,9 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
         let build_start = Instant::now();
 
         // Create a new ctx to remove builder_signer if necessary
-        let mut new_ctx = self.ctx.clone();
+        let new_ctx = self.ctx.clone();
         for (chain_id, provider_factory) in self.provider_factory.iter() {
-            check_provider_factory_health(self.ctx.chains[chain_id].block(), &self.provider_factory[&chain_id]);
+            check_provider_factory_health(self.ctx.chains[chain_id].block(), provider_factory)?;
             if use_suggested_fee_recipient_as_coinbase {
                 self.ctx.chains.get_mut(chain_id).unwrap().modify_use_suggested_fee_recipient_as_coinbase();
             }
