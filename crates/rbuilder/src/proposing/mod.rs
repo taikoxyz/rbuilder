@@ -75,6 +75,9 @@ impl BlockProposer {
         // Create the transaction data
         let (meta, num_txs) = self.create_propose_block_tx_data(&execution_payload)?;
 
+        let propose_data = Rollup::proposeBlockCall { data: vec![meta.clone()] };
+        let propose_data = propose_data.abi_encode();
+
         // if num_txs == 1 {
         //     println!("skip propose");
         //     // If there's only the payout tx, don't propose
@@ -93,10 +96,6 @@ impl BlockProposer {
         // Sign the transaction
         let chain_id = provider.get_chain_id().await?;
         let nonce = provider.get_transaction_count(signer.address()).await.unwrap();
-
-        //let rollup = Rollup::(Address::from_str(&self.contract_address).unwrap(), provider);
-        let propose_data = Rollup::proposeBlockCall { data: vec![meta] };
-        let propose_data = propose_data.abi_encode();
 
         // Build a transaction to send 100 wei from Alice to Bob.
         // The `from` field is automatically filled to the first signer's address (Alice).
