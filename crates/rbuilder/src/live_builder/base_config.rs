@@ -110,6 +110,8 @@ pub struct BaseConfig {
 
     #[serde_as(as = "Vec<EnvOrValue<String>>")]
     pub l2_reth_datadirs: Vec<EnvOrValue<String>>,
+
+    pub gwyneth_chain_ids: Vec<u64>,
 }
 
 lazy_static! {
@@ -285,7 +287,7 @@ impl BaseConfig {
     }
 
     pub fn coinbase_signer(&self) -> eyre::Result<Signer> {
-        coinbase_signer_from_secret_key(&self.coinbase_secret_key.value()?)
+        coinbase_signer_from_secret_key(self.chain_spec().unwrap().chain.id(), &self.coinbase_secret_key.value()?)
     }
 
     pub fn extra_data(&self) -> eyre::Result<Vec<u8>> {
@@ -334,7 +336,7 @@ impl BaseConfig {
     pub fn resolve_l2_paths(&self) -> eyre::Result<(Vec<String>, Vec<String>)> {
         let ipc_paths = resolve_env_or_values(&self.l2_el_node_ipc_paths)?;
         let data_dirs = resolve_env_or_values(&self.l2_reth_datadirs)?;
-        
+
         if ipc_paths.len() != data_dirs.len() {
             return Err(eyre::eyre!("Number of L2 IPC paths and data directories must match"));
         }
@@ -463,6 +465,7 @@ impl Default for BaseConfig {
             //L2 related
             l2_el_node_ipc_paths: vec!["/tmp/reth.ipc".into()],
             l2_reth_datadirs: vec![DEFAULT_RETH_DB_PATH.into()],
+            gwyneth_chain_ids: Vec::new(),
         }
     }
 }
@@ -535,9 +538,9 @@ fn open_reth_db_rw(reth_db_path: &Path) -> eyre::Result<Arc<DatabaseEnv>> {
     ))
 }
 
-pub fn coinbase_signer_from_secret_key(secret_key: &str) -> eyre::Result<Signer> {
+pub fn coinbase_signer_from_secret_key(chain_id: u64, secret_key: &str) -> eyre::Result<Signer> {
     let secret_key = B256::from_str(secret_key)?;
-    Ok(Signer::try_from_secret(secret_key)?)
+    Ok(Signer::try_from_secret(chain_id, secret_key)?)
 }
 
 #[cfg(test)]

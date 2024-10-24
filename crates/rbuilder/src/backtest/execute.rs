@@ -10,7 +10,7 @@ use crate::{
     primitives::SimulatedOrder,
     utils::clean_extradata,
 };
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use alloy_primitives::{Address, U256};
 use reth::providers::ProviderFactory;
 use reth_chainspec::ChainSpec;
@@ -86,8 +86,10 @@ pub fn backtest_prepare_ctx_for_block<DB: Database + Clone>(
         block_data.winning_bid_trace.proposer_fee_recipient,
         Some(builder_signer),
     );
+    let mut provider_factories = HashMap::default();
+    provider_factories.insert(chain_spec.chain.id(), provider_factory.clone());
     let (sim_orders, sim_errors) =
-        simulate_all_orders_with_sim_tree(provider_factory.clone(), &ctx, &orders, false)?;
+        simulate_all_orders_with_sim_tree(provider_factories, &ctx, &orders, false)?;
     Ok(BacktestBlockInput {
         ctx,
         sim_orders,

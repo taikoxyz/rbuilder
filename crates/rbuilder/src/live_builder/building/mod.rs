@@ -55,7 +55,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
     pub fn start_block_building(
         &mut self,
         payload: payload_events::MevBoostSlotData,
-        block_ctx: HashMap<u64, BlockBuildingContext>,
+        block_ctx: BlockBuildingContext,
         global_cancellation: CancellationToken,
         max_time_to_build: Duration,
     ) {
@@ -73,7 +73,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
         for (chain_id, orderpool_subscriber) in self.orderpool_subscribers.iter_mut() {
             let (orders_for_block, sink) = OrdersForBlock::new_with_sink();
             let _block_sub = orderpool_subscriber.add_sink(
-                block_ctx[chain_id].block_env.number.to(),
+                block_ctx.chains[chain_id].block_env.number.to(),
                 Box::new(OrderReplacementManager::new(Box::new(sink))),
             );
             orders_for_blocks.insert(*chain_id, orders_for_block);
@@ -95,7 +95,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
     /// Per each BlockBuildingAlgorithm creates BlockBuildingAlgorithmInput and Sinks and spawn a task to run it
     fn start_building_job(
         &mut self,
-        ctx: HashMap<u64, BlockBuildingContext>,
+        ctx: BlockBuildingContext,
         slot_data: MevBoostSlotData,
         input: SlotOrderSimResults,
         cancel: CancellationToken,
@@ -106,7 +106,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
 
         let provider_factories: HashMap<u64, ProviderFactory<DB>> = self
             .provider_factory.iter().map(|(chain_id, provider_factory)| {
-                let block_number = ctx[chain_id].block_env.number.to::<u64>();
+                let block_number = ctx.chains[chain_id].block_env.number.to::<u64>();
                 match provider_factory.check_consistency_and_reopen_if_needed(block_number)
                 {
                     Ok(provider_factory) => (*chain_id, provider_factory),

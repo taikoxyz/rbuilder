@@ -20,7 +20,7 @@ use crate::{
     roothash::{calculate_state_root, RootHashConfig, RootHashError, RootHashMode},
     utils::{a2r_withdrawal, calc_gas_limit, timestamp_as_u64, Signer},
 };
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use jsonrpsee::core::Serialize;
 use reth::{
     payload::PayloadId,
@@ -64,15 +64,27 @@ pub use sim::simulate_order;
 
 #[derive(Debug, Clone)]
 pub struct BlockBuildingContext {
-    pub block_env: BlockEnv,
     pub initialized_cfg: CfgEnvWithHandlerCfg,
-    pub attributes: EthPayloadBuilderAttributes,
-    pub chain_spec: Arc<ChainSpec>,
+
     /// Signer to sign builder payoffs (end of block and mev-share).
     /// Is Option to avoid any possible bug (losing money!) with payoffs.
     /// None: coinbase = attributes.suggested_fee_recipient. No payoffs allowed.
     /// Some(signer): coinbase = signer.
     pub builder_signer: Option<Signer>,
+
+    pub parent_chain_id: u64,
+    pub chains: HashMap<u64, ChainBlockBuildingContext>,
+
+    pub blocklist: HashSet<Address>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChainBlockBuildingContext {
+    pub block_env: BlockEnv,
+    pub initialized_cfg: CfgEnvWithHandlerCfg,
+    pub attributes: EthPayloadBuilderAttributes,
+    pub chain_spec: Arc<ChainSpec>,
+
     pub blocklist: HashSet<Address>,
     pub extra_data: Vec<u8>,
     /// Excess blob gas calculated from the parent block header
@@ -86,6 +98,85 @@ impl BlockBuildingContext {
     #[allow(clippy::too_many_arguments)]
     /// spec_id None: we use the proper SpecId for the block timestamp.
     pub fn from_attributes(
+        parent_chain_id: u64,
+        chains: HashMap<u64, ChainBlockBuildingContext>,
+        builder_signer: Option<Signer>,
+    ) -> Self {
+        Self {
+            initialized_cfg: chains[&parent_chain_id].initialized_cfg.clone(),
+            parent_chain_id,
+            chains,
+            builder_signer,
+            blocklist: HashSet::default(),
+        }
+    }
+
+    pub fn from_onchain_block(
+        onchain_block: alloy_rpc_types::Block,
+        chain_spec: Arc<ChainSpec>,
+        spec_id: Option<SpecId>,
+        blocklist: HashSet<Address>,
+        coinbase: ChainAddress,
+        suggested_fee_recipient: Address,
+        builder_signer: Option<Signer>,
+    ) -> Self {
+        let parent_chain_id = chain_spec.chain.id();
+        let mut chains = HashMap::default();
+        chains.insert(parent_chain_id, ChainBlockBuildingContext::from_onchain_block(onchain_block, chain_spec, spec_id, blocklist, coinbase, suggested_fee_recipient, builder_signer.clone()));
+        Self::from_attributes(
+            parent_chain_id,
+            chains,
+            builder_signer,
+        )
+    }
+
+    /// Useless BlockBuildingContext for testing in contexts where we can't avoid having a BlockBuildingContext.
+    pub fn dummy_for_testing() -> Self {
+        let mut onchain_block: alloy_rpc_types::Block = Default::default();
+        onchain_block.header.base_fee_per_gas = Some(0);
+        let chain = ChainBlockBuildingContext::from_onchain_block(
+            onchain_block,
+            reth_chainspec::MAINNET.clone(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        );
+        let chain_id = chain.chain_spec.chain.id();
+        let mut chains = HashMap::default();
+        chains.insert(chain_id, chain.clone());
+        Self {
+            initialized_cfg: chain.initialized_cfg.clone(),
+            parent_chain_id: chain_id,
+            chains,
+            builder_signer: None,
+            blocklist: HashSet::default(),
+        }
+    }
+
+    pub fn modify_use_suggested_fee_recipient_as_coinbase(&mut self) {
+        self.chains.get_mut(&self.parent_chain_id).unwrap().block_env.coinbase = ChainAddress(self.chains[&self.parent_chain_id].chain_spec.chain.id(), self.chains[&self.parent_chain_id].attributes.suggested_fee_recipient);
+    }
+
+    pub fn timestamp(&self) -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp(self.chains[&self.parent_chain_id].attributes.timestamp as i64)
+            .expect("Payload attributes timestamp")
+    }
+
+    pub fn block(&self) -> u64 {
+        self.chains[&self.parent_chain_id].block_env.number.to()
+    }
+
+    pub fn coinbase_is_suggested_fee_recipient(&self) -> bool {
+        self.chains[&self.parent_chain_id].block_env.coinbase == ChainAddress(self.chains[&self.parent_chain_id].chain_spec.chain.id(), self.chains[&self.parent_chain_id].attributes.suggested_fee_recipient)
+    }
+}
+
+impl ChainBlockBuildingContext {
+    #[allow(clippy::too_many_arguments)]
+    /// spec_id None: we use the proper SpecId for the block timestamp.
+    pub fn from_attributes(
         attributes: PayloadAttributesEvent,
         parent: &Header,
         signer: Signer,
@@ -94,14 +185,14 @@ impl BlockBuildingContext {
         prefer_gas_limit: Option<u64>,
         extra_data: Vec<u8>,
         spec_id: Option<SpecId>,
-    ) -> BlockBuildingContext {
+    ) -> ChainBlockBuildingContext {
         let attributes = EthPayloadBuilderAttributes::try_new(
             attributes.data.parent_block_hash,
             attributes.data.payload_attributes.clone(),
-        )
-        .expect("PayloadBuilderAttributes::try_new");
+        ).expect("PayloadBuilderAttributes::try_new");
+
         let (initialized_cfg, mut block_env) = attributes.cfg_and_block_env(&chain_spec, parent);
-        block_env.coinbase = ChainAddress(chain_spec.chain.id(), signer.address);
+        block_env.coinbase = signer.address;
         if let Some(desired_limit) = prefer_gas_limit {
             block_env.gas_limit =
                 U256::from(calc_gas_limit(block_env.gas_limit.to(), desired_limit));
@@ -123,6 +214,7 @@ impl BlockBuildingContext {
         } else {
             None
         };
+
         let spec_id = spec_id.unwrap_or_else(|| {
             let parent = parent.clone().seal_slow();
             // we set total difficulty to 0 because it is unnecessary for post merge forks and it would require additional parameter passed here
@@ -135,12 +227,11 @@ impl BlockBuildingContext {
             );
             revm_spec(&chain_spec, &head)
         });
-        BlockBuildingContext {
+        ChainBlockBuildingContext {
             block_env,
             initialized_cfg,
             attributes,
             chain_spec,
-            builder_signer: Some(signer),
             blocklist,
             extra_data,
             excess_blob_gas,
@@ -157,10 +248,10 @@ impl BlockBuildingContext {
         chain_spec: Arc<ChainSpec>,
         spec_id: Option<SpecId>,
         blocklist: HashSet<Address>,
-        coinbase: Address,
+        coinbase: ChainAddress,
         suggested_fee_recipient: Address,
         builder_signer: Option<Signer>,
-    ) -> BlockBuildingContext {
+    ) -> ChainBlockBuildingContext {
         let block_number = onchain_block.header.number;
 
         let blob_excess_gas_and_price =
@@ -173,7 +264,7 @@ impl BlockBuildingContext {
             };
         let block_env = BlockEnv {
             number: U256::from(block_number),
-            coinbase: ChainAddress(chain_spec.chain.id(), coinbase),
+            coinbase,
             timestamp: U256::from(onchain_block.header.timestamp),
             difficulty: onchain_block.header.difficulty,
             prevrandao: onchain_block.header.mix_hash,
@@ -220,12 +311,12 @@ impl BlockBuildingContext {
                 ),
             )
         });
-        BlockBuildingContext {
+
+        ChainBlockBuildingContext {
             block_env,
             initialized_cfg: cfg,
             attributes,
             chain_spec,
-            builder_signer,
             blocklist,
             extra_data: Vec::new(),
             excess_blob_gas: onchain_block.header.excess_blob_gas.map(|b| b as u64),
@@ -238,7 +329,7 @@ impl BlockBuildingContext {
     pub fn dummy_for_testing() -> Self {
         let mut onchain_block: alloy_rpc_types::Block = Default::default();
         onchain_block.header.base_fee_per_gas = Some(0);
-        BlockBuildingContext::from_onchain_block(
+        ChainBlockBuildingContext::from_onchain_block(
             onchain_block,
             reth_chainspec::MAINNET.clone(),
             Default::default(),
@@ -250,7 +341,6 @@ impl BlockBuildingContext {
     }
 
     pub fn modify_use_suggested_fee_recipient_as_coinbase(&mut self) {
-        self.builder_signer = None;
         self.block_env.coinbase = ChainAddress(self.chain_spec.chain.id(), self.attributes.suggested_fee_recipient);
     }
 
@@ -546,6 +636,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         ctx: &BlockBuildingContext,
         state: &mut BlockState,
     ) -> Result<(), InsertPayoutTxErr> {
+        let target_ctx = &ctx.chains[&ctx.parent_chain_id];
         //println!("insert_proposer_payout_tx");
         let builder_signer = ctx
             .builder_signer
@@ -554,14 +645,14 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         //println!("insert_proposer_payout_tx: builder_signer: {:?}", builder_signer);
         self.free_reserved_gas();
         let nonce = state
-            .nonce(ChainAddress(ctx.chain_spec.chain.id(), builder_signer.address))
+            .nonce(builder_signer.address)
             .map_err(CriticalCommitOrderError::Reth)?;
         let tx = create_payout_tx(
-            ctx.chain_spec.as_ref(),
-            ctx.block_env.basefee,
+            target_ctx.chain_spec.as_ref(),
+            target_ctx.block_env.basefee,
             builder_signer,
             nonce,
-            ctx.attributes.suggested_fee_recipient,
+            ChainAddress(target_ctx.chain_spec.chain.id(), target_ctx.attributes.suggested_fee_recipient),
             gas_limit,
             value.to(),
         )?;
@@ -596,6 +687,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         root_hash_config: RootHashConfig,
         root_hash_task_pool: BlockingTaskPool,
     ) -> Result<FinalizeResult, FinalizeError> {
+        let ctx = &ctx.chains[&ctx.parent_chain_id];
         let (withdrawals_root, withdrawals) = {
             let mut db = state.new_db_ref();
             let WithdrawalsOutcome {
@@ -765,6 +857,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         ctx: &BlockBuildingContext,
         state: &mut BlockState,
     ) -> eyre::Result<()> {
+        let ctx = &ctx.chains[&ctx.parent_chain_id];
         let evm_config = EthEvmConfig::default();
         let mut db = state.new_db_ref();
         pre_block_beacon_root_contract_call(

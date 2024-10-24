@@ -38,7 +38,7 @@ pub fn sim_historical_block(
     let txs = extract_onchain_block_txs(&onchain_block)?;
 
     let suggested_fee_recipient = find_suggested_fee_recipient(&onchain_block, &txs);
-    let coinbase = onchain_block.header.miner;
+    let coinbase = ChainAddress(chain_spec.chain.id(), onchain_block.header.miner);
 
     let ctx = BlockBuildingContext::from_onchain_block(
         onchain_block,
@@ -50,7 +50,7 @@ pub fn sim_historical_block(
         None,
     );
 
-    let state_provider = provider_factory.history_by_block_hash(ctx.attributes.parent)?;
+    let state_provider = provider_factory.history_by_block_hash(ctx.chains[&chain_spec.chain().id()].attributes.parent)?;
     let mut partial_block = PartialBlock::new(true, None);
     let mut state = BlockState::new(state_provider, chain_spec.chain().id());
 
@@ -61,8 +61,6 @@ pub fn sim_historical_block(
     let mut cumulative_gas_used = 0;
     let mut cumulative_blob_gas_used = 0;
     let mut written_slots: HashMap<SlotKey, Vec<B256>> = HashMap::default();
-
-    let coinbase = ChainAddress(chain_spec.chain.id(), coinbase);
 
     for (idx, tx) in txs.into_iter().enumerate() {
         let coinbase_balance_before = state.balance(coinbase)?;

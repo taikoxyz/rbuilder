@@ -101,7 +101,7 @@ impl<DB: Clone> Layer2Info<DB> {
             });
         }
 
-        Ok(Self { 
+        Ok(Self {
             ipc_providers: Arc::new(Mutex::new(providers)),
             data_dirs: data_dirs_map,
             nodes,
@@ -129,11 +129,10 @@ impl<DB: Clone> Layer2Info<DB> {
         }
     }
 
-    pub async fn get_latest_block(&self, chain_id: u64) -> Result<Option<Block>> {
+    pub async fn get_latest_block(&self, chain_id: u64, block_id: BlockId) -> Result<Option<Block>> {
         if self.ensure_connection(&chain_id).await {
             let providers = self.ipc_providers.lock().unwrap();
             if let Some((provider, _)) = providers.get(&chain_id) {
-                let block_id = BlockId::Number(BlockNumberOrTag::Latest);
                 let transactions_kind = BlockTransactionsKind::Full;
                 let latest_block = provider.get_block(block_id, transactions_kind).await?;
                 Ok(latest_block)

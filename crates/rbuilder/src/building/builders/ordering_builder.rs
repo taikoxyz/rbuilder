@@ -70,7 +70,7 @@ pub fn run_ordering_builder<DB: Database + Clone + 'static>(
     let mut order_intake_consumer = OrderIntakeConsumer::new(
         input.provider_factory.clone(),
         input.input,
-        input.ctx.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect(),
+        input.ctx.chains.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect(),
         config.sorting,
         &input.sbundle_mergeabe_signers,
     );
@@ -139,15 +139,15 @@ pub fn backtest_simulate_block<DB: Database + Clone + 'static>(
     println!("backtest_simulate_block");
 
     let mut provider_factories = HashMap::default();
-    provider_factories.insert(input.ctx.chain_spec.chain.id(), input.provider_factory.clone());
+    provider_factories.insert(input.ctx.parent_chain_id, input.provider_factory.clone());
 
     let mut ctxs = HashMap::default();
-    ctxs.insert(input.ctx.chain_spec.chain.id(), input.ctx.clone());
+    ctxs.insert(input.ctx.parent_chain_id, input.ctx.clone());
 
     let use_suggested_fee_recipient_as_coinbase = ordering_config.coinbase_payment;
     let state_provider = input
         .provider_factory
-        .history_by_block_number(input.ctx.block_env.number.to::<u64>() - 1)?;
+            .history_by_block_number(input.ctx.chains[&input.ctx.parent_chain_id].block_env.number.to::<u64>() - 1)?;
 
     todo!()
 
@@ -195,7 +195,7 @@ pub struct OrderingBuilderContext<DB> {
     provider_factory: HashMap<u64, ProviderFactory<DB>>,
     root_hash_task_pool: BlockingTaskPool,
     builder_name: String,
-    ctx: HashMap<u64, BlockBuildingContext>,
+    ctx: BlockBuildingContext,
     config: OrderingBuilderConfig,
     root_hash_config: RootHashConfig,
 
@@ -212,7 +212,7 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
         provider_factory: HashMap<u64, ProviderFactory<DB>>,
         root_hash_task_pool: BlockingTaskPool,
         builder_name: String,
-        ctx: HashMap<u64, BlockBuildingContext>,
+        ctx: BlockBuildingContext,
         config: OrderingBuilderConfig,
         root_hash_config: RootHashConfig,
     ) -> Self {
@@ -253,21 +253,17 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
         let span = info_span!("build_run", build_attempt_id);
         let _guard = span.enter();
 
-        let mut parent_chain_id = 0;
-        for (chain_id, _) in self.ctx.iter() {
-            parent_chain_id = *chain_id;
-        }
-
-        check_provider_factory_health(self.ctx[&parent_chain_id].block(), &self.provider_factory[&parent_chain_id]);
-
         let build_start = Instant::now();
 
         // Create a new ctx to remove builder_signer if necessary
-        let mut new_ctx = self.ctx.clone();
-        //println!("use_suggested_fee_recipient_as_coinbase: {}", use_suggested_fee_recipient_as_coinbase);
-        if use_suggested_fee_recipient_as_coinbase {
-            new_ctx.get_mut(&parent_chain_id).unwrap().modify_use_suggested_fee_recipient_as_coinbase();
+        let new_ctx = self.ctx.clone();
+        for (chain_id, provider_factory) in self.provider_factory.iter() {
+            check_provider_factory_health(self.ctx.chains[chain_id].block(), provider_factory)?;
+            if use_suggested_fee_recipient_as_coinbase {
+                self.ctx.chains.get_mut(chain_id).unwrap().modify_use_suggested_fee_recipient_as_coinbase();
+            }
         }
+
         self.failed_orders.clear();
         self.order_attempts.clear();
 

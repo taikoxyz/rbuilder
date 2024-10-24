@@ -12,7 +12,7 @@ pub mod watchdog;
 use crate::{
     building::{
         builders::{BlockBuildingAlgorithm, UnfinishedBlockBuildingSinkFactory},
-        BlockBuildingContext
+        BlockBuildingContext, ChainBlockBuildingContext
     },
     live_builder::{
         order_input::{start_orderpool_jobs, OrderInputConfig},
@@ -24,6 +24,7 @@ use crate::{
 };
 use ahash::{HashMap, HashSet};
 use alloy_chains::{Chain, ChainKind};
+use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, U256};
 use building::BlockBuildingPool;
 use eyre::Context;
@@ -162,19 +163,12 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
         let watchdog_sender = spawn_watchdog_thread(self.watchdog_timeout)?;
 
-        println!("Dani debug: Waiting for payload_attributes events");
-        while let Some(payload) = payload_events_channel.recv().await {
-            println!("Dani debug: payload_attributes event received");
+        let mut all_chain_ids = vec![self.chain_chain_spec.chain.id()];
+        all_chain_ids.append(&mut provider_factories.keys().cloned().collect::<Vec<_>>());
 
-            // Example: Get the latest block from Gwyneth Exexe (chain ID 167010)
-            // ACCESS GWYNETH DATA BEGINS
-            let gwyneth_chain_id = 167010;
-            match self.layer2_info.get_latest_block(gwyneth_chain_id).await {
-                Ok(Some(latest_block)) => println!("Latest Gwyneth block: {:?}", latest_block),
-                Ok(None) => println!("No block found for Gwyneth"),
-                Err(e) => eprintln!("Error getting Gwyneth block: {:?}", e),
-            }
-            // ACCESS GWYNETH DATA END
+        while let Some(payload) = payload_events_channel.recv().await {
+            println!("Payload_attributes event received");
+            println!("Parent block's hash: {:?}", payload.parent_block_hash());
 
             if self.blocklist.contains(&payload.fee_recipient()) {
                 warn!(
@@ -203,11 +197,9 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 continue;
             };
 
-            println!("Dani debug: gather parent header");
             let parent_header = {
                 // @Nicer
                 let parent_block = payload.parent_block_hash();
-                println!("Parent block's hash: {:?}", parent_block);
                 let timestamp = payload.timestamp();
                 let provider_factory = self.provider_factory.clone().provider_factory_unchecked();
                 match wait_for_block_header(parent_block, timestamp, &provider_factory).await {
@@ -219,7 +211,6 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 }
             };
 
-            println!("Dani debug: gather block hashes");
             {
                 let provider_factory = self.provider_factory.clone();
                 let block = payload.block();
@@ -249,9 +240,8 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
             inc_active_slots();
 
-
             println!("Dani debug: build block context");
-            let block_ctx = BlockBuildingContext::from_attributes(
+            let block_ctx = ChainBlockBuildingContext::from_attributes(
                 payload.payload_attributes_event.clone(),
                 &parent_header,
                 self.coinbase_signer.clone(),
@@ -266,32 +256,38 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             sleep(Duration::from_millis(4000));
 
             // TODO: Brecht
-            let mut ctxs = HashMap::default();
-            for (chain_id, _) in provider_factories.iter() {
+            let mut chains = HashMap::default();
+            for (&chain_id, _) in provider_factories.iter() {
                 println!("setting up {}", chain_id);
                 let mut block_ctx = block_ctx.clone();
                 let mut chain_spec = (*block_ctx.chain_spec).clone();
                 println!("chain spec chain id: {}", chain_spec.chain.id());
-                if chain_spec.chain.id() != *chain_id {
+                if chain_spec.chain.id() != chain_id {
                     println!("updating ctx for {}", chain_id);
-                    let latest_block = self.layer2_info.get_latest_block(gwyneth_chain_id).await?;
+                    let latest_block = self.layer2_info.get_latest_block(chain_id, BlockId::Number(BlockNumberOrTag::Latest)).await?;
                     if let Some(latest_block) = latest_block {
                         block_ctx.attributes.parent = latest_block.header.hash;
                         block_ctx.block_env.number = U256::from(latest_block.header.number + 1);
                     } else {
                         println!("failed to get latest block for {}", chain_id);
                     }
-                    chain_spec.chain = Chain::from(*chain_id);
+                    chain_spec.chain = Chain::from(chain_id);
                     block_ctx.chain_spec = chain_spec.into();
                 }
                 println!("Latest block hash for {} is {}", chain_id, block_ctx.attributes.parent);
-                ctxs.insert(*chain_id, block_ctx);
+                chains.insert(chain_id, block_ctx);
             }
 
-            println!("Dani debug: start building");
+            let super_block_ctx = BlockBuildingContext::from_attributes(
+                self.chain_chain_spec.chain.id(),
+                chains,
+                Some(self.coinbase_signer.clone()),
+            );
+
+            println!("Start building");
             builder_pool.start_block_building(
                 payload,
-                ctxs,
+                super_block_ctx,
                 self.global_cancellation.clone(),
                 time_until_slot_end.try_into().unwrap_or_default(),
             );

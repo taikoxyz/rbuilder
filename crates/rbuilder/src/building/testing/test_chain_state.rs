@@ -21,7 +21,7 @@ use reth_provider::test_utils::create_test_provider_factory;
 use revm_primitives::SpecId;
 use std::sync::Arc;
 
-use crate::{building::BlockBuildingContext, utils::Signer};
+use crate::{building::{BlockBuildingContext, ChainBlockBuildingContext}, utils::Signer};
 
 #[derive(Debug, Clone, Copy)]
 pub enum NamedAddr {
@@ -116,7 +116,7 @@ impl TestChainState {
                 };
                 for address in user_addresses {
                     cursor.upsert(
-                        address,
+                        address.1,
                         Account {
                             nonce: 0,
                             balance: parse_ether("1.0")?,
@@ -146,9 +146,9 @@ impl TestChainState {
         let ctx = TestBlockContextBuilder::new(
             block_args,
             builder.clone(),
-            fee_recipient.address,
+            fee_recipient.address.1,
             chain_spec.clone(),
-            blocklisted_address.address,
+            blocklisted_address.address.1,
             genesis_header.hash(),
         )
         .build();
@@ -187,16 +187,16 @@ impl TestChainState {
 
     pub fn named_address(&self, named_addr: NamedAddr) -> eyre::Result<Address> {
         Ok(match named_addr {
-            NamedAddr::Builder => self.builder.address,
+            NamedAddr::Builder => self.builder.address.1,
             NamedAddr::MevTest => self.mev_test_address,
             NamedAddr::Dummy => self.dummy_test_address,
-            NamedAddr::BlockedAddress => self.blocklisted_address.address,
-            NamedAddr::FeeRecipient => self.fee_recipient.address,
+            NamedAddr::BlockedAddress => self.blocklisted_address.address.1,
+            NamedAddr::FeeRecipient => self.fee_recipient.address.1,
             NamedAddr::User(idx) => {
                 self.test_accounts
                     .get(idx)
                     .ok_or_else(|| eyre::eyre!("invalid user index"))?
-                    .address
+                    .address.1
             }
         })
     }
@@ -216,12 +216,6 @@ impl TestChainState {
     }
     pub fn block_building_context(&self) -> &BlockBuildingContext {
         &self.block_building_context
-    }
-
-    pub fn block_building_context_map(&self) -> HashMap<u64, BlockBuildingContext> {
-        let mut map = HashMap::default();
-        map.insert(self.chain_spec.chain.id(), self.block_building_context().clone());
-        map
     }
 
     pub fn provider_factory(&self) -> &ProviderFactory<Arc<TempDatabase<DatabaseEnv>>> {
@@ -278,7 +272,7 @@ impl TestBlockContextBuilder {
     }
 
     fn build(self) -> BlockBuildingContext {
-        let mut res = BlockBuildingContext::from_attributes(
+        let mut res = ChainBlockBuildingContext::from_attributes(
             PayloadAttributesEvent {
                 version: self.payload_attributes_version,
                 data: PayloadAttributesData {
@@ -320,7 +314,7 @@ impl TestBlockContextBuilder {
                 requests_root: Default::default(),
             },
             self.builder_signer.clone(),
-            self.chain_spec,
+            self.chain_spec.clone(),
             self.blocklist,
             self.prefer_gas_limit,
             vec![],
@@ -329,7 +323,13 @@ impl TestBlockContextBuilder {
         if self.use_suggested_fee_recipient_as_coinbase {
             res.modify_use_suggested_fee_recipient_as_coinbase();
         }
-        res
+        let mut chains = HashMap::default();
+        chains.insert(self.chain_spec.chain.id(), res);
+        BlockBuildingContext::from_attributes(
+            self.chain_spec.chain.id(),
+            chains,
+            Some(self.builder_signer.clone()),
+        )
     }
 }
 

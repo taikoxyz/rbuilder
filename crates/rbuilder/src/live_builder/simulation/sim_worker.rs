@@ -49,20 +49,23 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             sleep(Duration::from_millis(500));
         };
 
-        //TODO Brecht: fix
-        let chain_id = 167010;
-
         println!("Brecht: simming 3");
 
-        let provider_factory = match provider_factory[&chain_id].check_consistency_and_reopen_if_needed(
-            current_sim_context.block_ctx[&chain_id].block_env.number.to(),
-        ) {
-            Ok(provider_factory) => provider_factory,
-            Err(err) => {
-                error!(?err, "Error while reopening provider factory");
-                continue;
+        let mut provider_factories = HashMap::default();
+        for (chain_id, provider_factory) in provider_factory.iter() {
+            match provider_factory.check_consistency_and_reopen_if_needed(
+                current_sim_context.block_ctx.chains[chain_id].block_env.number.to(),
+            ) {
+                Ok(provider_factory) => {
+                    provider_factories.insert(*chain_id, provider_factory);
+                },
+                Err(err) => {
+                    error!(?err, "Error while reopening provider factory");
+                    // Decide whether to continue or break
+                    continue;
+                }
             }
-        };
+        }
 
         let mut cached_reads = CachedReads::default();
         let mut last_sim_finished = Instant::now();
@@ -70,39 +73,21 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             let sim_thread_wait_time = last_sim_finished.elapsed();
             let sim_start = Instant::now();
 
-            // let state_provider = match provider_factory
-            //     .history_by_block_hash(current_sim_context.block_ctx[&chain_id].attributes.parent)
-            // {
-            //     Ok(state_provider) => state_provider,
-            //     Err(err) => {
-            //         error!(?err, "Error while getting state for block");
-            //         // break here so we can try to get new context
-            //         // @Metric
-            //         break;
-            //     }
-            // };
-            let start_time = Instant::now();
-            //let providers: HashMap = HashMap::default();
-            //providers.insert(chain_id, Arc::new(state_provider.clone()));
-            //providers.insert(160010, Arc::new(state_provider));
+            let state_for_sim = provider_factories.iter().map(|(chain_id, provider_factory)| {
+                (*chain_id, Arc::<dyn StateProvider>::from(
+                    provider_factory.history_by_block_hash(
+                        current_sim_context.block_ctx.chains[chain_id].attributes.parent
+                    ).expect("failed to open state provider")
+                ))
+            }).collect();
 
-            let mut state_for_sim: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
-            println!("sim 2 chain_id: {}", chain_id);
-            // TODO(Brecht)
-            state_for_sim.insert(
-                160010,
-                Arc::<dyn StateProvider>::from(provider_factory.history_by_block_hash(current_sim_context.block_ctx[&chain_id].attributes.parent).expect("failed to open state provider")),
-            );
-            state_for_sim.insert(
-                167010,
-                Arc::<dyn StateProvider>::from(provider_factory.history_by_block_hash(current_sim_context.block_ctx[&chain_id].attributes.parent).expect("failed to open state provider")),
-            );
+            let start_time = Instant::now();
 
             let mut block_state = BlockState::new_arc(state_for_sim).with_cached_reads(cached_reads);
             let sim_result = simulate_order(
                 task.parents.clone(),
                 task.order.clone(),
-                &current_sim_context.block_ctx[&chain_id],
+                &current_sim_context.block_ctx,
                 &mut block_state,
             );
             match sim_result {

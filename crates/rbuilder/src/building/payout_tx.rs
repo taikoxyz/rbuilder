@@ -1,6 +1,6 @@
 use crate::utils::Signer;
 
-use super::{BlockBuildingContext, BlockState};
+use super::{BlockBuildingContext, BlockState, ChainBlockBuildingContext};
 use alloy_primitives::{Address, U256};
 use reth_chainspec::ChainSpec;
 use reth_errors::ProviderError;
@@ -15,7 +15,7 @@ pub fn create_payout_tx(
     basefee: U256,
     signer: &Signer,
     nonce: u64,
-    to: Address,
+    to: ChainAddress,
     gas_limit: u64,
     value: u128,
 ) -> Result<TransactionSignedEcRecovered, secp256k1::Error> {
@@ -25,7 +25,7 @@ pub fn create_payout_tx(
         gas_limit,
         max_fee_per_gas: basefee.to(),
         max_priority_fee_per_gas: 0,
-        to: TransactionKind::Call(to),
+        to: TransactionKind::Call(to.1),
         value: U256::from(value),
         ..Default::default()
     });
@@ -46,7 +46,7 @@ pub enum PayoutTxErr {
 }
 
 pub fn insert_test_payout_tx(
-    to: Address,
+    to: ChainAddress,
     ctx: &BlockBuildingContext,
     state: &mut BlockState,
     gas_limit: u64,
@@ -55,7 +55,10 @@ pub fn insert_test_payout_tx(
 
     println!("builder_signer: {:?}", builder_signer);
 
-    let nonce = state.nonce(ChainAddress(ctx.chain_spec.chain.id(), builder_signer.address))?;
+    let nonce = state.nonce(builder_signer.address)?;
+
+    // TODO(Brecht): what chain id
+    let ctx = &ctx.chains[&to.0];
 
     let mut cfg = ctx.initialized_cfg.clone();
     // disable balance check so we can estimate the gas cost without having any funds
@@ -113,17 +116,20 @@ pub enum EstimatePayoutGasErr {
     FailedToEstimate,
 }
 pub fn estimate_payout_gas_limit(
-    to: Address,
+    to: ChainAddress,
     ctx: &BlockBuildingContext,
     state: &mut BlockState,
     gas_used: u64,
 ) -> Result<u64, EstimatePayoutGasErr> {
     tracing::trace!(address = ?to, "Estimating payout gas");
-    if state.code_hash(ChainAddress(ctx.chain_spec.chain.id(), to))? == KECCAK_EMPTY {
+    if state.code_hash(to)? == KECCAK_EMPTY {
         return Ok(21_000);
     }
 
-    let gas_left = ctx
+    // TODO(Brecht): what chain id
+    let chain_ctx = &ctx.chains[&to.0];
+
+    let gas_left = chain_ctx
         .block_env
         .gas_limit
         .checked_sub(U256::from(gas_used))
