@@ -13,8 +13,9 @@ use rand::seq::SliceRandom;
 use reth::providers::ProviderFactory;
 use reth_db::database::Database;
 use reth_errors::ProviderError;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_provider::StateProvider;
+use revm_primitives::ChainAddress;
 use std::{
     cmp::{max, min, Ordering},
     collections::hash_map::Entry,
@@ -38,7 +39,7 @@ pub struct OrderSimResultWithGas {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NonceKey {
-    pub address: Address,
+    pub address: ChainAddress,
     pub nonce: u64,
 }
 
@@ -89,7 +90,7 @@ enum OrderNonceState {
 }
 
 impl<DB: Database> SimTree<DB> {
-    pub fn new(provider_factory: ProviderFactory<DB>, parent_block: B256) -> Self {
+    pub fn new(provider_factory: HashMap<u64, ProviderFactory<DB>>, parent_block: HashMap<u64, B256>) -> Self {
         let nonce_cache = NonceCache::new(provider_factory, parent_block);
         Self {
             nonce_cache,
@@ -151,13 +152,16 @@ impl<DB: Database> SimTree<DB> {
         for nonce in order.nonces() {
             let onchain_nonce = nonces.nonce(nonce.address)?;
 
+            println!("{:?}: onchain nonce: {} == tx nonce {}", nonce.address, onchain_nonce, nonce.nonce);
             match onchain_nonce.cmp(&nonce.nonce) {
                 Ordering::Equal => {
                     // nonce, valid
+                    println!("nonce ok");
                     onchain_nonces_incremented.insert(nonce.address);
                     continue;
                 }
                 Ordering::Greater => {
+                    println!("nonce invalid");
                     // nonce invalid, maybe its optional
                     if !nonce.optional {
                         // this order will never be valid
@@ -173,6 +177,7 @@ impl<DB: Database> SimTree<DB> {
                     }
                 }
                 Ordering::Less => {
+                    println!("nonce invalid");
                     if onchain_nonces_incremented.contains(&nonce.address) {
                         // we already considered this account nonce
                         continue;
@@ -307,12 +312,14 @@ impl<DB: Database> SimTree<DB> {
 /// `randomize_insertion` is used to debug if sim tree works correctly when orders are inserted in a different order
 /// outputs should be independent of this arg.
 pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
-    factory: ProviderFactory<DB>,
+    provider_factories: HashMap<u64, ProviderFactory<DB>>,
     ctx: &BlockBuildingContext,
     orders: &[Order],
     randomize_insertion: bool,
 ) -> Result<(Vec<SimulatedOrder>, Vec<OrderErr>), CriticalCommitOrderError> {
-    let mut sim_tree = SimTree::new(factory.clone(), ctx.attributes.parent);
+    let parent_block_hashes = ctx.chains.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect();
+
+    let mut sim_tree = SimTree::new(provider_factories.clone(), parent_block_hashes);
 
     let mut orders = orders.to_vec();
     let random_insert_size = max(orders.len() / 20, 1);
@@ -325,8 +332,10 @@ pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
     }
 
     let mut sim_errors = Vec::new();
-    let mut state_for_sim =
-        Arc::<dyn StateProvider>::from(factory.history_by_block_hash(ctx.attributes.parent)?);
+    let mut state_for_sim: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
+    for (&chain_id, factory) in provider_factories.iter() {
+        state_for_sim.insert(chain_id, Arc::<dyn StateProvider>::from(factory.history_by_block_hash(ctx.chains[&chain_id].attributes.parent)?));
+    }
     let mut cache_reads = Some(CachedReads::default());
     loop {
         // mix new orders into the sim_tree
@@ -356,8 +365,8 @@ pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
                 ctx,
                 &mut block_state,
             )?;
-            let (new_cache_reads, _, provider) = block_state.into_parts();
-            state_for_sim = provider;
+            let (new_cache_reads, _, providers) = block_state.into_parts();
+            state_for_sim = providers;
             cache_reads = Some(new_cache_reads);
             match sim_result.result {
                 OrderSimResult::Failed(err) => {
@@ -376,7 +385,7 @@ pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
                         previous_orders: sim_task.parents,
                         nonces_after: nonces
                             .into_iter()
-                            .map(|(address, nonce)| NonceKey { address, nonce })
+                            .map(|(address, nonce)| NonceKey { address: ChainAddress(sim_task.order.chain_id().unwrap(), address), nonce })
                             .collect(),
 
                         simulation_time: start_time.elapsed(),
@@ -424,6 +433,8 @@ pub fn simulate_order_using_fork<Tracer: SimulationTracer>(
     ctx: &BlockBuildingContext,
     fork: &mut PartialBlockFork<'_, '_, Tracer>,
 ) -> Result<OrderSimResult, CriticalCommitOrderError> {
+    println!("simulate_order_using_fork");
+
     // simulate parents
     let mut prev_order = None;
     let mut gas_used = 0;

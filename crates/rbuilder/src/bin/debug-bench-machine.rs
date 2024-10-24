@@ -11,8 +11,9 @@ use rbuilder::{
     utils::{extract_onchain_block_txs, find_suggested_fee_recipient, http_provider},
 };
 use reth::providers::BlockNumReader;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_provider::StateProvider;
+use revm_primitives::ChainAddress;
 use std::{path::PathBuf, sync::Arc, time::Instant};
 use tracing::{debug, info};
 
@@ -62,17 +63,19 @@ async fn main() -> eyre::Result<()> {
         txs.len()
     );
 
-    let coinbase = onchain_block.header.miner;
+    let coinbase = ChainAddress(chain_spec.chain.id(), onchain_block.header.miner);
 
     let ctx = BlockBuildingContext::from_onchain_block(
         onchain_block,
-        chain_spec,
+        chain_spec.clone(),
         None,
         Default::default(),
         coinbase,
         suggested_fee_recipient,
         None,
     );
+
+    let chain_id = chain_spec.clone().chain.id();
 
     // let signer = Signer::try_from_secret(B256::random())?;
 
@@ -92,7 +95,7 @@ async fn main() -> eyre::Result<()> {
         let (new_cached_reads, build_time, finalize_time) =
             tokio::task::spawn_blocking(move || -> eyre::Result<_> {
                 let partial_block = PartialBlock::new(true, None);
-                let mut state = BlockState::new_arc(state_provider)
+                let mut state = BlockState::new_arc_single(state_provider, chain_id)
                     .with_cached_reads(cached_reads.unwrap_or_default());
 
                 let build_time = Instant::now();

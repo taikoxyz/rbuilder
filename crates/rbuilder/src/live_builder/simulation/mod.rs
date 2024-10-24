@@ -50,7 +50,7 @@ pub struct CurrentSimulationContexts {
 
 #[derive(Debug)]
 pub struct OrderSimulationPool<DB> {
-    provider_factory: ProviderFactoryReopener<DB>,
+    provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
     running_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
     current_contexts: Arc<Mutex<CurrentSimulationContexts>>,
     worker_threads: Vec<std::thread::JoinHandle<()>>,
@@ -67,7 +67,7 @@ pub enum SimulatedOrderCommand {
 
 impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
     pub fn new(
-        provider_factory: ProviderFactoryReopener<DB>,
+        provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
         num_workers: usize,
         global_cancellation: CancellationToken,
     ) -> Self {
@@ -102,50 +102,53 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
     pub fn spawn_simulation_job(
         &self,
         ctx: BlockBuildingContext,
-        input: OrdersForBlock,
+        input: HashMap<u64, OrdersForBlock>,
         block_cancellation: CancellationToken,
     ) -> SlotOrderSimResults {
         let (slot_sim_results_sender, slot_sim_results_receiver) = mpsc::channel(10_000);
 
-        let provider = self.provider_factory.provider_factory_unchecked();
+        let providers: HashMap<u64, _> = self.provider_factory.iter().map(|(chain_id, factory)| (*chain_id, factory.provider_factory_unchecked())).collect();
 
         let current_contexts = Arc::clone(&self.current_contexts);
         let block_context: BlockContextId = gen_uid();
-        let span = info_span!("sim_ctx", block = ctx.block_env.number.to::<u64>(), parent = ?ctx.attributes.parent);
+        //let span = info_span!("sim_ctx", block = ctx.block_env.number.to::<u64>(), parent = ?ctx.attributes.parent);
 
         let handle = tokio::spawn(
             async move {
-                let sim_tree = SimTree::new(provider, ctx.attributes.parent);
-                let new_order_sub = input.new_order_sub;
-                let (sim_req_sender, sim_req_receiver) = flume::unbounded();
-                let (sim_results_sender, sim_results_receiver) = mpsc::channel(1024);
-                {
-                    let mut contexts = current_contexts.lock().unwrap();
-                    let sim_context = SimulationContext {
-                        block_ctx: ctx,
-                        requests: sim_req_receiver,
-                        results: sim_results_sender,
-                    };
-                    contexts.contexts.insert(block_context, sim_context);
-                }
-                let mut simulation_job = SimulationJob::new(
-                    block_cancellation,
-                    new_order_sub,
-                    sim_req_sender,
-                    sim_results_receiver,
-                    slot_sim_results_sender,
-                    sim_tree,
-                );
+                for (_chain_id, new_order_sub) in input {
+                    let sim_tree = SimTree::new(providers.clone(), ctx.chains.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect());
+                    let new_order_sub = new_order_sub.new_order_sub;
+                    let (sim_req_sender, sim_req_receiver) = flume::unbounded();
+                    let (sim_results_sender, sim_results_receiver) = mpsc::channel(1024);
+                    {
+                        let mut contexts = current_contexts.lock().unwrap();
+                        let sim_context = SimulationContext {
+                            block_ctx: ctx.clone(),
+                            requests: sim_req_receiver,
+                            results: sim_results_sender,
+                        };
+                        contexts.contexts.insert(block_context, sim_context);
+                    }
+                    let mut simulation_job = SimulationJob::new(
+                        block_cancellation.clone(),
+                        new_order_sub,
+                        sim_req_sender,
+                        sim_results_receiver,
+                        slot_sim_results_sender.clone(),
+                        sim_tree,
+                    );
 
-                simulation_job.run().await;
+                    simulation_job.run().await;
 
-                // clean up
-                {
-                    let mut contexts = current_contexts.lock().unwrap();
-                    contexts.contexts.remove(&block_context);
+                    // clean up
+                    {
+                        let mut contexts = current_contexts.lock().unwrap();
+                        contexts.contexts.remove(&block_context);
+                    }
                 }
             }
-            .instrument(span),
+            //.instrument(span)
+            ,
         );
 
         {
@@ -168,6 +171,7 @@ mod tests {
         live_builder::order_input::order_sink::OrderPoolCommand,
         primitives::{MempoolTx, Order, TransactionSignedEcRecoveredWithBlobs},
     };
+    use reth_evm::provider;
     use reth_primitives::U256;
 
     #[tokio::test]
@@ -181,15 +185,27 @@ mod tests {
         )
         .unwrap();
 
-        let sim_pool = OrderSimulationPool::new(provider_factory_reopener, 4, cancel.clone());
+        let mut providers = HashMap::default();
+        providers.insert(test_context.chain_spec.chain.id(), provider_factory_reopener.clone());
+        providers.insert(test_context.chain_spec.chain.id() + 1, provider_factory_reopener);
+
+        let sim_pool = OrderSimulationPool::new(providers, 4, cancel.clone());
         let (order_sender, order_receiver) = mpsc::unbounded_channel();
         let orders_for_block = OrdersForBlock {
             new_order_sub: order_receiver,
         };
 
+        let (order_sender2, order_receiver2) = mpsc::unbounded_channel();
+        let orders_for_block2 = OrdersForBlock {
+            new_order_sub: order_receiver2,
+        };
+
+        let mut orders_for_blocks = HashMap::default();
+        orders_for_blocks.insert(test_context.chain_spec.chain.id(), orders_for_block);
+        orders_for_blocks.insert(test_context.chain_spec.chain.id() + 1, orders_for_block2);
         let mut sim_results = sim_pool.spawn_simulation_job(
-            test_context.block_building_context().clone(),
-            orders_for_block,
+            test_context.block_building_context(),
+            orders_for_blocks,
             cancel.clone(),
         );
 

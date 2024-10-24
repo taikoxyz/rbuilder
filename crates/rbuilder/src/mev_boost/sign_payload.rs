@@ -116,6 +116,7 @@ pub fn sign_block_for_relay(
     pubkey: H384,
     value: U256,
 ) -> eyre::Result<SubmitBlockRequest> {
+    //println!("sign_block_for_relay");
     let message = BidTrace {
         slot: attrs.proposal_slot,
         parent_hash: attrs.parent_block_hash,
@@ -173,10 +174,12 @@ pub fn sign_block_for_relay(
             payload_inner: capella_payload,
             blob_gas_used: sealed_block
                 .blob_gas_used
-                .expect("deneb block does not have blob gas used"),
+                //.expect("deneb block does not have blob gas used"),
+                .unwrap_or_default(),
             excess_blob_gas: sealed_block
                 .excess_blob_gas
-                .expect("deneb block does not have excess blob gas"),
+                //.expect("deneb block does not have excess blob gas"),
+                .unwrap_or_default(),
         };
 
         let blobs_bundle = marshal_txs_blobs_sidecars(blobs_bundle);

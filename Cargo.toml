@@ -75,3 +75,32 @@ alloy-rpc-types-engine = { version = "0.3.0", features = [
 ] }
 alloy-rpc-types-eth = { version = "0.3.0" }
 alloy-signer-local = { version = "0.3.0" }
+alloy-sol-types = { version = "0.8.2", default-features = false }
+
+[patch.crates-io]
+revm = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+revm-primitives = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+revm-interpreter = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+revm-precompile = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+revm-inspectors = { git = "https://github.com/taikoxyz/revm-inspectors.git", branch = "main-rbuilder" }
+
+[patch."https://github.com/paradigmxyz/reth"]
+reth = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-db = {git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-db-common = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-libmdbx = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-node-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-trie = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-trie-parallel = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-basic-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-node-core = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-primitives = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-provider = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-chainspec = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-evm = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-evm-ethereum = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-db-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-execution-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-trie-db = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }

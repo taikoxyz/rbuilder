@@ -1,4 +1,5 @@
 pub mod base_config;
+pub mod layer2_info;
 pub mod block_output;
 pub mod building;
 pub mod cli;
@@ -11,7 +12,7 @@ pub mod watchdog;
 use crate::{
     building::{
         builders::{BlockBuildingAlgorithm, UnfinishedBlockBuildingSinkFactory},
-        BlockBuildingContext,
+        BlockBuildingContext, ChainBlockBuildingContext
     },
     live_builder::{
         order_input::{start_orderpool_jobs, OrderInputConfig},
@@ -21,8 +22,10 @@ use crate::{
     telemetry::inc_active_slots,
     utils::{error_storage::spawn_error_storage_writer, ProviderFactoryReopener, Signer},
 };
-use ahash::HashSet;
-use alloy_primitives::{Address, B256};
+use ahash::{HashMap, HashSet};
+use alloy_chains::{Chain, ChainKind};
+use alloy_eips::{BlockId, BlockNumberOrTag};
+use alloy_primitives::{Address, B256, U256};
 use building::BlockBuildingPool;
 use eyre::Context;
 use jsonrpsee::RpcModule;
@@ -33,11 +36,14 @@ use reth::{
 };
 use reth_chainspec::ChainSpec;
 use reth_db::database::Database;
-use std::{cmp::min, path::PathBuf, sync::Arc, time::Duration};
+use reth_evm::provider;
+use std::{cmp::min, path::PathBuf, sync::Arc, thread::sleep, time::Duration};
 use time::OffsetDateTime;
 use tokio::{sync::mpsc, task::spawn_blocking};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+
+use layer2_info::Layer2Info;
 
 /// Time the proposer have to propose a block from the beginning of the slot (https://www.paradigm.xyz/2023/04/mev-boost-ethereum-consensus Slot anatomy)
 const SLOT_PROPOSAL_DURATION: std::time::Duration = Duration::from_secs(4);
@@ -76,6 +82,7 @@ pub struct LiveBuilder<DB, BlocksSourceType: SlotSource> {
     pub sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
     pub builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>,
     pub extra_rpc: RpcModule<()>,
+    pub layer2_info: Layer2Info<DB>,
 }
 
 impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
@@ -85,7 +92,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         Self { extra_rpc, ..self }
     }
 
-    pub fn with_builders(self, builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>) -> Self {
+    pub fn with_builders_and_layer2_info(self, builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>) -> Self {
         Self { builders, ..self }
     }
 
@@ -105,6 +112,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         let mut inner_jobs_handles = Vec::new();
         let mut payload_events_channel = self.blocks_source.recv_slot_channel();
 
+        let mut orderpool_subscribers = HashMap::default();
         let orderpool_subscriber = {
             let (handle, sub) = start_orderpool_jobs(
                 self.order_input_config,
@@ -116,26 +124,52 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             inner_jobs_handles.push(handle);
             sub
         };
+        orderpool_subscribers.insert(self.chain_chain_spec.chain.id(), orderpool_subscriber);
+
+        let mut provider_factories: HashMap<u64, ProviderFactoryReopener<DB>> = HashMap::default();
+        provider_factories.insert(self.chain_chain_spec.chain.id(), self.provider_factory.clone());
+
+        for (chain_id, node) in self.layer2_info.nodes.iter() {
+            let orderpool_subscriber = {
+                let (handle, sub) = start_orderpool_jobs(
+                    node.order_input_config.clone(),
+                    node.provider_factory.clone(),
+                    RpcModule::new(()),
+                    self.global_cancellation.clone(),
+                )
+                .await?;
+                inner_jobs_handles.push(handle);
+                sub
+            };
+            orderpool_subscribers.insert(*chain_id, orderpool_subscriber);
+            provider_factories.insert(*chain_id, node.provider_factory.clone());
+        }
 
         let order_simulation_pool = {
             OrderSimulationPool::new(
-                self.provider_factory.clone(),
+                provider_factories.clone(),
                 self.simulation_threads,
                 self.global_cancellation.clone(),
             )
         };
 
         let mut builder_pool = BlockBuildingPool::new(
-            self.provider_factory.clone(),
+            provider_factories.clone(),
             self.builders,
             self.sink_factory,
-            orderpool_subscriber,
+            orderpool_subscribers,
             order_simulation_pool,
         );
 
         let watchdog_sender = spawn_watchdog_thread(self.watchdog_timeout)?;
 
+        let mut all_chain_ids = vec![self.chain_chain_spec.chain.id()];
+        all_chain_ids.append(&mut provider_factories.keys().cloned().collect::<Vec<_>>());
+
         while let Some(payload) = payload_events_channel.recv().await {
+            println!("Payload_attributes event received");
+            println!("Parent block's hash: {:?}", payload.parent_block_hash());
+
             if self.blocklist.contains(&payload.fee_recipient()) {
                 warn!(
                     slot = payload.slot(),
@@ -167,7 +201,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 // @Nicer
                 let parent_block = payload.parent_block_hash();
                 let timestamp = payload.timestamp();
-                let provider_factory = self.provider_factory.provider_factory_unchecked();
+                let provider_factory = self.provider_factory.clone().provider_factory_unchecked();
                 match wait_for_block_header(parent_block, timestamp, &provider_factory).await {
                     Ok(header) => header,
                     Err(err) => {
@@ -206,7 +240,8 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
             inc_active_slots();
 
-            let block_ctx = BlockBuildingContext::from_attributes(
+            println!("Dani debug: build block context");
+            let block_ctx = ChainBlockBuildingContext::from_attributes(
                 payload.payload_attributes_event.clone(),
                 &parent_header,
                 self.coinbase_signer.clone(),
@@ -217,9 +252,42 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 None,
             );
 
+            // TODO(Brecht): hack to wait until latest L2 block is also created, which is later then when we get the payload build event
+            sleep(Duration::from_millis(4000));
+
+            // TODO: Brecht
+            let mut chains = HashMap::default();
+            for (&chain_id, _) in provider_factories.iter() {
+                println!("setting up {}", chain_id);
+                let mut block_ctx = block_ctx.clone();
+                let mut chain_spec = (*block_ctx.chain_spec).clone();
+                println!("chain spec chain id: {}", chain_spec.chain.id());
+                if chain_spec.chain.id() != chain_id {
+                    println!("updating ctx for {}", chain_id);
+                    let latest_block = self.layer2_info.get_latest_block(chain_id, BlockId::Number(BlockNumberOrTag::Latest)).await?;
+                    if let Some(latest_block) = latest_block {
+                        block_ctx.attributes.parent = latest_block.header.hash;
+                        block_ctx.block_env.number = U256::from(latest_block.header.number + 1);
+                    } else {
+                        println!("failed to get latest block for {}", chain_id);
+                    }
+                    chain_spec.chain = Chain::from(chain_id);
+                    block_ctx.chain_spec = chain_spec.into();
+                }
+                println!("Latest block hash for {} is {}", chain_id, block_ctx.attributes.parent);
+                chains.insert(chain_id, block_ctx);
+            }
+
+            let super_block_ctx = BlockBuildingContext::from_attributes(
+                self.chain_chain_spec.chain.id(),
+                chains,
+                Some(self.coinbase_signer.clone()),
+            );
+
+            println!("Start building");
             builder_pool.start_block_building(
                 payload,
-                block_ctx,
+                super_block_ctx,
                 self.global_cancellation.clone(),
                 time_until_slot_end.try_into().unwrap_or_default(),
             );
@@ -237,6 +305,25 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         }
         Ok(())
     }
+}
+
+async fn get_layer2_infos(chain_id: U256) -> Result<(), Box<dyn std::error::Error>> {
+    // Let's just pretend this info is already set up somewhere as Layer2Info but for now
+    // i'm just constructing it here.
+    // let urls = vec![
+    //     "http://localhost:10110".to_string(),
+    // ];
+
+    // let (ipc_paths, data_dirs) = self.resolve_l2_paths()?;
+
+    // let layer2_info = Some(Layer2Info::new(ipc_paths, data_dirs).await?);
+
+    // match layer2_info.get_latest_block(chain_id).await? {
+    //     Some(latest_block) => println!("Latest block: {:?}", latest_block),
+    //     None => println!("Chain ID not found"),
+    // }
+
+    Ok(())
 }
 
 /// May fail if we wait too much (see [BLOCK_HEADER_DEAD_LINE_DELTA])

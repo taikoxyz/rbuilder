@@ -6,10 +6,12 @@ use crate::utils::{extract_onchain_block_txs, find_suggested_fee_recipient};
 use ahash::{HashMap, HashSet};
 use alloy_primitives::{B256, I256};
 use eyre::Context;
+use reth::blockchain_tree::chain;
 use reth_chainspec::ChainSpec;
 use reth_db::DatabaseEnv;
 use reth_primitives::{Receipt, TransactionSignedEcRecovered, TxHash};
 use reth_provider::ProviderFactory;
+use revm_primitives::ChainAddress;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -36,11 +38,11 @@ pub fn sim_historical_block(
     let txs = extract_onchain_block_txs(&onchain_block)?;
 
     let suggested_fee_recipient = find_suggested_fee_recipient(&onchain_block, &txs);
-    let coinbase = onchain_block.header.miner;
+    let coinbase = ChainAddress(chain_spec.chain.id(), onchain_block.header.miner);
 
     let ctx = BlockBuildingContext::from_onchain_block(
         onchain_block,
-        chain_spec,
+        chain_spec.clone(),
         None,
         HashSet::default(),
         coinbase,
@@ -48,9 +50,9 @@ pub fn sim_historical_block(
         None,
     );
 
-    let state_provider = provider_factory.history_by_block_hash(ctx.attributes.parent)?;
+    let state_provider = provider_factory.history_by_block_hash(ctx.chains[&chain_spec.chain().id()].attributes.parent)?;
     let mut partial_block = PartialBlock::new(true, None);
-    let mut state = BlockState::new(state_provider);
+    let mut state = BlockState::new(state_provider, chain_spec.chain().id());
 
     partial_block
         .pre_block_call(&ctx, &mut state)
