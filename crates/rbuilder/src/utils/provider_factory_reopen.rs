@@ -35,7 +35,7 @@ impl<DB: Database + Clone> ProviderFactoryReopener<DB> {
             provider_factory: Arc::new(Mutex::new(provider_factory)),
             chain_spec,
             static_files_path,
-            testing_mode: true,
+            testing_mode: false,
         })
     }
 
@@ -70,6 +70,7 @@ impl<DB: Database + Clone> ProviderFactoryReopener<DB> {
             match check_provider_factory_health(current_block_number, &provider_factory) {
                 Ok(()) => {}
                 Err(err) => {
+                    println!("REOPENING {:?}!", self.chain_spec.chain.id());
                     debug!(?err, "Provider factory is inconsistent, reopening");
                     inc_provider_reopen_counter();
 
