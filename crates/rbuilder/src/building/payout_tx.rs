@@ -1,6 +1,6 @@
 use crate::utils::Signer;
 
-use super::{BlockBuildingContext, BlockState};
+use super::{BlockBuildingContext, BlockState, ChainBlockBuildingContext};
 use alloy_primitives::{Address, U256};
 use reth_chainspec::ChainSpec;
 use reth_errors::ProviderError;
@@ -8,14 +8,14 @@ use reth_primitives::{
     transaction::FillTxEnv, Transaction, TransactionSignedEcRecovered, TxEip1559,
     TxKind as TransactionKind, KECCAK_EMPTY,
 };
-use revm_primitives::{EVMError, Env, ExecutionResult, TxEnv};
+use revm_primitives::{ChainAddress, EVMError, Env, ExecutionResult, TxEnv};
 
 pub fn create_payout_tx(
     chain_spec: &ChainSpec,
     basefee: U256,
     signer: &Signer,
     nonce: u64,
-    to: Address,
+    to: ChainAddress,
     gas_limit: u64,
     value: u128,
 ) -> Result<TransactionSignedEcRecovered, secp256k1::Error> {
@@ -25,7 +25,7 @@ pub fn create_payout_tx(
         gas_limit,
         max_fee_per_gas: basefee.to(),
         max_priority_fee_per_gas: 0,
-        to: TransactionKind::Call(to),
+        to: TransactionKind::Call(to.1),
         value: U256::from(value),
         ..Default::default()
     });
@@ -46,14 +46,19 @@ pub enum PayoutTxErr {
 }
 
 pub fn insert_test_payout_tx(
-    to: Address,
+    to: ChainAddress,
     ctx: &BlockBuildingContext,
     state: &mut BlockState,
     gas_limit: u64,
 ) -> Result<Option<u64>, PayoutTxErr> {
     let builder_signer = ctx.builder_signer.as_ref().ok_or(PayoutTxErr::NoSigner)?;
 
+    println!("builder_signer: {:?}", builder_signer);
+
     let nonce = state.nonce(builder_signer.address)?;
+
+    // TODO(Brecht): what chain id
+    let ctx = &ctx.chains[&to.0];
 
     let mut cfg = ctx.initialized_cfg.clone();
     // disable balance check so we can estimate the gas cost without having any funds
@@ -81,6 +86,10 @@ pub fn insert_test_payout_tx(
 
     let mut db = state.new_db_ref();
 
+    let mut env = env.clone();
+    env.cfg.chain_id = tx.chain_id().unwrap();
+    //println!("active remv chain_id: {}", env.cfg.chain_id);
+
     let mut evm = revm::Evm::builder()
         .with_spec_id(ctx.spec_id)
         .with_env(Box::new(env))
@@ -107,7 +116,7 @@ pub enum EstimatePayoutGasErr {
     FailedToEstimate,
 }
 pub fn estimate_payout_gas_limit(
-    to: Address,
+    to: ChainAddress,
     ctx: &BlockBuildingContext,
     state: &mut BlockState,
     gas_used: u64,
@@ -117,7 +126,10 @@ pub fn estimate_payout_gas_limit(
         return Ok(21_000);
     }
 
-    let gas_left = ctx
+    // TODO(Brecht): what chain id
+    let chain_ctx = &ctx.chains[&to.0];
+
+    let gas_left = chain_ctx
         .block_env
         .gas_limit
         .checked_sub(U256::from(gas_used))

@@ -2,23 +2,24 @@ use alloy_primitives::{Address, B256, U256};
 use reth_primitives::{
     public_key_to_address, Signature, Transaction, TransactionSigned, TransactionSignedEcRecovered,
 };
+use revm_primitives::ChainAddress;
 use secp256k1::{Message, SecretKey, SECP256K1};
 
 /// Simple struct to sign txs/messages.
 /// Mainly used to sign payout txs from the builder and to create test data.
 #[derive(Debug, Clone)]
 pub struct Signer {
-    pub address: Address,
+    pub address: ChainAddress,
     pub secret: SecretKey,
 }
 
 impl Signer {
-    pub fn try_from_secret(secret: B256) -> Result<Self, secp256k1::Error> {
+    pub fn try_from_secret(chain_id: u64, secret: B256) -> Result<Self, secp256k1::Error> {
         let secret = SecretKey::from_slice(secret.as_ref())?;
         let pubkey = secret.public_key(SECP256K1);
         let address = public_key_to_address(pubkey);
 
-        Ok(Self { address, secret })
+        Ok(Self { address: ChainAddress(chain_id, address), secret })
     }
 
     pub fn sign_message(&self, message: B256) -> Result<Signature, secp256k1::Error> {
@@ -42,12 +43,12 @@ impl Signer {
         let signed = TransactionSigned::from_transaction_and_signature(tx, signature);
         Ok(TransactionSignedEcRecovered::from_signed_transaction(
             signed,
-            self.address,
+            self.address.1,
         ))
     }
 
     pub fn random() -> Self {
-        Self::try_from_secret(B256::random()).expect("failed to create random signer")
+        Self::try_from_secret(0, B256::random()).expect("failed to create random signer")
     }
 }
 
@@ -61,8 +62,9 @@ mod test {
     fn test_sign_transaction() {
         let secret =
             fixed_bytes!("7a3233fcd52c19f9ffce062fd620a8888930b086fba48cfea8fc14aac98a4dce");
-        let address = address!("B2B9609c200CA9b7708c2a130b911dabf8B49B20");
-        let signer = Signer::try_from_secret(secret).expect("signer creation");
+        let chain_id = 1;
+        let address = ChainAddress(chain_id, address!("B2B9609c200CA9b7708c2a130b911dabf8B49B20"));
+        let signer = Signer::try_from_secret(chain_id, secret).expect("signer creation");
         assert_eq!(signer.address, address);
 
         let tx = Transaction::Eip1559(TxEip1559 {
@@ -71,15 +73,15 @@ mod test {
             gas_limit: 21000,
             max_fee_per_gas: 1000,
             max_priority_fee_per_gas: 20000,
-            to: TransactionKind::Call(address),
+            to: TransactionKind::Call(address.1),
             value: U256::from(3000u128),
             ..Default::default()
         });
 
         let signed_tx = signer.sign_tx(tx).expect("sign tx");
-        assert_eq!(signed_tx.signer(), address);
+        assert_eq!(signed_tx.signer(), address.1);
 
         let signed = signed_tx.into_signed();
-        assert_eq!(signed.recover_signer(), Some(address));
+        assert_eq!(signed.recover_signer(), Some(address.1));
     }
 }

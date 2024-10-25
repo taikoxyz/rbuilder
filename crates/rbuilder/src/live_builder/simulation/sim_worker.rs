@@ -8,8 +8,11 @@ use crate::{
     telemetry::add_sim_thread_utilisation_timings,
     utils::ProviderFactoryReopener,
 };
+use ahash::HashMap;
 use reth_db::database::Database;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
+use reth_provider::StateProvider;
+use revm_primitives::ChainAddress;
 use std::{
     sync::{Arc, Mutex},
     thread::sleep,
@@ -24,7 +27,7 @@ use tracing::error;
 pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
     worker_id: usize,
     ctx: Arc<Mutex<CurrentSimulationContexts>>,
-    provider_factory: ProviderFactoryReopener<DB>,
+    provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
     global_cancellation: CancellationToken,
 ) {
     loop {
@@ -43,17 +46,26 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                 // contexts are created for a duration of the slot so this is not a problem
                 sleep(Duration::from_millis(50));
             }
+            sleep(Duration::from_millis(500));
         };
 
-        let provider_factory = match provider_factory.check_consistency_and_reopen_if_needed(
-            current_sim_context.block_ctx.block_env.number.to(),
-        ) {
-            Ok(provider_factory) => provider_factory,
-            Err(err) => {
-                error!(?err, "Error while reopening provider factory");
-                continue;
+        println!("Brecht: simming 3");
+
+        let mut provider_factories = HashMap::default();
+        for (chain_id, provider_factory) in provider_factory.iter() {
+            match provider_factory.check_consistency_and_reopen_if_needed(
+                current_sim_context.block_ctx.chains[chain_id].block_env.number.to(),
+            ) {
+                Ok(provider_factory) => {
+                    provider_factories.insert(*chain_id, provider_factory);
+                },
+                Err(err) => {
+                    error!(?err, "Error while reopening provider factory");
+                    // Decide whether to continue or break
+                    continue;
+                }
             }
-        };
+        }
 
         let mut cached_reads = CachedReads::default();
         let mut last_sim_finished = Instant::now();
@@ -61,43 +73,42 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             let sim_thread_wait_time = last_sim_finished.elapsed();
             let sim_start = Instant::now();
 
-            let state_provider = match provider_factory
-                .history_by_block_hash(current_sim_context.block_ctx.attributes.parent)
-            {
-                Ok(state_provider) => state_provider,
-                Err(err) => {
-                    error!(?err, "Error while getting state for block");
-                    // break here so we can try to get new context
-                    // @Metric
-                    break;
-                }
-            };
+            let state_for_sim = provider_factories.iter().map(|(chain_id, provider_factory)| {
+                (*chain_id, Arc::<dyn StateProvider>::from(
+                    provider_factory.history_by_block_hash(
+                        current_sim_context.block_ctx.chains[chain_id].attributes.parent
+                    ).expect("failed to open state provider")
+                ))
+            }).collect();
+
             let start_time = Instant::now();
-            let mut block_state = BlockState::new(state_provider).with_cached_reads(cached_reads);
+
+            let mut block_state = BlockState::new_arc(state_for_sim).with_cached_reads(cached_reads);
             let sim_result = simulate_order(
                 task.parents.clone(),
-                task.order,
+                task.order.clone(),
                 &current_sim_context.block_ctx,
                 &mut block_state,
             );
             match sim_result {
                 Ok(sim_result) => {
-                    let sim_ok = match sim_result.result {
+                    let sim_ok = match &sim_result.result {
                         OrderSimResult::Success(simulated_order, nonces_after) => {
+                            println!("sim okay for: {:?} -> {:?}", task, sim_result);
                             let result = SimulatedResult {
                                 id: task.id,
-                                simulated_order,
+                                simulated_order: simulated_order.clone(),
                                 previous_orders: task.parents,
                                 nonces_after: nonces_after
                                     .into_iter()
-                                    .map(|(address, nonce)| NonceKey { address, nonce })
+                                    .map(|(address, nonce)| NonceKey { address: ChainAddress(task.order.chain_id().unwrap(), address.clone()), nonce: nonce.clone() })
                                     .collect(),
                                 simulation_time: start_time.elapsed(),
                             };
-                            current_sim_context
+                            let result_send = current_sim_context
                                 .results
-                                .try_send(result)
-                                .unwrap_or_default();
+                                .try_send(result);
+                            println!("sending result: {:?}", result_send);
                             true
                         }
                         OrderSimResult::Failed(_) => false,

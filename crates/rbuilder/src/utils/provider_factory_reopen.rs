@@ -35,7 +35,7 @@ impl<DB: Database + Clone> ProviderFactoryReopener<DB> {
             provider_factory: Arc::new(Mutex::new(provider_factory)),
             chain_spec,
             static_files_path,
-            testing_mode: false,
+            testing_mode: true,
         })
     }
 

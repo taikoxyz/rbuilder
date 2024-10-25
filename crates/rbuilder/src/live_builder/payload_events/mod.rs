@@ -10,7 +10,7 @@ use crate::{
     live_builder::{
         payload_events::{
             payload_source::PayloadSourceMuxer,
-            relay_epoch_cache::{RelaysForSlotData, SlotData},
+            relay_epoch_cache::{SlotData},
         },
         SlotSource,
     },
@@ -18,9 +18,11 @@ use crate::{
 };
 use ahash::HashSet;
 use alloy_primitives::{utils::format_ether, Address, B256, U256};
+use primitive_types::H384;
 use reth::{
     primitives::constants::SLOT_DURATION, rpc::types::beacon::events::PayloadAttributesEvent,
 };
+use revm_primitives::address;
 use std::{collections::VecDeque, time::Duration};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -111,7 +113,7 @@ impl MevBoostSlotDataGenerator {
     ///     it, but even with the event being created for every slot, the fee_recipient we get from MEV-Boost might be different so we should always replace it.
     ///     Note that with MEV-boost the validator may change the fee_recipient when registering to the Relays.
     pub fn spawn(self) -> (JoinHandle<()>, mpsc::UnboundedReceiver<MevBoostSlotData>) {
-        let relays = RelaysForSlotData::new(&self.relays);
+        //let relays = RelaysForSlotData::new(&self.relays);
 
         let (send, receive) = mpsc::unbounded_channel();
         let handle = tokio::spawn(async move {
@@ -123,7 +125,7 @@ impl MevBoostSlotDataGenerator {
             );
 
             info!("MevBoostSlotDataGenerator: started");
-            let mut relays = relays;
+            //let mut relays = relays;
             let mut recently_sent_data = VecDeque::with_capacity(RECENTLY_SENT_EVENTS_BUFF);
 
             while let Some(event) = source.recv().await {
@@ -131,12 +133,19 @@ impl MevBoostSlotDataGenerator {
                     return;
                 }
 
-                let (slot_data, relays) =
+                /*let (slot_data, relays) =
                     if let Some(res) = relays.slot_data(event.data.proposal_slot).await {
                         res
                     } else {
                         continue;
-                    };
+                    };*/
+
+                let slot_data = SlotData {
+                    fee_recipient: address!("8943545177806ED17B9F23F0a21ee5948eCaa776"),
+                    gas_limit: 15_000_000,
+                    pubkey: H384::default(),
+                };
+                let relays = vec!["gwyneth".to_owned()];
 
                 let mut correct_event = event;
                 correct_event

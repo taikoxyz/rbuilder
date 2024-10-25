@@ -10,7 +10,7 @@ use crate::{
     roothash::RootHashConfig,
     utils::{is_provider_factory_health_error, NonceCache},
 };
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use alloy_primitives::{Address, B256};
 use block_building_helper::BlockBuildingHelper;
 use reth::{
@@ -19,7 +19,8 @@ use reth::{
     tasks::pool::BlockingTaskPool,
 };
 use reth_db::database::Database;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
+use revm_primitives::ChainAddress;
 use std::sync::Arc;
 use tokio::sync::{broadcast, broadcast::error::TryRecvError};
 use tokio_util::sync::CancellationToken;
@@ -37,7 +38,7 @@ pub struct Block {
 
 #[derive(Debug)]
 pub struct LiveBuilderInput<DB: Database> {
-    pub provider_factory: ProviderFactory<DB>,
+    pub provider_factory: HashMap<u64, ProviderFactory<DB>>,
     pub root_hash_config: RootHashConfig,
     pub root_hash_task_pool: BlockingTaskPool,
     pub ctx: BlockBuildingContext,
@@ -110,7 +111,7 @@ pub struct OrderIntakeConsumer<DB> {
     nonce_cache: NonceCache<DB>,
 
     block_orders: BlockOrders,
-    onchain_nonces_updated: HashSet<Address>,
+    onchain_nonces_updated: HashSet<ChainAddress>,
 
     order_consumer: OrderConsumer,
 }
@@ -118,9 +119,9 @@ pub struct OrderIntakeConsumer<DB> {
 impl<DB: Database + Clone> OrderIntakeConsumer<DB> {
     /// See [`ShareBundleMerger`] for sbundle_merger_selected_signers
     pub fn new(
-        provider_factory: ProviderFactory<DB>,
+        provider_factory: HashMap<u64, ProviderFactory<DB>>,
         orders: broadcast::Receiver<SimulatedOrderCommand>,
-        parent_block: B256,
+        parent_block: HashMap<u64, B256>,
         sorting: Sorting,
         sbundle_merger_selected_signers: &[Address],
     ) -> Self {
@@ -196,7 +197,7 @@ pub trait UnfinishedBlockBuildingSink: std::fmt::Debug + Send + Sync {
 
 #[derive(Debug)]
 pub struct BlockBuildingAlgorithmInput<DB: Database> {
-    pub provider_factory: ProviderFactory<DB>,
+    pub provider_factory: HashMap<u64, ProviderFactory<DB>>,
     pub ctx: BlockBuildingContext,
     pub input: broadcast::Receiver<SimulatedOrderCommand>,
     /// output for the blocks

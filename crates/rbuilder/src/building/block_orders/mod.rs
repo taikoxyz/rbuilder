@@ -192,14 +192,14 @@ impl SimulatedOrderSink for BlockOrders {
 pub fn block_orders_from_sim_orders(
     sim_orders: &[SimulatedOrder],
     sorting: Sorting,
-    state_provider: &StateProviderBox,
+    state_provider: &HashMap<u64, &StateProviderBox>,
     sbundle_merger_selected_signers: &[Address],
 ) -> ProviderResult<BlockOrders> {
     let mut onchain_nonces = vec![];
     for order in sim_orders {
         for nonce in order.order.nonces() {
-            let value = state_provider
-                .account_nonce(nonce.address)?
+            let value = state_provider[&nonce.address.0]
+                .account_nonce(nonce.address.1)?
                 .unwrap_or_default();
             onchain_nonces.push(AccountNonce {
                 account: nonce.address,
