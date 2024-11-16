@@ -5,7 +5,7 @@ use crate::{
     live_builder::{order_input::OrderInputConfig, LiveBuilder},
     roothash::RootHashConfig,
     telemetry::{setup_reloadable_tracing_subscriber, LoggerConfig},
-    utils::{http_provider, BoxedProvider, ProviderFactoryReopener, Signer},
+    utils::{http_provider, BoxedProvider, ProviderFactoryReopener, Signer, ProviderFactoryUnchecked, provider_factory_reopen::ConsistencyReopener},
 };
 use ahash::HashSet;
 use alloy_primitives::{Address, B256};
@@ -14,10 +14,12 @@ use jsonrpsee::RpcModule;
 use lazy_static::lazy_static;
 use reth::tasks::pool::BlockingTaskPool;
 use reth_chainspec::ChainSpec;
-use reth_db::DatabaseEnv;
+use reth_db::{Database, DatabaseEnv};
 use reth_node_core::args::utils::chain_value_parser;
 use reth_primitives::StaticFileSegment;
-use reth_provider::StaticFileProviderFactory;
+use reth_provider::{
+    DatabaseProviderFactory, HeaderProvider, StateProviderFactory, StaticFileProviderFactory,
+};
 use serde::{Deserialize, Deserializer};
 use serde_with::{serde_as, DeserializeAs};
 use sqlx::PgPool;
@@ -32,7 +34,7 @@ use std::{
 };
 use tracing::warn;
 
-use super::{layer2_info::create_gwyneth_providers, SlotSource};
+use super::SlotSource;
 
 use crate::live_builder::Layer2Info;
 
@@ -148,7 +150,7 @@ pub fn load_config_toml_and_env<T: serde::de::DeserializeOwned>(
 }
 
 impl BaseConfig {
-    pub fn setup_tracing_subsriber(&self) -> eyre::Result<()> {
+    pub fn setup_tracing_subscriber(&self) -> eyre::Result<()> {
         let log_level = self.log_level.value()?;
         let config = LoggerConfig {
             env_filter: log_level,
@@ -181,12 +183,18 @@ impl BaseConfig {
         sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
         slot_source: SlotSourceType,
         gwyneth_chain_ids: Vec<u64>,
-    ) -> eyre::Result<super::LiveBuilder<Arc<DatabaseEnv>, SlotSourceType>>
+    ) -> eyre::Result<
+        super::LiveBuilder<
+            ProviderFactoryReopener<Arc<DatabaseEnv>>,
+            Arc<DatabaseEnv>,
+            SlotSourceType,
+        >,
+    >
     where
         SlotSourceType: SlotSource,
     {
-        let provider_factory = self.provider_factory()?;
-        self.create_builder_with_provider_factory(
+        let provider_factory = self.create_provider_factory()?;
+        self.create_builder_with_provider_factory::<ProviderFactoryReopener<Arc<DatabaseEnv>>, Arc<DatabaseEnv>, SlotSourceType>(
             cancellation_token,
             sink_factory,
             slot_source,
@@ -196,23 +204,30 @@ impl BaseConfig {
         .await
     }
 
-    /// WARN: opens reth db
-    pub async fn create_builder_with_provider_factory<SlotSourceType>(
+    /// Allows instantiating a [`LiveBuilder`] with an existing provider factory
+    pub async fn create_builder_with_provider_factory<P, DB, SlotSourceType>(
         &self,
         cancellation_token: tokio_util::sync::CancellationToken,
         sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
         slot_source: SlotSourceType,
         gwyneth_chain_ids: Vec<u64>,
-        provider_factory: ProviderFactoryReopener<Arc<DatabaseEnv>>,
-    ) -> eyre::Result<super::LiveBuilder<Arc<DatabaseEnv>, SlotSourceType>>
+        provider_factory: P,
+    ) -> eyre::Result<super::LiveBuilder<P, DB, SlotSourceType>>
     where
+        DB: Database + Clone + 'static,
+        P: DatabaseProviderFactory<DB> + StateProviderFactory + HeaderProvider + ProviderFactoryUnchecked<DB> + ConsistencyReopener<DB> + Clone + 'static,
         SlotSourceType: SlotSource,
     {
-        Ok(LiveBuilder::<Arc<DatabaseEnv>, SlotSourceType> {
+        let l2_info = Layer2Info::<P, DB>::new(
+            gwyneth_chain_ids.clone(),
+            provider_factory.clone(),
+        ).await?;
+
+        Ok(LiveBuilder::<P, DB, SlotSourceType> {
             watchdog_timeout: self.watchdog_timeout(),
             error_storage_path: self.error_storage_path.clone(),
             simulation_threads: self.simulation_threads,
-            order_input_config: OrderInputConfig::from_config(self),
+            order_input_config: OrderInputConfig::from_config(self)?,
             blocks_source: slot_source,
             chain_chain_spec: self.chain_spec()?,
             provider_factory,
@@ -226,7 +241,9 @@ impl BaseConfig {
             extra_rpc: RpcModule::new(()),
             sink_factory,
             builders: Vec::new(),
-            layer2_info: Layer2Info::<Arc<DatabaseEnv>>::new(gwyneth_chain_ids.clone(), create_gwyneth_providers(gwyneth_chain_ids)?).await?,
+
+            run_sparse_trie_prefetcher: self.root_hash_use_sparse_trie,
+            layer2_info: l2_info,
         })
     }
 
@@ -255,7 +272,9 @@ impl BaseConfig {
     }
 
     /// Open reth db and DB should be opened once per process but it can be cloned and moved to different threads.
-    pub fn provider_factory(&self) -> eyre::Result<ProviderFactoryReopener<Arc<DatabaseEnv>>> {
+    pub fn create_provider_factory(
+        &self,
+    ) -> eyre::Result<ProviderFactoryReopener<Arc<DatabaseEnv>>> {
         create_provider_factory(
             self.reth_datadir.as_deref(),
             self.reth_db_path.as_deref(),

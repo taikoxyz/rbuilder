@@ -2,8 +2,7 @@ use ahash::HashMap;
 use alloy_primitives::{Address, B256, U256};
 use reth_primitives::TransactionSignedEcRecovered;
 use revm::{
-    interpreter::{opcode, CallInputs, CallOutcome, Interpreter},
-    Database, EvmContext, Inspector, SyncDatabase,
+    interpreter::{opcode, CallInputs, CallOutcome, Interpreter}, EvmContext, Inspector, SyncDatabase,
 };
 use revm_inspectors::access_list::AccessListInspector;
 use revm_primitives::ChainAddress;

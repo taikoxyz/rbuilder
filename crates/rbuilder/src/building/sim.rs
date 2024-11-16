@@ -10,11 +10,9 @@ use crate::{
 use ahash::{HashMap, HashSet};
 use alloy_primitives::{Address, B256};
 use rand::seq::SliceRandom;
-use reth::providers::ProviderFactory;
-use reth_db::database::Database;
 use reth_errors::ProviderError;
 use reth_payload_builder::database::SyncCachedReads as CachedReads;
-use reth_provider::StateProvider;
+use reth_provider::{StateProvider, StateProviderFactory};
 use revm_primitives::ChainAddress;
 use std::{
     cmp::{max, min, Ordering},
@@ -69,9 +67,9 @@ pub struct SimulatedResult {
 
 // @Feat replaceable orders
 #[derive(Debug)]
-pub struct SimTree<DB> {
+pub struct SimTree<P> {
     // fields for nonce management
-    nonce_cache: NonceCache<DB>,
+    nonce_cache: NonceCache<P>,
 
     sims: HashMap<SimulationId, SimulatedResult>,
     sims_that_update_one_nonce: HashMap<NonceKey, SimulationId>,
@@ -89,9 +87,12 @@ enum OrderNonceState {
     Ready(Vec<Order>),
 }
 
-impl<DB: Database> SimTree<DB> {
-    pub fn new(provider_factory: HashMap<u64, ProviderFactory<DB>>, parent_block: HashMap<u64, B256>) -> Self {
-        let nonce_cache = NonceCache::new(provider_factory, parent_block);
+impl<P> SimTree<P>
+where
+    P: StateProviderFactory + Clone + 'static,
+{
+    pub fn new(provider: HashMap<u64, P>, parent_block: HashMap<u64, B256>) -> Self {
+        let nonce_cache = NonceCache::new(provider, parent_block);
         Self {
             nonce_cache,
             sims: HashMap::default(),
@@ -311,14 +312,16 @@ impl<DB: Database> SimTree<DB> {
 /// Non-interactive usage of sim tree that will simply simulate all orders.
 /// `randomize_insertion` is used to debug if sim tree works correctly when orders are inserted in a different order
 /// outputs should be independent of this arg.
-pub fn simulate_all_orders_with_sim_tree<DB: Database + Clone>(
-    provider_factories: HashMap<u64, ProviderFactory<DB>>,
+pub fn simulate_all_orders_with_sim_tree<P>(
+    provider_factories: HashMap<u64, P>,
     ctx: &BlockBuildingContext,
     orders: &[Order],
     randomize_insertion: bool,
-) -> Result<(Vec<SimulatedOrder>, Vec<OrderErr>), CriticalCommitOrderError> {
+) -> Result<(Vec<SimulatedOrder>, Vec<OrderErr>), CriticalCommitOrderError>
+where
+    P: StateProviderFactory + Clone + 'static,
+{
     let parent_block_hashes = ctx.chains.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect();
-
     let mut sim_tree = SimTree::new(provider_factories.clone(), parent_block_hashes);
 
     let mut orders = orders.to_vec();

@@ -362,7 +362,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "auto_impl",
- "dashmap 6.0.1",
+ "dashmap 6.1.0",
  "futures",
  "futures-utils-wasm",
  "lru",
@@ -2122,6 +2122,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1137cd7e7fc0fb5d3c5a8678be38ec56e819125d8d7907411fe24ccb943faca8"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2394,9 +2407,9 @@ dependencies = [
 
 [[package]]
 name = "dashmap"
-version = "6.0.1"
+version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "804c8821570c3f8b70230c2ba75ffa5c0f9a4189b9a432b6656c536712acae28"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
 dependencies = [
  "cfg-if",
  "crossbeam-utils",
@@ -2962,7 +2975,7 @@ dependencies = [
 [[package]]
 name = "eth-sparse-mpt"
 version = "0.1.0"
-source = "git+https://github.com/flashbots/eth-sparse-mpt?rev=664759b#664759b53d92e64d9a2e902100691b7ff4945ece"
+source = "git+https://github.com/flashbots/eth-sparse-mpt?rev=5d0da73#5d0da73e90933a899bad63da18e115fc806adf01"
 dependencies = [
  "alloy-primitives 0.8.7",
  "alloy-rlp",
@@ -5319,9 +5332,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.155"
+version = "0.2.161"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97b3888a4aecf77e811145cadf6eef5901f4782c53886191b2f693f24761847c"
+checksum = "8e9489c2807c139ffd9c1794f4af0ebe86a828db53ecdc7fea2111d0fed085d1"
 
 [[package]]
 name = "libgit2-sys"
@@ -7606,9 +7619,11 @@ dependencies = [
  "built",
  "clap",
  "criterion",
+ "crossbeam",
  "crossbeam-queue",
  "csv",
  "ctor",
+ "dashmap 6.1.0",
  "derivative",
  "eth-sparse-mpt",
  "ethereum-consensus",
@@ -7635,6 +7650,7 @@ dependencies = [
  "mev-share-sse",
  "mockall",
  "once_cell",
+ "parking_lot 0.12.3",
  "primitive-types",
  "priority-queue",
  "prometheus",
@@ -8927,7 +8943,7 @@ source = "git+https://github.com/taikoxyz/gwyneth?branch=gwyneth#b9f213f73bff01b
 dependencies = [
  "bitflags 2.6.0",
  "byteorder",
- "dashmap 6.0.1",
+ "dashmap 6.1.0",
  "derive_more 1.0.0",
  "indexmap 2.6.0",
  "parking_lot 0.12.3",
@@ -9488,7 +9504,7 @@ source = "git+https://github.com/taikoxyz/gwyneth?branch=gwyneth#b9f213f73bff01b
 dependencies = [
  "alloy-rpc-types-engine",
  "auto_impl",
- "dashmap 6.0.1",
+ "dashmap 6.1.0",
  "itertools 0.13.0",
  "metrics",
  "once_cell",
@@ -9558,6 +9574,25 @@ dependencies = [
  "reth-codecs",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "reth-rbuilder"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "eyre",
+ "libc",
+ "rbuilder",
+ "reth",
+ "reth-cli-util",
+ "reth-db-api",
+ "reth-node-builder",
+ "reth-node-ethereum",
+ "reth-provider",
+ "tikv-jemallocator",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

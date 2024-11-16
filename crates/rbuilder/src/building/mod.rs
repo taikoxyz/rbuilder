@@ -12,7 +12,9 @@ pub mod testing;
 pub mod tracers;
 pub use block_orders::BlockOrders;
 use eth_sparse_mpt::SparseTrieSharedCache;
+use reth_db::Database;
 use reth_primitives::proofs::calculate_requests_root;
+use reth_provider::{DatabaseProviderFactory, StateProviderFactory};
 use revm_primitives::ChainAddress;
 
 use crate::{
@@ -29,7 +31,7 @@ use reth::{
         revm_primitives::InvalidTransaction, Address, BlobTransactionSidecar, Block, Head, Header,
         Receipt, Receipts, SealedBlock, Withdrawals, EMPTY_OMMER_ROOT_HASH, U256,
     },
-    providers::{ExecutionOutcome, ProviderFactory},
+    providers::ExecutionOutcome,
     rpc::types::beacon::events::PayloadAttributesEvent,
     tasks::pool::BlockingTaskPool,
 };
@@ -48,7 +50,12 @@ use revm::{
     primitives::{BlobExcessGasAndPrice, BlockEnv, CfgEnvWithHandlerCfg, SpecId},
 };
 use serde::Deserialize;
-use std::{hash::Hash, str::FromStr, sync::Arc};
+use std::{
+    hash::Hash,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 use time::OffsetDateTime;
 
@@ -498,6 +505,7 @@ pub struct FinalizeResult {
     pub cached_reads: CachedReads,
     // sidecars for all txs in SealedBlock
     pub txs_blob_sidecars: Vec<Arc<BlobTransactionSidecar>>,
+    pub root_hash_time: Duration,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -679,14 +687,18 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
     // Brecht: Builds actual block
     #[allow(clippy::too_many_arguments)]
-    pub fn finalize<DB: reth_db::database::Database + Clone + 'static>(
+    pub fn finalize<P, DB>(
         self,
         state: &mut BlockState,
         ctx: &BlockBuildingContext,
-        provider_factory: ProviderFactory<DB>,
+        provider: P,
         root_hash_config: RootHashConfig,
         root_hash_task_pool: BlockingTaskPool,
-    ) -> Result<FinalizeResult, FinalizeError> {
+    ) -> Result<FinalizeResult, FinalizeError>
+    where
+        DB: Database + Clone + 'static,
+        P: DatabaseProviderFactory<DB> + StateProviderFactory + Clone + 'static,
+    {
         let ctx = &ctx.chains[&ctx.parent_chain_id];
         let (withdrawals_root, withdrawals) = {
             let mut db = state.new_db_ref();
@@ -762,18 +774,20 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             .block_logs_bloom(block_number)
             .expect("Number is in range");
 
+        let start = Instant::now();
         // Brecht: state root calculation
         // TODO Brecht: Fix
         let mut root_hash_config = root_hash_config;
         root_hash_config.mode = RootHashMode::IgnoreParentHash;
         let state_root = calculate_state_root(
-            provider_factory,
+            provider,
             ctx.attributes.parent,
             &execution_outcome,
             root_hash_task_pool,
             ctx.shared_sparse_mpt_cache.clone(),
             root_hash_config,
         )?;
+        let root_hash_time = start.elapsed();
 
         // create the block header
         let transactions_root = proofs::calculate_transaction_root(&self.executed_tx);
@@ -849,6 +863,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             sealed_block: block.seal_slow(),
             cached_reads,
             txs_blob_sidecars,
+            root_hash_time,
         })
     }
 

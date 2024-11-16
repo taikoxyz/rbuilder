@@ -1,5 +1,5 @@
 
-use alloy_network::{EthereumWallet, NetworkWallet, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_signer_local::PrivateKeySigner;

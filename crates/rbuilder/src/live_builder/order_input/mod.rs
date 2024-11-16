@@ -12,12 +12,9 @@ use self::{
     orderpool::{OrderPool, OrderPoolSubscriptionId},
     replaceable_order_sink::ReplaceableOrderSink,
 };
-use crate::{
-    primitives::{serialize::CancelShareBundle, BundleReplacementKey, Order},
-    utils::ProviderFactoryReopener,
-};
+use crate::primitives::{serialize::CancelShareBundle, BundleReplacementKey, Order};
 use jsonrpsee::RpcModule;
-use reth_db::database::Database;
+use reth_provider::StateProviderFactory;
 use std::{
     net::Ipv4Addr,
     path::PathBuf,
@@ -126,17 +123,20 @@ impl OrderInputConfig {
             input_channel_buffer_size,
         }
     }
-    pub fn from_config(config: &BaseConfig) -> Self {
-        OrderInputConfig {
+
+    pub fn from_config(config: &BaseConfig) -> eyre::Result<Self> {
+        let el_node_ipc_path = expand_path(config.el_node_ipc_path.clone())?;
+
+        Ok(OrderInputConfig {
             ignore_cancellable_orders: config.ignore_cancellable_orders,
             ignore_blobs: config.ignore_blobs,
-            ipc_path: config.el_node_ipc_path.clone(),
+            ipc_path: el_node_ipc_path,
             server_port: config.jsonrpc_server_port,
             server_ip: config.jsonrpc_server_ip(),
             serve_max_connections: 4096,
             results_channel_timeout: Duration::from_millis(50),
             input_channel_buffer_size: 10_000,
-        }
+        })
     }
 
     pub fn default_e2e() -> Self {
@@ -179,12 +179,15 @@ impl ReplaceableOrderPoolCommand {
 /// - Clean up task to remove old stuff.
 ///
 /// @Pending reengineering to modularize rpc, extra_rpc here is a patch to upgrade the created rpc server.
-pub async fn start_orderpool_jobs<DB: Database + Clone + 'static>(
+pub async fn start_orderpool_jobs<P>(
     config: OrderInputConfig,
-    provider_factory: ProviderFactoryReopener<DB>,
+    provider_factory: P,
     extra_rpc: RpcModule<()>,
     global_cancel: CancellationToken,
-) -> eyre::Result<(JoinHandle<()>, OrderPoolSubscriber)> {
+) -> eyre::Result<(JoinHandle<()>, OrderPoolSubscriber)>
+where
+    P: StateProviderFactory + 'static,
+{
     println!("Dani debug: start_orderpool_jobs");
     if config.ignore_cancellable_orders {
         warn!("ignore_cancellable_orders is set to true, some order input is ignored");
@@ -291,4 +294,12 @@ pub async fn start_orderpool_jobs<DB: Database + Clone + 'static>(
     });
 
     Ok((handle, subscriber))
+}
+
+pub fn expand_path(path: PathBuf) -> eyre::Result<PathBuf> {
+    let path_str = path
+        .to_str()
+        .ok_or_else(|| eyre::eyre!("Invalid UTF-8 in path"))?;
+
+    Ok(PathBuf::from(shellexpand::full(path_str)?.into_owned()))
 }

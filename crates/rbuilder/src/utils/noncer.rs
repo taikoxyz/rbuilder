@@ -1,8 +1,8 @@
 use ahash::HashMap;
-use alloy_primitives::{Address, B256};
-use reth::providers::{ProviderFactory, StateProviderBox};
-use reth_db::database::Database;
+use alloy_primitives::B256;
+use reth::providers::StateProviderBox;
 use reth_errors::ProviderResult;
+use reth_provider::StateProviderFactory;
 use revm_primitives::ChainAddress;
 use std::sync::{Arc, Mutex};
 
@@ -13,16 +13,19 @@ use std::sync::{Arc, Mutex};
 /// - For every context where the nonce is needed call NonceCache::get_ref and call NonceCacheRef::nonce all the times you need.
 ///   Neither NonceCache or NonceCacheRef are clonable, the clone of shared info happens on get_ref where we clone the internal cache.
 #[derive(Debug)]
-pub struct NonceCache<DB> {
-    provider_factory: HashMap<u64, ProviderFactory<DB>>,
+pub struct NonceCache<P> {
+    provider_factory: HashMap<u64, P>,
     // We have to use Arc<Mutex here because Rc are not Send (so can't be used in futures)
     // and borrows don't work when nonce cache is a field in a struct.
     cache: Arc<Mutex<HashMap<ChainAddress, u64>>>,
     block: HashMap<u64, B256>,
 }
 
-impl<DB: Database> NonceCache<DB> {
-    pub fn new(provider_factory: HashMap<u64, ProviderFactory<DB>>, block: HashMap<u64, B256>) -> Self {
+impl<P> NonceCache<P>
+where
+    P: StateProviderFactory,
+{
+    pub fn new(provider_factory: HashMap<u64, P>, block: HashMap<u64, B256>) -> Self {
         Self {
             provider_factory,
             cache: Arc::new(Mutex::new(HashMap::default())),

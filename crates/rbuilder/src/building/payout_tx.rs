@@ -1,7 +1,7 @@
 use crate::utils::Signer;
 
-use super::{BlockBuildingContext, BlockState, ChainBlockBuildingContext};
-use alloy_primitives::{Address, U256};
+use super::{BlockBuildingContext, BlockState};
+use alloy_primitives::U256;
 use reth_chainspec::ChainSpec;
 use reth_errors::ProviderError;
 use reth_primitives::{

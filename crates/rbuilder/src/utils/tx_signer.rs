@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{B256, U256};
 use reth_primitives::{
     public_key_to_address, Signature, Transaction, TransactionSigned, TransactionSignedEcRecovered,
 };

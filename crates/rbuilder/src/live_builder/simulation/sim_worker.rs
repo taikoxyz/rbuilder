@@ -5,14 +5,13 @@ use crate::{
     },
     live_builder::simulation::CurrentSimulationContexts,
     telemetry,
-    telemetry::add_sim_thread_utilisation_timings,
-    utils::ProviderFactoryReopener,
+    telemetry::add_sim_thread_utilisation_timings, utils::provider_factory_reopen::ConsistencyReopener,
 };
 use ahash::HashMap;
-use reth_db::database::Database;
 use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_provider::StateProvider;
 use revm_primitives::ChainAddress;
+use reth_provider::StateProviderFactory;
 use std::{
     sync::{Arc, Mutex},
     thread::sleep,
@@ -24,12 +23,15 @@ use tracing::error;
 /// Function that continuously looks for a SimulationContext on ctx and when it finds one it polls its "request for simulation" channel (SimulationContext::requests).
 /// When the channel closes it goes back to waiting for a new SimulationContext.
 /// It's blocking so it's expected to run in its own thread.
-pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
+pub fn run_sim_worker<P, DB>(
     worker_id: usize,
     ctx: Arc<Mutex<CurrentSimulationContexts>>,
-    provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
+    provider_factory: HashMap<u64, P>,
     global_cancellation: CancellationToken,
-) {
+) where
+    P: StateProviderFactory + ConsistencyReopener<DB>,
+    DB: reth_db::Database,  // Added this trait bound
+{
     loop {
         if global_cancellation.is_cancelled() {
             return;
@@ -39,11 +41,9 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                 let ctxs = ctx.lock().unwrap();
                 ctxs.contexts.iter().next().map(|(_, c)| c.clone())
             };
-            // @Perf chose random context so its more fair when we have 2 instead of 1
             if let Some(ctx) = next_ctx {
                 break ctx;
             } else {
-                // contexts are created for a duration of the slot so this is not a problem
                 sleep(Duration::from_millis(50));
             }
             sleep(Duration::from_millis(500));
@@ -51,17 +51,28 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
 
         println!("Brecht: simming 3");
 
-        let mut provider_factories = HashMap::default();
+        // Create state providers directly instead of storing intermediate ProviderFactory
+        let mut state_providers: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
         for (chain_id, provider_factory) in provider_factory.iter() {
             match provider_factory.check_consistency_and_reopen_if_needed(
                 current_sim_context.block_ctx.chains[chain_id].block_env.number.to(),
             ) {
-                Ok(provider_factory) => {
-                    provider_factories.insert(*chain_id, provider_factory);
+                Ok(reopened_factory) => {
+                    // Immediately create the StateProvider from the reopened factory
+                    match reopened_factory.history_by_block_hash(
+                        current_sim_context.block_ctx.chains[chain_id].attributes.parent
+                    ) {
+                        Ok(provider) => {
+                            state_providers.insert(*chain_id, Arc::from(provider));
+                        },
+                        Err(err) => {
+                            error!(?err, "Error while creating state provider");
+                            continue;
+                        }
+                    }
                 },
                 Err(err) => {
                     error!(?err, "Error while reopening provider factory");
-                    // Decide whether to continue or break
                     continue;
                 }
             }
@@ -73,17 +84,8 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             let sim_thread_wait_time = last_sim_finished.elapsed();
             let sim_start = Instant::now();
 
-            let state_for_sim = provider_factories.iter().map(|(chain_id, provider_factory)| {
-                (*chain_id, Arc::<dyn StateProvider>::from(
-                    provider_factory.history_by_block_hash(
-                        current_sim_context.block_ctx.chains[chain_id].attributes.parent
-                    ).expect("failed to open state provider")
-                ))
-            }).collect();
-
             let start_time = Instant::now();
-
-            let mut block_state = BlockState::new_arc(state_for_sim).with_cached_reads(cached_reads);
+            let mut block_state = BlockState::new_arc(state_providers.clone()).with_cached_reads(cached_reads);
             let sim_result = simulate_order(
                 task.parents.clone(),
                 task.order.clone(),
@@ -118,7 +120,6 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                 }
                 Err(err) => {
                     error!(?err, "Critical error while simulating order");
-                    // @Metric
                     break;
                 }
             }

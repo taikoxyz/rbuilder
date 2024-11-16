@@ -1,7 +1,6 @@
 use std::{cmp::Ordering, collections::hash_map::Entry};
 
 use ahash::{HashMap, HashSet};
-use alloy_primitives::Address;
 use priority_queue::PriorityQueue;
 use revm_primitives::ChainAddress;
 

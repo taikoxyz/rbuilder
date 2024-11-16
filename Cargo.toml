@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/rbuilder",
+    "crates/reth-rbuilder",
     "crates/rbuilder/src/test_utils",
     "crates/rbuilder/src/telemetry/metrics_macros"
 ]
@@ -23,12 +24,16 @@ edition = "2021"
 
 [workspace.dependencies]
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
+reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
+reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-libmdbx = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
+reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
+reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
@@ -38,6 +43,13 @@ reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6", f
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
+clap = { version = "4.4.3" }
+eyre = { version = "0.6.8" }
+libc = { version = "0.2.161" }
+tikv-jemallocator = { version = "0.5.4" }
+tokio = "1.38.0"
+tokio-util = "0.7.11"
+tracing = "0.1.37"
 
 # version is copied from reth  "v1.0.6" dependencies
 revm = { version = "14.0.0", features = [
@@ -86,12 +98,18 @@ revm-inspectors = { git = "https://github.com/taikoxyz/revm-inspectors.git", bra
 
 [patch."https://github.com/paradigmxyz/reth"]
 reth = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-cli-util = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth"}
 reth-db = {git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-db-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-execution-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-trie-db = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 reth-db-common = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 reth-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 reth-libmdbx = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 reth-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 reth-node-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-node-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-node-ethereum = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 reth-trie = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 reth-trie-parallel = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 reth-basic-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
@@ -101,6 +119,3 @@ reth-provider = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth
 reth-chainspec = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 reth-evm = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 reth-evm-ethereum = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-db-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-execution-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-trie-db = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }

@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{marker::PhantomData, sync::Arc, time::Duration};
 
 use crate::{
     building::{
@@ -8,14 +8,14 @@ use crate::{
         BlockBuildingContext,
     },
     live_builder::{payload_events::MevBoostSlotData, simulation::SlotOrderSimResults},
-    utils::ProviderFactoryReopener,
+    roothash::run_trie_prefetcher, utils::{provider_factory_reopen::ConsistencyReopener, ProviderFactoryUnchecked},
 };
 use ahash::HashMap;
-use reth_db::database::Database;
-use reth_provider::ProviderFactory;
+use reth_db::Database;
+use reth_provider::{DatabaseProviderFactory, StateProviderFactory};
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace};
+use tracing::{error, trace};
 
 use super::{
     order_input::{
@@ -26,21 +26,28 @@ use super::{
 };
 
 #[derive(Debug)]
-pub struct BlockBuildingPool<DB> {
-    provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
-    builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>,
+pub struct BlockBuildingPool<P, DB> {
+    provider_factory: HashMap<u64, P>,
+    builders: Vec<Arc<dyn BlockBuildingAlgorithm<P, DB>>>,
     sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
     orderpool_subscribers: HashMap<u64, order_input::OrderPoolSubscriber>,
-    order_simulation_pool: OrderSimulationPool<DB>,
+    order_simulation_pool: OrderSimulationPool<P, DB>,
+    run_sparse_trie_prefetcher: bool,
+    phantom: PhantomData<DB>,
 }
 
-impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
+impl<P, DB> BlockBuildingPool<P, DB>
+where
+    DB: Database + Clone + 'static,
+    P: DatabaseProviderFactory<DB> + StateProviderFactory + ConsistencyReopener<DB> + ProviderFactoryUnchecked<DB> + Clone + 'static,
+{
     pub fn new(
-        provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
-        builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>,
+        provider_factory: HashMap<u64, P>,
+        builders: Vec<Arc<dyn BlockBuildingAlgorithm<P, DB>>>,
         sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
         orderpool_subscribers: HashMap<u64, order_input::OrderPoolSubscriber>,
-        order_simulation_pool: OrderSimulationPool<DB>,
+        order_simulation_pool: OrderSimulationPool<P, DB>,
+        run_sparse_trie_prefetcher: bool,
     ) -> Self {
         BlockBuildingPool {
             provider_factory,
@@ -48,6 +55,8 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
             sink_factory,
             orderpool_subscribers,
             order_simulation_pool,
+            run_sparse_trie_prefetcher,
+            phantom: PhantomData,
         }
     }
 
@@ -59,7 +68,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
         global_cancellation: CancellationToken,
         max_time_to_build: Duration,
     ) {
-        let block_cancellation = global_cancellation.child_token();
+        let block_cancellation: CancellationToken = global_cancellation.child_token();
 
         let cancel = block_cancellation.clone();
         tokio::spawn(async move {
@@ -103,24 +112,26 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
         // Brecht: start building
         let builder_sink = self.sink_factory.create_sink(slot_data, cancel.clone());
         let (broadcast_input, _) = broadcast::channel(10_000);
-
-        let provider_factories: HashMap<u64, ProviderFactory<DB>> = self
-            .provider_factory.iter().map(|(chain_id, provider_factory)| {
-                let block_number = ctx.chains[chain_id].block_env.number.to::<u64>();
-                match provider_factory.check_consistency_and_reopen_if_needed(block_number)
-                {
-                    Ok(provider_factory) => (*chain_id, provider_factory),
-                    Err(err) => {
-                        panic!("Error while reopening provider factory");
-                    }
+    
+        // Get provider factories for each chain
+        let provider_factories: HashMap<u64, P> = self
+        .provider_factory
+        .iter()
+        .filter_map(|(chain_id, provider_factory)| {
+            let block_number = ctx.chains[chain_id].block_env.number.to::<u64>();
+            match provider_factory.check_consistency_and_reopen_if_needed(block_number) {
+                Ok(_) => Some((*chain_id, provider_factory.clone())),  // Keep original provider type
+                Err(err) => {
+                    error!(?err, "Error while reopening provider factory");
+                    None
                 }
-            }).collect();
+            }
+        })
+        .collect();
 
         for builder in self.builders.iter() {
-            //let builder_name = builder.name();
-            //debug!(block = block_number, builder_name, "Spawning builder job");
-            let input = BlockBuildingAlgorithmInput::<DB> {
-                provider_factory: provider_factories.clone(),
+            let input = BlockBuildingAlgorithmInput {
+                provider_factory: provider_factories.clone(),  // Now using the correct type P
                 ctx: ctx.clone(),
                 input: broadcast_input.subscribe(),
                 sink: builder_sink.clone(),
@@ -129,8 +140,29 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
             let builder = builder.clone();
             tokio::task::spawn_blocking(move || {
                 builder.build_blocks(input);
-                //debug!(block = block_number, builder_name, "Stopped builder job");
             });
+        }
+
+        if self.run_sparse_trie_prefetcher {
+            let input = broadcast_input.subscribe();
+            
+            // Spawn a prefetcher task for each chain
+            for (chain_id, provider) in self.provider_factory.clone() {
+                let chain_input = input.resubscribe();
+                let chain_cancel = cancel.clone();
+                let chain_ctx = ctx.clone();
+                
+                tokio::task::spawn_blocking(move || {
+                    run_trie_prefetcher(
+                        chain_ctx.chains[&chain_id].attributes.parent,
+                        chain_ctx.chains[&chain_id].shared_sparse_mpt_cache.clone(),
+                        provider,
+                        chain_input,
+                        chain_cancel,
+                    );
+                    //debug!(chain = chain_id, "Stopped trie prefetcher job");
+                });
+            }
         }
 
         tokio::spawn(multiplex_job(input.orders, broadcast_input));
