@@ -33,6 +33,36 @@ pub struct ProviderFactoryReopener<DB> {
     testing_mode: bool,
 }
 
+pub trait ConsistencyReopener<DB> {
+    fn check_consistency_and_reopen_if_needed(
+        &self,
+        block_number: u64,
+    ) -> eyre::Result<ProviderFactory<DB>>;
+}
+
+// Implement for ProviderFactoryReopener
+impl<DB: Database + Clone> ConsistencyReopener<DB> for ProviderFactoryReopener<DB> {
+    fn check_consistency_and_reopen_if_needed(
+        &self,
+        block_number: u64,
+    ) -> eyre::Result<ProviderFactory<DB>> {
+        // Call the existing implementation and just return Ok(()) since we don't need the provider
+        self.check_consistency_and_reopen_if_needed()
+    }
+}
+
+// Needed due to the generalized 'P' instead of 'ProviderFactoryReopener<DB>
+pub trait ProviderFactoryUnchecked<DB> {
+    fn provider_factory_unchecked(&self) -> ProviderFactory<DB>;
+}
+
+// Implementation for ProviderFactoryReopener
+impl<DB: Database + Clone> ProviderFactoryUnchecked<DB> for ProviderFactoryReopener<DB> {
+    fn provider_factory_unchecked(&self) -> ProviderFactory<DB> {
+        self.provider_factory.lock().unwrap().clone()
+    }
+}
+
 impl<DB: Database + Clone> ProviderFactoryReopener<DB> {
     pub fn new(db: DB, chain_spec: Arc<ChainSpec>, static_files_path: PathBuf) -> RethResult<Self> {
         let provider_factory = ProviderFactory::new(

@@ -27,6 +27,8 @@ pub enum RelayError {
     ConnectionError,
     #[error("Internal Error")]
     InternalError,
+    #[error("Proposal error: {0}")]
+    ProposalError(String),
 }
 
 impl Debug for RelayError {

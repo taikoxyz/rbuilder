@@ -10,6 +10,7 @@ mod store;
 
 pub use backtest_build_block::run_backtest_build_block;
 pub use backtest_build_range::run_backtest_build_range;
+use revm_primitives::ChainAddress;
 use std::collections::HashSet;
 
 use crate::primitives::{OrderId, OrderReplacementKey};
@@ -190,16 +191,17 @@ impl BlockData {
         if let BlockTransactions::Full(txs) = &self.onchain_block.transactions {
             txs.iter()
                 .filter(|tx| {
-                    !available_accounts
-                        .iter()
-                        .any(|x| x.nonce == tx.nonce && x.address == tx.from)
+                    !available_accounts.iter().any(|x| {
+                        x.nonce == tx.nonce
+                            && x.address == ChainAddress(tx.chain_id.unwrap(), tx.from)
+                    })
                 })
                 .map(|tx| {
                     (
                         tx.hash,
                         AccountNonce {
                             nonce: tx.nonce,
-                            account: tx.from,
+                            account: ChainAddress(tx.chain_id.unwrap(), tx.from),
                         },
                     )
                 })

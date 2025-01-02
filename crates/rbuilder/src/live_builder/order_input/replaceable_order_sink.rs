@@ -44,6 +44,6 @@ impl ReplaceableOrderSink for ReplaceableOrderPrinter {
 
 impl Drop for ReplaceableOrderPrinter {
     fn drop(&mut self) {
-        println!("OrderPrinter Dropped");
+        println!("[rb] OrderPrinter Dropped");
     }
 }

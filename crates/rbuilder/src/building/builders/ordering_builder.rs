@@ -5,10 +5,10 @@
 //! The described algorithm is ran continuously adding new SimulatedOrders (they arrive on real time!) on each iteration until we run out of time (slot ends).
 //! Sorting criteria are described on [`Sorting`].
 //! For some more details see [`OrderingBuilderConfig`]
+use crate::building::block_orders_from_sim_orders;
 use crate::roothash::RootHashConfig;
 use crate::{
     building::{
-        block_orders_from_sim_orders,
         builders::{
             block_building_helper::BlockBuildingHelper, LiveBuilderInput, OrderIntakeConsumer,
         },
@@ -20,12 +20,18 @@ use ahash::{HashMap, HashSet};
 use alloy_primitives::Address;
 use reth::tasks::pool::BlockingTaskPool;
 use reth_db::database::Database;
-use reth_payload_builder::database::CachedReads;
-use reth_provider::{DatabaseProviderFactory, StateProviderFactory};
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
+use reth_provider::{
+    DatabaseProviderFactory, StateProviderBox, StateProviderFactory,
+};
+use revm_primitives::ChainAddress;
 use serde::Deserialize;
 use std::{
     marker::PhantomData,
-    time::{Duration, Instant},
+    {
+        thread::sleep,
+        time::{Duration, Instant},
+    },
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info_span, trace};
@@ -69,15 +75,20 @@ where
     P: DatabaseProviderFactory<DB> + StateProviderFactory + Clone + 'static,
 {
     let mut order_intake_consumer = OrderIntakeConsumer::new(
-        input.provider.clone(),
+        input.providers.clone(),
         input.input,
-        input.ctx.attributes.parent,
+        input
+            .ctx
+            .chains
+            .iter()
+            .map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent))
+            .collect(),
         config.sorting,
         &input.sbundle_mergeabe_signers,
     );
 
     let mut builder = OrderingBuilderContext::new(
-        input.provider.clone(),
+        input.providers.clone(),
         input.root_hash_task_pool,
         input.builder_name,
         input.ctx,
@@ -89,6 +100,8 @@ where
     let mut removed_orders = Vec::new();
     let mut use_suggested_fee_recipient_as_coinbase = config.coinbase_payment;
     'building: loop {
+        sleep(Duration::from_millis(1000));
+
         if input.cancel.is_cancelled() {
             break 'building;
         }
@@ -139,18 +152,34 @@ where
     DB: Database + Clone + 'static,
     P: DatabaseProviderFactory<DB> + StateProviderFactory + Clone + 'static,
 {
+    println!("[rb] backtest_simulate_block");
+
+    let chain_id = input.ctx.parent_chain_id;
+
     let use_suggested_fee_recipient_as_coinbase = ordering_config.coinbase_payment;
-    let state_provider = input
-        .provider
-        .history_by_block_number(input.ctx.block_env.number.to::<u64>() - 1)?;
+    let state_providers = input
+        .providers
+        .iter()
+        .map(|(chain_id, provider)| {
+            (
+                *chain_id,
+                provider
+                    .history_by_block_number(
+                        input.ctx.chains[chain_id].block_env.number.to::<u64>() - 1,
+                    )
+                    .expect("Failed to get state provider by block number"),
+            )
+        })
+        .collect::<HashMap<u64, StateProviderBox>>();
+
     let block_orders = block_orders_from_sim_orders(
         input.sim_orders,
         ordering_config.sorting,
-        &state_provider,
+        &state_providers,
         &input.sbundle_mergeabe_signers,
     )?;
     let mut builder = OrderingBuilderContext::new(
-        input.provider.clone(),
+        input.providers.clone(),
         BlockingTaskPool::build()?,
         input.builder_name,
         input.ctx.clone(),
@@ -178,7 +207,7 @@ where
 
 #[derive(Debug)]
 pub struct OrderingBuilderContext<P, DB> {
-    provider: P,
+    providers: HashMap<u64, P>,
     root_hash_task_pool: BlockingTaskPool,
     builder_name: String,
     ctx: BlockBuildingContext,
@@ -201,7 +230,7 @@ where
     P: DatabaseProviderFactory<DB> + StateProviderFactory + Clone + 'static,
 {
     pub fn new(
-        provider: P,
+        providers: HashMap<u64, P>,
         root_hash_task_pool: BlockingTaskPool,
         builder_name: String,
         ctx: BlockBuildingContext,
@@ -209,7 +238,7 @@ where
         root_hash_config: RootHashConfig,
     ) -> Self {
         Self {
-            provider,
+            providers,
             root_hash_task_pool,
             builder_name,
             ctx,
@@ -249,15 +278,22 @@ where
         let build_start = Instant::now();
 
         // Create a new ctx to remove builder_signer if necessary
-        let mut new_ctx = self.ctx.clone();
-        if use_suggested_fee_recipient_as_coinbase {
-            new_ctx.modify_use_suggested_fee_recipient_as_coinbase();
+        let new_ctx = self.ctx.clone();
+        for (chain_id, provider_factory) in self.providers.iter() {
+            if use_suggested_fee_recipient_as_coinbase {
+                self.ctx
+                    .chains
+                    .get_mut(chain_id)
+                    .unwrap()
+                    .modify_use_suggested_fee_recipient_as_coinbase();
+            }
         }
+
         self.failed_orders.clear();
         self.order_attempts.clear();
 
         let mut block_building_helper = BlockBuildingHelperFromProvider::new(
-            self.provider.clone(),
+            self.providers.clone(),
             self.root_hash_task_pool.clone(),
             self.root_hash_config.clone(),
             new_ctx,
@@ -280,6 +316,9 @@ where
         mut block_orders: BlockOrders,
         build_start: Instant,
     ) -> eyre::Result<()> {
+        if !block_orders.get_all_orders().is_empty() {
+            println!("[rb] fill_orders: {:?}", block_orders);
+        }
         let mut order_attempts: HashMap<OrderId, usize> = HashMap::default();
         // @Perf when gas left is too low we should break.
         while let Some(sim_order) = block_orders.pop_order() {
@@ -303,7 +342,7 @@ where
                         .nonces_updated
                         .iter()
                         .map(|(account, nonce)| AccountNonce {
-                            account: *account,
+                            account: ChainAddress(res.order.chain_id().unwrap(), *account),
                             nonce: *nonce,
                         })
                         .collect();
@@ -379,7 +418,7 @@ where
 
     fn build_blocks(&self, input: BlockBuildingAlgorithmInput<P>) {
         let live_input = LiveBuilderInput {
-            provider: input.provider,
+            providers: input.providers.clone(),
             root_hash_config: self.root_hash_config.clone(),
             root_hash_task_pool: self.root_hash_task_pool.clone(),
             ctx: input.ctx.clone(),

@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use clap::Parser;
+use gwyneth::exex::L1ParentStates;
 use reth_db::Database;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_provider::{DatabaseProviderFactory, HeaderProvider, StateProviderFactory};
 use serde::de::DeserializeOwned;
 use std::fmt::Debug;
@@ -18,7 +19,7 @@ use crate::{
     utils::build_info::Version,
 };
 
-use super::{base_config::BaseConfig, LiveBuilder};
+use super::{base_config::BaseConfig, config::RethInput, gwyneth::{EthApiStream, GwynethMempoolReciever}, LiveBuilder};
 
 #[derive(Parser, Debug)]
 enum Cli {
@@ -47,7 +48,7 @@ pub trait LiveBuilderConfig: Debug + DeserializeOwned + Sync {
     /// Desugared from async to future to keep clippy happy
     fn new_builder<P, DB>(
         &self,
-        provider: P,
+        reth_input: RethInput<P>,
         cancellation_token: CancellationToken,
     ) -> impl std::future::Future<Output = eyre::Result<LiveBuilder<P, DB, MevBoostSlotDataGenerator>>>
            + Send
@@ -78,7 +79,7 @@ where
         Cli::Run(cli) => cli,
         Cli::Config(cli) => {
             let config: ConfigType = load_config_toml_and_env(cli.config)?;
-            println!("{:#?}", config);
+            println!("[rb] {:#?}", config);
             return Ok(());
         }
         Cli::Version => {
@@ -89,6 +90,7 @@ where
 
     let config: ConfigType = load_config_toml_and_env(cli.config)?;
     config.base_config().setup_tracing_subscriber()?;
+    println!("[rb] config from toml: {:?}", config);
 
     let cancel = CancellationToken::new();
 
@@ -103,8 +105,18 @@ where
         config.base_config().log_enable_dynamic,
     )
     .await?;
-    let provider = config.base_config().create_provider_factory()?;
-    let builder = config.new_builder(provider, cancel.clone()).await?;
+
+    let reth_intput = RethInput {
+        l1_provider: config.base_config().create_provider_reopener()?,
+        l2_providers: config.base_config().gwyneth_provider_reopeners()?,
+        l1_parents: L1ParentStates::default(),
+        l1_ethapi: None,
+        l2_ethapis: None,
+        l1_client: None,
+    };
+    let builder = config
+        .new_builder(reth_intput, cancel.clone())
+        .await?;
 
     let ctrlc = tokio::spawn(async move {
         ctrl_c().await.unwrap_or_default();

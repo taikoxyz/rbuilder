@@ -7,12 +7,14 @@ pub mod orderpool;
 pub mod replaceable_order_sink;
 pub mod rpc_server;
 pub mod txpool_fetcher;
+pub mod mempool_fetcher;
 
 use self::{
     orderpool::{OrderPool, OrderPoolSubscriptionId},
     replaceable_order_sink::ReplaceableOrderSink,
 };
-use crate::primitives::{serialize::CancelShareBundle, BundleReplacementKey, Order};
+use crate::{backtest::fetch::mempool, primitives::{serialize::CancelShareBundle, BundleReplacementKey, Order}};
+use futures::stream::Skip;
 use jsonrpsee::RpcModule;
 use reth_provider::StateProviderFactory;
 use std::{
@@ -25,7 +27,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, trace, warn};
 
-use super::base_config::BaseConfig;
+use super::{base_config::BaseConfig, gwyneth::EthApiStream};
 
 /// Thread safe access to OrderPool to get orderflow
 #[derive(Debug)]
@@ -95,8 +97,11 @@ pub struct OrderInputConfig {
     /// Timeout to wait when sending to that channel (after that the ReplaceableOrderPoolCommand is lost).
     results_channel_timeout: Duration,
     /// Size of the bounded channel.
-    input_channel_buffer_size: usize,
+    pub input_channel_buffer_size: usize,
+    /// Skip transactions or bundles of this chain
+    pub skip: bool,
 }
+
 pub const DEFAULT_SERVE_MAX_CONNECTIONS: u32 = 4096;
 pub const DEFAULT_RESULTS_CHANNEL_TIMEOUT: Duration = Duration::from_millis(50);
 pub const DEFAULT_INPUT_CHANNEL_BUFFER_SIZE: usize = 10_000;
@@ -111,6 +116,7 @@ impl OrderInputConfig {
         serve_max_connections: u32,
         results_channel_timeout: Duration,
         input_channel_buffer_size: usize,
+        skip: bool,
     ) -> Self {
         Self {
             ignore_cancellable_orders,
@@ -121,11 +127,16 @@ impl OrderInputConfig {
             serve_max_connections,
             results_channel_timeout,
             input_channel_buffer_size,
+            skip,
         }
     }
 
     pub fn from_config(config: &BaseConfig) -> eyre::Result<Self> {
-        let el_node_ipc_path = expand_path(config.el_node_ipc_path.clone())?;
+        // In-process case ipc should be default
+        let el_node_ipc_path = config
+            .el_node_ipc_path
+            .clone()
+            .map_or(PathBuf::default(), |p| expand_path(p).unwrap());
 
         Ok(OrderInputConfig {
             ignore_cancellable_orders: config.ignore_cancellable_orders,
@@ -136,6 +147,7 @@ impl OrderInputConfig {
             serve_max_connections: 4096,
             results_channel_timeout: Duration::from_millis(50),
             input_channel_buffer_size: 10_000,
+            skip: false,
         })
     }
 
@@ -149,6 +161,7 @@ impl OrderInputConfig {
             serve_max_connections: 4096,
             server_ip: Ipv4Addr::new(127, 0, 0, 1),
             server_port: 0,
+            skip: false,
         }
     }
 }
@@ -173,6 +186,7 @@ impl ReplaceableOrderPoolCommand {
     }
 }
 
+// Cecilia!
 /// Starts all the tokio tasks to handle order flow:
 /// - Mempool
 /// - RPC
@@ -182,12 +196,14 @@ impl ReplaceableOrderPoolCommand {
 pub async fn start_orderpool_jobs<P>(
     config: OrderInputConfig,
     provider_factory: P,
+    ethapi: Option<Arc<dyn EthApiStream>>,
     extra_rpc: RpcModule<()>,
     global_cancel: CancellationToken,
 ) -> eyre::Result<(JoinHandle<()>, OrderPoolSubscriber)>
 where
     P: StateProviderFactory + 'static,
 {
+    println!("[rb] Cecilia ==> start_orderpool_jobs");
     if config.ignore_cancellable_orders {
         warn!("ignore_cancellable_orders is set to true, some order input is ignored");
     }
@@ -205,6 +221,7 @@ where
     let clean_job = clean_orderpool::spawn_clean_orderpool_job(
         config.clone(),
         provider_factory,
+        ethapi.clone(),
         orderpool.clone(),
         global_cancel.clone(),
     )
@@ -216,12 +233,22 @@ where
         global_cancel.clone(),
     )
     .await?;
-    let txpool_fetcher = txpool_fetcher::subscribe_to_txpool_with_blobs(
-        config.clone(),
-        order_sender.clone(),
-        global_cancel.clone(),
-    )
-    .await?;
+    
+    let txpool_fetcher = match ethapi {
+        // In process handle
+        Some(ethapi) => mempool_fetcher::subscribe_to_mempool_with_blobs(
+            config.clone(),
+            ethapi,
+            order_sender.clone(),
+            global_cancel.clone(),
+        ).await?,
+        // IPC
+        None => txpool_fetcher::subscribe_to_txpool_with_blobs(
+            config.clone(),
+            order_sender.clone(),
+            global_cancel.clone(),
+        ).await?
+    };
 
     let handle = tokio::spawn(async move {
         info!("OrderPoolJobs: started");
@@ -237,6 +264,7 @@ where
                     if n == 0 {
                         break;
                     }
+                    println!("[rb] Dani debug: Received {} new commands", n);
                 },
             };
 
@@ -273,7 +301,12 @@ where
 
             {
                 let mut orderpool = orderpool.lock().unwrap();
+                println!(
+                    "Dani debug: Processing {} commands in OrderPool",
+                    new_commands.len()
+                );
                 orderpool.process_commands(new_commands.clone());
+                println!("[rb] Dani debug: Finished processing commands in OrderPool");
             }
             new_commands.clear();
         }

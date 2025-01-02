@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "crates/rbuilder",
-    "crates/reth-rbuilder",
+    "crates/gwyneth-rbuilder",
     "crates/rbuilder/src/test_utils",
     "crates/rbuilder/src/telemetry/metrics_macros"
 ]
@@ -23,8 +23,10 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
+gwyneth = { path = "../reth/crates/gwyneth" }
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
+reth-cli-commands = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
@@ -43,6 +45,13 @@ reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6", f
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
+clap = { version = "4.4.3" }
+eyre = { version = "0.6.8" }
+libc = { version = "0.2.161" }
+tikv-jemallocator = { version = "0.5.4" }
+tokio = "1.38.0"
+tokio-util = "0.7.11"
+tracing = "0.1.37"
 
 # version is copied from reth  "v1.0.6" dependencies
 revm = { version = "14.0.0", features = [
@@ -80,12 +89,36 @@ alloy-rpc-types-engine = { version = "0.3.0", features = [
 ] }
 alloy-rpc-types-eth = { version = "0.3.0" }
 alloy-signer-local = { version = "0.3.0" }
+alloy-sol-types = { version = "0.8.2", default-features = false }
 
-clap = { version = "4.4.3" }
-eyre = { version = "0.6.8" }
-libc = { version = "0.2.161" }
-tikv-jemallocator = { version = "0.5.4" }
-tokio = "1.38.0"
-tokio-util = "0.7.11"
-tracing = "0.1.37"
+[patch.crates-io]
+revm = { path = "../revm/crates/revm" }
+revm-primitives = { path = "../revm/crates/primitives" }
+revm-interpreter = { path = "../revm/crates/interpreter" }
+revm-precompile = { path = "../revm/crates/precompile" }
+revm-inspectors = { path = "../revm-inspectors" }
 
+[patch."https://github.com/paradigmxyz/reth"]
+reth = { path = "../reth/bin/reth" }
+reth-cli-util = { path = "../reth/crates/cli/util" }
+reth-cli-commands = { path = "../reth/crates/cli/commands" }
+reth-db = {path = "../reth/crates/storage/db"}
+reth-db-api = { path = "../reth/crates/storage/db-api" }
+reth-execution-errors = { path = "../reth/crates/evm/execution-errors" }
+reth-trie-db = { path = "../reth/crates/trie/db" }
+reth-db-common = { path = "../reth/crates/storage/db-common" }
+reth-errors = { path = "../reth/crates/errors" }
+reth-libmdbx = { path = "../reth/crates/storage/libmdbx-rs" }
+reth-payload-builder = { path = "../reth/crates/payload/builder" }
+reth-node-api = { path = "../reth/crates/node/api" }
+reth-node-builder = {  path = "../reth/crates/node/builder" }
+reth-node-ethereum = { path = "../reth/crates/ethereum/node" }
+reth-trie = { path = "../reth/crates/trie/trie" }
+reth-trie-parallel = { path = "../reth/crates/trie/parallel" }
+reth-basic-payload-builder = { path = "../reth/crates/payload/basic" }
+reth-node-core = { path = "../reth/crates/node/core" }
+reth-primitives = { path = "../reth/crates/primitives" }
+reth-provider = { path = "../reth/crates/storage/provider" }
+reth-chainspec = { path = "../reth/crates/chainspec" }
+reth-evm = { path = "../reth/crates/evm" }
+reth-evm-ethereum = { path = "../reth/crates/ethereum/evm" }

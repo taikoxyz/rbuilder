@@ -43,6 +43,7 @@ impl Default for PayloadDeliveredFetcher {
                     use_gzip_for_submit: false, //Don't use submit so don't care
                     optimistic: false,
                     submission_rate_limiter: None,
+                    block_proposer: None,
                 }
             })
             .collect::<Vec<_>>();

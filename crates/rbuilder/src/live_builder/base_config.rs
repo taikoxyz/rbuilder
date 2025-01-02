@@ -5,14 +5,18 @@ use crate::{
     live_builder::{order_input::OrderInputConfig, LiveBuilder},
     roothash::RootHashConfig,
     telemetry::{setup_reloadable_tracing_subscriber, LoggerConfig},
-    utils::{http_provider, BoxedProvider, ProviderFactoryReopener, Signer},
+    utils::{
+        http_provider, BoxedProvider,
+        ProviderFactoryReopener, ProviderFactoryUnchecked, Signer,
+    },
 };
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use alloy_primitives::{Address, B256};
 use eyre::{eyre, Context};
+use gwyneth::cli::GwynethArgs;
 use jsonrpsee::RpcModule;
 use lazy_static::lazy_static;
-use reth::tasks::pool::BlockingTaskPool;
+use reth::{builder::NodeConfig, tasks::pool::BlockingTaskPool, transaction_pool::{EthPooledTransaction, NewTransactionEvent}};
 use reth_chainspec::ChainSpec;
 use reth_db::{Database, DatabaseEnv};
 use reth_node_core::args::utils::chain_value_parser;
@@ -23,18 +27,13 @@ use reth_provider::{
 use serde::{Deserialize, Deserializer};
 use serde_with::{serde_as, DeserializeAs};
 use sqlx::PgPool;
+use tokio::sync::mpsc::Receiver;
 use std::{
-    env::var,
-    fs::read_to_string,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
+    env::var, fs::read_to_string, net::{Ipv4Addr, SocketAddr, SocketAddrV4}, path::{Path, PathBuf}, str::FromStr, sync::Arc, time::Duration
 };
 use tracing::warn;
 
-use super::SlotSource;
+use super::{config::RethInput, gwyneth::{EthApiStream, GwynethMempoolReciever, GwynethNodes}, SlotSource};
 
 /// Prefix for env variables in config
 const ENV_PREFIX: &str = "env:";
@@ -44,7 +43,7 @@ const ENV_PREFIX: &str = "env:";
 /// The final configuration should usually include one of this and use it to create the base LiveBuilder to then upgrade it as needed.
 #[serde_as]
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct BaseConfig {
     pub full_telemetry_server_port: u16,
     pub full_telemetry_server_ip: Option<String>,
@@ -62,7 +61,7 @@ pub struct BaseConfig {
 
     pub flashbots_db: Option<EnvOrValue<String>>,
 
-    pub el_node_ipc_path: PathBuf,
+    pub el_node_ipc_path: Option<PathBuf>,
     pub jsonrpc_server_port: u16,
     pub jsonrpc_server_ip: Option<String>,
 
@@ -103,6 +102,19 @@ pub struct BaseConfig {
     pub backtest_builders: Vec<String>,
     pub backtest_results_store_path: PathBuf,
     pub backtest_protect_bundle_signers: Vec<Address>,
+
+    /// Layer2 related args
+    /// IPC is necessary for subscribing to EL mempool through `subscribe_to_txpool_with_blobs`
+    /// override from Reth if in-process 🔓
+    pub l2_ipc_paths: Option<Vec<PathBuf>>,
+    /// Only necessary start EL seperately
+    /// if in-process share instance of [`BlockchainProvider<DB>`] from the Reth L2 Node
+    pub l2_reth_datadirs: Option<Vec<PathBuf>>,
+    /// override from Reth if in-process 🔓
+    pub gwyneth_chain_ids: Option<Vec<u64>>,
+    /// Ports to accept L2 bundles from `mev_sendBundle` through `start_server_accepting_bundles`
+    /// override from Reth if in-process 🔓
+    pub l2_server_ports: Option<Vec<u16>>,
 }
 
 lazy_static! {
@@ -134,12 +146,37 @@ pub fn load_config_toml_and_env<T: serde::de::DeserializeOwned>(
             path.as_ref().to_string_lossy()
         )
     })?;
-
     let config: T = toml::from_str(&data).context("Config file parsing")?;
     Ok(config)
 }
 
 impl BaseConfig {
+
+    pub fn update_in_process_setting(
+        &mut self, 
+        gwyneth_args: GwynethArgs,
+    ) {
+        // Override the config.toml with in-process args
+        self.reth_datadir = None;
+        self.reth_db_path = None;
+        self.el_node_ipc_path = None;
+        self.l2_reth_datadirs = None;
+        self.l2_ipc_paths = None;
+        // Only ports to recieve bundles from L2 are necessary
+        self.l2_server_ports = match (self.l2_server_ports.clone(), gwyneth_args.ports) {
+            (None, None) => panic!("Ports should be provided with config or in-process GwynethArgs"),
+            (None, Some(ports)) => Some(ports),
+            (Some(ports), None) => Some(ports),
+            (Some(paths), Some(_)) => Some(paths),
+        };
+        self.gwyneth_chain_ids = Some(gwyneth_args.chain_ids);
+
+        assert_eq!(
+            self.l2_server_ports.as_ref().unwrap().len(), 
+            self.gwyneth_chain_ids.as_ref().unwrap().len()
+        );
+    }
+
     pub fn setup_tracing_subscriber(&self) -> eyre::Result<()> {
         let log_level = self.log_level.value()?;
         let config = LoggerConfig {
@@ -182,8 +219,8 @@ impl BaseConfig {
     where
         SlotSourceType: SlotSource,
     {
-        let provider_factory = self.create_provider_factory()?;
-        self.create_builder_with_provider_factory::<ProviderFactoryReopener<Arc<DatabaseEnv>>, Arc<DatabaseEnv>, SlotSourceType>(
+        let provider_factory = self.create_provider_reopener()?;
+        self.create_builder_with_provider_factory(
             cancellation_token,
             sink_factory,
             slot_source,
@@ -192,7 +229,7 @@ impl BaseConfig {
         .await
     }
 
-    /// Allows instantiating a [`LiveBuilder`] with an existing provider factory
+    // IPC path don't support gwyneth, we do in process only
     pub async fn create_builder_with_provider_factory<P, DB, SlotSourceType>(
         &self,
         cancellation_token: tokio_util::sync::CancellationToken,
@@ -202,7 +239,7 @@ impl BaseConfig {
     ) -> eyre::Result<super::LiveBuilder<P, DB, SlotSourceType>>
     where
         DB: Database + Clone + 'static,
-        P: DatabaseProviderFactory<DB> + StateProviderFactory + HeaderProvider + Clone,
+        P: DatabaseProviderFactory<DB> + StateProviderFactory + HeaderProvider + Clone + 'static,
         SlotSourceType: SlotSource,
     {
         Ok(LiveBuilder::<P, DB, SlotSourceType> {
@@ -219,12 +256,62 @@ impl BaseConfig {
             blocklist: self.blocklist()?,
 
             global_cancellation: cancellation_token,
+            l1_ethapi: None,
 
             extra_rpc: RpcModule::new(()),
             sink_factory,
             builders: Vec::new(),
 
             run_sparse_trie_prefetcher: self.root_hash_use_sparse_trie,
+            gwyneth_nodes: GwynethNodes::default(),
+        })
+    }
+
+
+    /// Allows instantiating a [`LiveBuilder`] with an existing provider factory
+    pub async fn create_in_process_builder<P, DB, SlotSourceType>(
+        &self,
+        cancellation_token: tokio_util::sync::CancellationToken,
+        sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
+        slot_source: SlotSourceType,
+        reth_input: RethInput<P>,
+    ) -> eyre::Result<super::LiveBuilder<P, DB, SlotSourceType>>
+    where
+        DB: Database + Clone + 'static,
+        P: DatabaseProviderFactory<DB> + StateProviderFactory + HeaderProvider + Clone + 'static,
+        SlotSourceType: SlotSource,
+    {
+        println!("[rb] Cecilia ==> BaseConfig::create_in_process_builder");
+        let RethInput { l1_provider, l2_providers, l1_parents, l1_ethapi, l2_ethapis, l1_client } = reth_input;
+        let gwyneth_nodes = GwynethNodes::new(
+            self.gwyneth_chain_ids.clone().unwrap(),
+            l2_providers, 
+            l1_parents,
+            l2_ethapis.expect("L2 ethapis not provided to init GwynethNodes"),
+            self.l2_server_ports.clone().expect("Server ports not provided to init GwynethNodes")
+        )?;
+        Ok(LiveBuilder::<P, DB, SlotSourceType> {
+            watchdog_timeout: self.watchdog_timeout(),
+            error_storage_path: self.error_storage_path.clone(),
+            simulation_threads: self.simulation_threads,
+            order_input_config: OrderInputConfig::from_config(self)?,
+            blocks_source: slot_source,
+            chain_chain_spec: self.chain_spec()?,
+            provider: l1_provider,
+
+            coinbase_signer: self.coinbase_signer()?,
+            extra_data: self.extra_data()?,
+            blocklist: self.blocklist()?,
+
+            global_cancellation: cancellation_token,
+            l1_ethapi,
+
+            extra_rpc: RpcModule::new(()),
+            sink_factory,
+            builders: Vec::new(),
+
+            run_sparse_trie_prefetcher: self.root_hash_use_sparse_trie,
+            gwyneth_nodes,
         })
     }
 
@@ -244,6 +331,14 @@ impl BaseConfig {
         chain_value_parser(&self.chain)
     }
 
+    pub fn l2_chain_specs(&self) -> eyre::Result<Vec<Arc<ChainSpec>>> {
+        self.gwyneth_chain_ids
+            .iter()
+            // TODO(Cecilia): Can potentially be path to chain specs
+            .map(|_| chain_value_parser("/network-configs/genesis.json"))
+            .collect()
+    }
+
     pub fn sbundle_mergeabe_signers(&self) -> Vec<Address> {
         if self.sbundle_mergeabe_signers.is_none() {
             warn!("Defaulting sbundle_mergeabe_signers to empty. We may not comply with order flow rules.");
@@ -252,17 +347,48 @@ impl BaseConfig {
         self.sbundle_mergeabe_signers.clone().unwrap_or_default()
     }
 
+    /// Only use reopners when running out-of-process
     /// Open reth db and DB should be opened once per process but it can be cloned and moved to different threads.
-    pub fn create_provider_factory(
+    pub fn create_provider_reopener(
         &self,
     ) -> eyre::Result<ProviderFactoryReopener<Arc<DatabaseEnv>>> {
-        create_provider_factory(
+        create_provider_reopener(
             self.reth_datadir.as_deref(),
             self.reth_db_path.as_deref(),
             self.reth_static_files_path.as_deref(),
             self.chain_spec()?,
             false,
         )
+    }
+
+    /// Only use reopners when running out-of-process
+    pub fn gwyneth_provider_reopeners(
+        &self,
+    ) -> eyre::Result<Vec<ProviderFactoryReopener<Arc<DatabaseEnv>>>> {
+        self.l2_reth_datadirs
+            .clone()
+            .expect("Datadir not provided to init ProviderFactoryReopener")
+            .iter()
+            .zip(self.l2_chain_specs()?.iter())
+            .map(|(path, chain_spec)| {
+                let (datadir, static_files) = (path.join("db"), path.join("static_files"));
+
+                let db = open_reth_db(&datadir)?;
+
+                let reopener = ProviderFactoryReopener::new(db, chain_spec.clone(), static_files)?;
+                if reopener
+                    .provider_factory_unchecked()
+                    .static_file_provider()
+                    .get_highest_static_file_block(StaticFileSegment::Headers)
+                    .is_none()
+                {
+                    eyre::bail!(
+                        "No headers in static files. Check your static files path configuration."
+                    );
+                }
+                Ok(reopener)
+            })
+            .collect()
     }
 
     /// Creates threadpool for root hash calculation, should be created once per process.
@@ -287,7 +413,10 @@ impl BaseConfig {
     }
 
     pub fn coinbase_signer(&self) -> eyre::Result<Signer> {
-        coinbase_signer_from_secret_key(&self.coinbase_secret_key.value()?)
+        coinbase_signer_from_secret_key(
+            self.chain_spec().unwrap().chain.id(),
+            &self.coinbase_secret_key.value()?,
+        )
     }
 
     pub fn extra_data(&self) -> eyre::Result<Vec<u8>> {
@@ -426,7 +555,7 @@ impl Default for BaseConfig {
             error_storage_path: None,
             coinbase_secret_key: "".into(),
             flashbots_db: None,
-            el_node_ipc_path: "/tmp/reth.ipc".parse().unwrap(),
+            el_node_ipc_path: Some("/tmp/reth.ipc".parse().unwrap()),
             jsonrpc_server_port: DEFAULT_INCOMING_BUNDLES_PORT,
             jsonrpc_server_ip: None,
             ignore_cancellable_orders: true,
@@ -451,12 +580,17 @@ impl Default for BaseConfig {
             live_builders: vec!["mgp-ordering".to_string(), "mp-ordering".to_string()],
             simulation_threads: 1,
             sbundle_mergeabe_signers: None,
+            //L2 related
+            l2_ipc_paths: None,
+            l2_reth_datadirs: None,
+            gwyneth_chain_ids: None,
+            l2_server_ports: None,
         }
     }
 }
 
 /// Open reth db and DB should be opened once per process but it can be cloned and moved to different threads.
-pub fn create_provider_factory(
+pub fn create_provider_reopener(
     reth_datadir: Option<&Path>,
     reth_db_path: Option<&Path>,
     reth_static_files_path: Option<&Path>,
@@ -521,9 +655,9 @@ fn open_reth_db_rw(reth_db_path: &Path) -> eyre::Result<Arc<DatabaseEnv>> {
     ))
 }
 
-pub fn coinbase_signer_from_secret_key(secret_key: &str) -> eyre::Result<Signer> {
+pub fn coinbase_signer_from_secret_key(chain_id: u64, secret_key: &str) -> eyre::Result<Signer> {
     let secret_key = B256::from_str(secret_key)?;
-    Ok(Signer::try_from_secret(secret_key)?)
+    Ok(Signer::try_from_secret(chain_id, secret_key)?)
 }
 
 #[cfg(test)]
@@ -592,7 +726,7 @@ mod test {
         for (reth_datadir_path, reth_db_path, reth_static_files_path, should_succeed) in
             test_cases.iter()
         {
-            let result = create_provider_factory(
+            let result = create_provider_reopener(
                 reth_datadir_path.as_deref(),
                 reth_db_path.as_deref(),
                 reth_static_files_path.as_deref(),

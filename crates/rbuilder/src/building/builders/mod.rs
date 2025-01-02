@@ -2,7 +2,7 @@
 pub mod block_building_helper;
 pub mod mock_block_building_helper;
 pub mod ordering_builder;
-pub mod parallel_builder;
+// pub mod parallel_builder;
 
 use crate::{
     building::{BlockBuildingContext, BlockOrders, BuiltBlockTrace, SimulatedOrderSink, Sorting},
@@ -11,7 +11,7 @@ use crate::{
     roothash::RootHashConfig,
     utils::{is_provider_factory_health_error, NonceCache},
 };
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use alloy_primitives::{Address, B256};
 use block_building_helper::BlockBuildingHelper;
 use reth::{
@@ -19,8 +19,9 @@ use reth::{
     tasks::pool::BlockingTaskPool,
 };
 use reth_db::Database;
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_provider::{DatabaseProviderFactory, StateProviderFactory};
+use revm_primitives::ChainAddress;
 use std::{fmt::Debug, marker::PhantomData, sync::Arc};
 use tokio::sync::{broadcast, broadcast::error::TryRecvError};
 use tokio_util::sync::CancellationToken;
@@ -38,7 +39,7 @@ pub struct Block {
 
 #[derive(Debug)]
 pub struct LiveBuilderInput<P, DB> {
-    pub provider: P,
+    pub providers: HashMap<u64, P>,
     pub root_hash_config: RootHashConfig,
     pub root_hash_task_pool: BlockingTaskPool,
     pub ctx: BlockBuildingContext,
@@ -112,7 +113,7 @@ pub struct OrderIntakeConsumer<P> {
     nonce_cache: NonceCache<P>,
 
     block_orders: BlockOrders,
-    onchain_nonces_updated: HashSet<Address>,
+    onchain_nonces_updated: HashSet<ChainAddress>,
 
     order_consumer: OrderConsumer,
 }
@@ -123,13 +124,13 @@ where
 {
     /// See [`ShareBundleMerger`] for sbundle_merger_selected_signers
     pub fn new(
-        provider: P,
+        providers: HashMap<u64, P>,
         orders: broadcast::Receiver<SimulatedOrderCommand>,
-        parent_block: B256,
+        parent_block: HashMap<u64, B256>,
         sorting: Sorting,
         sbundle_merger_selected_signers: &[Address],
     ) -> Self {
-        let nonce_cache = NonceCache::new(provider, parent_block);
+        let nonce_cache = NonceCache::new(providers, parent_block);
 
         Self {
             nonce_cache,
@@ -201,7 +202,7 @@ pub trait UnfinishedBlockBuildingSink: std::fmt::Debug + Send + Sync {
 
 #[derive(Debug)]
 pub struct BlockBuildingAlgorithmInput<P> {
-    pub provider: P,
+    pub providers: HashMap<u64, P>,
     pub ctx: BlockBuildingContext,
     pub input: broadcast::Receiver<SimulatedOrderCommand>,
     /// output for the blocks
@@ -232,13 +233,13 @@ pub trait UnfinishedBlockBuildingSinkFactory: Debug + Send + Sync {
     ) -> Arc<dyn UnfinishedBlockBuildingSink>;
 }
 
-/// Basic configuration to run a single block building with a BlockBuildingAlgorithm
+/// Basic configuration to run a single block building with a BlockBuildingAlgorithmpub
 pub struct BacktestSimulateBlockInput<'a, P> {
     pub ctx: BlockBuildingContext,
     pub builder_name: String,
     pub sbundle_mergeabe_signers: Vec<Address>,
     pub sim_orders: &'a Vec<SimulatedOrder>,
-    pub provider: P,
+    pub providers: HashMap<u64, P>,
     pub cached_reads: Option<CachedReads>,
 }
 

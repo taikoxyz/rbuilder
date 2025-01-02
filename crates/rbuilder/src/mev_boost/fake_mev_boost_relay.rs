@@ -95,7 +95,7 @@ mod test {
         let _ = match srv {
             Some(srv) => srv,
             None => {
-                println!("mev-boost binary not found, skipping test");
+                println!("[rb] mev-boost binary not found, skipping test");
                 return;
             }
         };

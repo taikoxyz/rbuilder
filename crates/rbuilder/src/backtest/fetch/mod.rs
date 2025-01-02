@@ -165,7 +165,7 @@ impl HistoricalDataFetcher {
                             let address = nonce.address;
                             let onchain_nonce = self
                                 .eth_provider
-                                .get_transaction_count(address)
+                                .get_transaction_count(address.1)
                                 .block_id(BlockId::Number(parent_block.into()))
                                 .await
                                 .wrap_err("Failed to fetch onchain tx count")?;

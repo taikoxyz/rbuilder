@@ -32,18 +32,18 @@ async fn main() -> eyre::Result<()> {
     let ts_diff = (payload.timestamp * 1000) as i64 - payload.timestamp_ms as i64;
     let value = format_ether(payload.value);
 
-    println!("Payload delivered");
-    println!("relay          {}", result.best_relay().unwrap());
-    println!("block          {}", payload.block_number);
-    println!("block_hash     {:?}", payload.block_hash);
-    println!("timestamp_ms   {}", payload.timestamp_ms);
-    println!("timestamp      {}", payload.timestamp);
-    println!("timestamp_diff {}", ts_diff);
-    println!("num_tx         {}", payload.num_tx);
-    println!("gas_used       {}", payload.gas_used);
-    println!("builder        {:?}", payload.builder_pubkey);
-    println!("value          {}", value);
-    println!("optimistic     {}", payload.optimistic_submission);
+    println!("[rb] Payload delivered");
+    println!("[rb] relay          {}", result.best_relay().unwrap());
+    println!("[rb] block          {}", payload.block_number);
+    println!("[rb] block_hash     {:?}", payload.block_hash);
+    println!("[rb] timestamp_ms   {}", payload.timestamp_ms);
+    println!("[rb] timestamp      {}", payload.timestamp);
+    println!("[rb] timestamp_diff {}", ts_diff);
+    println!("[rb] num_tx         {}", payload.num_tx);
+    println!("[rb] gas_used       {}", payload.gas_used);
+    println!("[rb] builder        {:?}", payload.builder_pubkey);
+    println!("[rb] value          {}", value);
+    println!("[rb] optimistic     {}", payload.optimistic_submission);
 
     Ok(())
 }

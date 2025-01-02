@@ -133,6 +133,7 @@ mod test {
     //use super::*;
 
     use mockall::predicate::eq;
+    use revm_primitives::OnChain;
     use uuid::Uuid;
 
     use crate::{
@@ -161,7 +162,7 @@ mod test {
             Self {
                 dont_care_nonce: AccountNonce {
                     nonce: 0,
-                    account: base.base.create_address(),
+                    account: base.base.create_address().on_chain(1),
                 },
                 base,
             }

@@ -12,9 +12,10 @@ use crate::{
         SimulatedOrder, TransactionSignedEcRecoveredWithBlobs, TxRevertBehavior,
     },
 };
-use alloy_primitives::{Address, TxHash};
-use reth_payload_builder::database::CachedReads;
+use alloy_primitives::TxHash;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use revm::db::BundleState;
+use revm_primitives::ChainAddress;
 
 pub enum NonceValue {
     /// Fixed value
@@ -43,7 +44,7 @@ impl TestSetup {
         })
     }
 
-    pub fn named_address(&self, named_addr: NamedAddr) -> eyre::Result<Address> {
+    pub fn named_address(&self, named_addr: NamedAddr) -> eyre::Result<ChainAddress> {
         self.test_chain.named_address(named_addr)
     }
     // Build order methods
@@ -175,7 +176,7 @@ impl TestSetup {
     ) -> eyre::Result<TxHash> {
         let to_addr = self.test_chain.named_address(value_to)?;
         self.add_tx(
-            TxArgs::new_send_to(from, self.current_nonce(from)?, value, to_addr),
+            TxArgs::new_send_to(from, self.current_nonce(from)?, value, to_addr.1),
             revert_behavior,
         )
     }
@@ -207,9 +208,12 @@ impl TestSetup {
     }
     fn try_commit_order(&mut self) -> eyre::Result<Result<ExecutionResult, ExecutionError>> {
         let state_provider = self.test_chain.provider_factory().latest()?;
-        let mut block_state = BlockState::new(state_provider)
-            .with_bundle_state(self.bundle_state.take().unwrap_or_default())
-            .with_cached_reads(self.cached_reads.take().unwrap_or_default());
+        let mut block_state = BlockState::new(
+            state_provider,
+            self.test_chain.block_building_context().parent_chain_id,
+        )
+        .with_bundle_state(self.bundle_state.take().unwrap_or_default())
+        .with_cached_reads(self.cached_reads.take().unwrap_or_default());
 
         let sim_order = SimulatedOrder {
             order: self.order_builder.build_order(),
@@ -277,7 +281,8 @@ impl TestSetup {
 
     pub fn current_nonce(&self, named_addr: NamedAddr) -> eyre::Result<u64> {
         let state_provider = self.test_chain.provider_factory().latest()?;
-        let mut block_state = BlockState::new(state_provider)
+        let chain_id = self.test_chain.block_building_context().parent_chain_id;
+        let mut block_state = BlockState::new(state_provider, chain_id)
             .with_bundle_state(self.bundle_state.clone().unwrap_or_default())
             .with_cached_reads(self.cached_reads.clone().unwrap_or_default());
 

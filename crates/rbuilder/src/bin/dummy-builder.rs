@@ -5,6 +5,7 @@
 //! This is NOT intended to be run in production so it has no nice configuration, poor error checking and some hardcoded values.
 use std::{path::PathBuf, sync::Arc, thread::sleep, time::Duration};
 
+use ahash::HashMap;
 use jsonrpsee::RpcModule;
 use rbuilder::{
     beacon_api_client::Client,
@@ -20,15 +21,10 @@ use rbuilder::{
         base_config::{
             DEFAULT_EL_NODE_IPC_PATH, DEFAULT_INCOMING_BUNDLES_PORT, DEFAULT_IP,
             DEFAULT_RETH_DB_PATH,
-        },
-        config::create_provider_factory,
-        order_input::{
+        }, config::create_provider_factory, gwyneth::GwynethNodes, layer2_info::Layer2Info, order_input::{
             OrderInputConfig, DEFAULT_INPUT_CHANNEL_BUFFER_SIZE, DEFAULT_RESULTS_CHANNEL_TIMEOUT,
             DEFAULT_SERVE_MAX_CONNECTIONS,
-        },
-        payload_events::{MevBoostSlotData, MevBoostSlotDataGenerator},
-        simulation::SimulatedOrderCommand,
-        LiveBuilder,
+        }, payload_events::{MevBoostSlotData, MevBoostSlotDataGenerator}, simulation::SimulatedOrderCommand, LiveBuilder
     },
     primitives::{
         mev_boost::{MevBoostRelay, RelayConfig},
@@ -62,7 +58,7 @@ async fn main() -> eyre::Result<()> {
         with_url("https://0xac6e77dfe25ecd6110b8e780608cce0dab71fdd5ebea22a16c0205200f2f8e2e3ad3b71d3499c54ad14d6c21b41a37ae@boost-relay.flashbots.net").
         with_name("flashbots");
 
-    let relay = MevBoostRelay::from_config(&relay_config)?;
+    let relay = MevBoostRelay::from_config(&relay_config, None)?;
 
     let payload_event = MevBoostSlotDataGenerator::new(
         vec![Client::default()],
@@ -80,6 +76,7 @@ async fn main() -> eyre::Result<()> {
         error_storage_path: None,
         simulation_threads: 1,
         blocks_source: payload_event,
+        run_sparse_trie_prefetcher: false,
         order_input_config: OrderInputConfig::new(
             false,
             true,
@@ -89,6 +86,7 @@ async fn main() -> eyre::Result<()> {
             DEFAULT_SERVE_MAX_CONNECTIONS,
             DEFAULT_RESULTS_CHANNEL_TIMEOUT,
             DEFAULT_INPUT_CHANNEL_BUFFER_SIZE,
+            false,
         ),
         chain_chain_spec: chain_spec.clone(),
         provider: create_provider_factory(
@@ -101,10 +99,11 @@ async fn main() -> eyre::Result<()> {
         extra_data: Vec::new(),
         blocklist: Default::default(),
         global_cancellation: cancel.clone(),
+        l1_ethapi: None,
         extra_rpc: RpcModule::new(()),
         sink_factory: Box::new(TraceBlockSinkFactory {}),
         builders: vec![Arc::new(DummyBuildingAlgorithm::new(10))],
-        run_sparse_trie_prefetcher: false,
+        gwyneth_nodes: GwynethNodes::default(),
     };
 
     let ctrlc = tokio::spawn(async move {
@@ -138,6 +137,7 @@ struct TracingBlockSink {}
 
 impl UnfinishedBlockBuildingSink for TracingBlockSink {
     fn new_block(&self, block: Box<dyn BlockBuildingHelper>) {
+        println!("[rb] UnfinishedBlockBuildingSink::new_block");
         info!(
             order_count =? block.built_block_trace().included_orders.len(),
             "Block generated. Throwing it away!"
@@ -199,7 +199,7 @@ impl DummyBuildingAlgorithm {
     fn build_block<P, DB>(
         &self,
         orders: Vec<SimulatedOrder>,
-        provider: P,
+        providers: HashMap<u64, P>,
         ctx: &BlockBuildingContext,
     ) -> eyre::Result<Box<dyn BlockBuildingHelper>>
     where
@@ -207,7 +207,7 @@ impl DummyBuildingAlgorithm {
         P: DatabaseProviderFactory<DB> + StateProviderFactory + Clone + 'static,
     {
         let mut block_building_helper = BlockBuildingHelperFromProvider::new(
-            provider.clone(),
+            providers.clone(),
             self.root_hash_task_pool.clone(),
             RootHashConfig::live_config(false, false),
             ctx.clone(),
@@ -238,7 +238,7 @@ where
     fn build_blocks(&self, input: BlockBuildingAlgorithmInput<P>) {
         if let Some(orders) = self.wait_for_orders(&input.cancel, input.input) {
             let block = self
-                .build_block(orders, input.provider, &input.ctx)
+                .build_block(orders, input.providers, &input.ctx)
                 .unwrap();
             input.sink.new_block(block);
         }

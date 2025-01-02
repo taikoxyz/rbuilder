@@ -1,8 +1,9 @@
 use ahash::HashMap;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 use reth::providers::StateProviderBox;
 use reth_errors::ProviderResult;
 use reth_provider::StateProviderFactory;
+use revm_primitives::ChainAddress;
 use std::sync::{Arc, Mutex};
 
 /// Struct to get nonces for Addresses, caching the results.
@@ -13,46 +14,61 @@ use std::sync::{Arc, Mutex};
 ///   Neither NonceCache or NonceCacheRef are clonable, the clone of shared info happens on get_ref where we clone the internal cache.
 #[derive(Debug)]
 pub struct NonceCache<P> {
-    provider: P,
+    providers: HashMap<u64, P>,
     // We have to use Arc<Mutex here because Rc are not Send (so can't be used in futures)
     // and borrows don't work when nonce cache is a field in a struct.
-    cache: Arc<Mutex<HashMap<Address, u64>>>,
-    block: B256,
+    cache: Arc<Mutex<HashMap<ChainAddress, u64>>>,
+    block: HashMap<u64, B256>,
 }
 
 impl<P> NonceCache<P>
 where
     P: StateProviderFactory,
 {
-    pub fn new(provider: P, block: B256) -> Self {
+    pub fn new(providers: HashMap<u64, P>, block: HashMap<u64, B256>) -> Self {
         Self {
-            provider,
+            providers,
             cache: Arc::new(Mutex::new(HashMap::default())),
             block,
         }
     }
 
     pub fn get_ref(&self) -> ProviderResult<NonceCacheRef> {
-        let state = self.provider.history_by_block_hash(self.block)?;
+        let mut states = HashMap::default();
+        for (chain_id, providers) in self.providers.iter() {
+            states.insert(
+                *chain_id,
+                providers.history_by_block_hash(self.block[chain_id])?,
+            );
+        }
         Ok(NonceCacheRef {
-            state,
+            states,
             cache: Arc::clone(&self.cache),
         })
     }
 }
 
 pub struct NonceCacheRef {
-    state: StateProviderBox,
-    cache: Arc<Mutex<HashMap<Address, u64>>>,
+    states: HashMap<u64, StateProviderBox>,
+    cache: Arc<Mutex<HashMap<ChainAddress, u64>>>,
 }
 
 impl NonceCacheRef {
-    pub fn nonce(&self, address: Address) -> ProviderResult<u64> {
+    pub fn nonce(&self, address: ChainAddress) -> ProviderResult<u64> {
         let mut cache = self.cache.lock().unwrap();
         if let Some(nonce) = cache.get(&address) {
             return Ok(*nonce);
         }
-        let nonce = self.state.account_nonce(address)?.unwrap_or_default();
+        // TODO: Brecht
+        let mut default_chain_id = 1;
+        for (chain_id, _state) in self.states.iter() {
+            if default_chain_id == 1 {
+                default_chain_id = *chain_id;
+            }
+        }
+        let nonce = self.states[&address.0]
+            .account_nonce(address.1)?
+            .unwrap_or_default();
         cache.insert(address, nonce);
         Ok(nonce)
     }

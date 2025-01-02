@@ -1,71 +1,27 @@
-#
-# Base container (with sccache and cargo-chef)
-#
-# - https://github.com/mozilla/sccache
-# - https://github.com/LukeMathWalker/cargo-chef
-#
-# Based on https://depot.dev/blog/rust-dockerfile-best-practices
-#
-FROM rust:1.81 as base
+FROM lukemathwalker/cargo-chef:latest-rust-1 AS builder
+RUN apt-get update && apt-get -y upgrade && apt-get install -y libclang-dev
 
-ARG FEATURES
+COPY ./rbuilder/Cargo.lock /rbuilder/Cargo.lock
+COPY ./rbuilder/Cargo.toml /rbuilder/Cargo.toml
+COPY ./rbuilder/crates /rbuilder/crates
+COPY ./reth/Cargo.lock ./reth/Cargo.lock
+COPY ./reth/Cargo.toml ./reth/Cargo.toml
+COPY ./reth/crates ./reth/crates
+COPY ./reth/bin ./reth/bin
+COPY ./reth/examples ./reth/examples
+COPY ./reth/testing ./reth/testing
+COPY ./revm ./revm
+COPY ./revm-inspectors ./revm-inspectors
+RUN pwd && ls
 
-RUN cargo install sccache --version ^0.8
-RUN cargo install cargo-chef --version ^0.1
+WORKDIR /rbuilder
+RUN cargo build --bin gwyneth-rbuilder --release
 
-RUN apt-get update \
-    && apt-get install -y clang libclang-dev
-
-ENV CARGO_HOME=/usr/local/cargo
-ENV RUSTC_WRAPPER=sccache
-ENV SCCACHE_DIR=/sccache
-
-#
-# Planner container (running "cargo chef prepare")
-#
-FROM base AS planner
+FROM ubuntu:22.04 AS runtime
+COPY --from=builder /rbuilder/target/release/gwyneth-rbuilder /usr/local/bin
+COPY ./reth/crates/ethereum/node/tests/assets /network-configs
+RUN cat /network-configs/genesis.json
 WORKDIR /app
+# RUN rbuilder
 
-COPY ./Cargo.lock ./Cargo.lock
-COPY ./Cargo.toml ./Cargo.toml
-COPY ./.git ./.git
-COPY ./crates/ ./crates/
-
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
-    cargo chef prepare --recipe-path recipe.json
-
-#
-# Builder container (running "cargo chef cook" and "cargo build --release")
-#
-FROM base as builder
-WORKDIR /app
-# Default binary filename rbuilder
-# Alternatively can be set to "reth-rbuilder" - to have reth included in the binary
-ARG RBUILDER_BIN="rbuilder"
-COPY --from=planner /app/recipe.json recipe.json
-
-RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
-    cargo chef cook --release --recipe-path recipe.json
-
-COPY ./Cargo.lock ./Cargo.lock
-COPY ./Cargo.toml ./Cargo.toml
-COPY ./.git ./.git
-COPY ./crates/ ./crates/
-
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
-    cargo build --release --features="$FEATURES" --bin=${RBUILDER_BIN}
-
-#
-# Runtime container
-#
-FROM gcr.io/distroless/cc-debian12
-WORKDIR /app
-
-ARG RBUILDER_BIN="rbuilder"
-COPY --from=builder /app/target/release/${RBUILDER_BIN} /app/rbuilder
-
-ENTRYPOINT ["/app/rbuilder"]
+ENTRYPOINT ["/usr/local/bin/gwyneth-rbuilder"]

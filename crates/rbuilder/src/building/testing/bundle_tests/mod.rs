@@ -295,7 +295,7 @@ fn test_mev_share_ok_refunds() -> eyre::Result<()> {
     assert_eq!(
         result.paid_kickbacks,
         vec![(
-            test_setup.named_address(NamedAddr::User(0))?,
+            test_setup.named_address(NamedAddr::User(0))?.1,
             U256::from(90_000 - 21_000)
         )]
     );
@@ -313,7 +313,7 @@ fn test_mev_share_ok_refunds() -> eyre::Result<()> {
     assert_eq!(
         result.paid_kickbacks,
         vec![(
-            test_setup.named_address(NamedAddr::User(0))?,
+            test_setup.named_address(NamedAddr::User(0))?.1,
             U256::from(90_000 - 21_000)
         )]
     );
@@ -322,7 +322,7 @@ fn test_mev_share_ok_refunds() -> eyre::Result<()> {
     test_setup.start_inner_bundle(false);
     test_setup.add_dummy_tx_0_1_no_rev()?;
     test_setup.set_inner_bundle_refund_config(vec![RefundConfig {
-        address: test_setup.named_address(NamedAddr::User(3))?,
+        address: test_setup.named_address(NamedAddr::User(3))?.1,
         percent: 100,
     }]);
     test_setup.finish_inner_bundle();
@@ -335,7 +335,7 @@ fn test_mev_share_ok_refunds() -> eyre::Result<()> {
     assert_eq!(
         result.paid_kickbacks,
         vec![(
-            test_setup.named_address(NamedAddr::User(3))?,
+            test_setup.named_address(NamedAddr::User(3))?.1,
             U256::from(90_000 - 21_000)
         )]
     );
@@ -345,15 +345,15 @@ fn test_mev_share_ok_refunds() -> eyre::Result<()> {
     test_setup.add_dummy_tx_0_1_no_rev()?;
     test_setup.set_inner_bundle_refund_config(vec![
         RefundConfig {
-            address: test_setup.named_address(NamedAddr::User(1))?,
+            address: test_setup.named_address(NamedAddr::User(1))?.1,
             percent: 10,
         },
         RefundConfig {
-            address: test_setup.named_address(NamedAddr::User(2))?,
+            address: test_setup.named_address(NamedAddr::User(2))?.1,
             percent: 20,
         },
         RefundConfig {
-            address: test_setup.named_address(NamedAddr::User(3))?,
+            address: test_setup.named_address(NamedAddr::User(3))?.1,
             percent: 70,
         },
     ]);
@@ -371,15 +371,15 @@ fn test_mev_share_ok_refunds() -> eyre::Result<()> {
         .collect();
     let expected_kickbacks: Vec<_> = vec![
         (
-            test_setup.named_address(NamedAddr::User(1))?,
+            test_setup.named_address(NamedAddr::User(1))?.1,
             U256::from(500_000 * 90 / 100 * 10 / 100 - 21_000),
         ),
         (
-            test_setup.named_address(NamedAddr::User(2))?,
+            test_setup.named_address(NamedAddr::User(2))?.1,
             U256::from(500_000 * 90 / 100 * 20 / 100 - 21_000),
         ),
         (
-            test_setup.named_address(NamedAddr::User(3))?,
+            test_setup.named_address(NamedAddr::User(3))?.1,
             U256::from(500_000 * 90 / 100 * 70 / 100 - 21_000),
         ),
     ]
@@ -395,7 +395,7 @@ fn test_mev_share_ok_refunds() -> eyre::Result<()> {
     test_setup.start_inner_bundle(false);
     test_setup.add_dummy_tx_0_1_no_rev()?;
     test_setup.set_inner_bundle_refund_config(vec![RefundConfig {
-        address: test_setup.named_address(NamedAddr::User(3))?,
+        address: test_setup.named_address(NamedAddr::User(3))?.1,
         percent: 200,
     }]);
     test_setup.finish_inner_bundle();
@@ -408,7 +408,7 @@ fn test_mev_share_ok_refunds() -> eyre::Result<()> {
     assert_eq!(
         result.paid_kickbacks,
         vec![(
-            test_setup.named_address(NamedAddr::User(3))?,
+            test_setup.named_address(NamedAddr::User(3))?.1,
             U256::from(42_000 - 21_000)
         )]
     );
@@ -435,7 +435,7 @@ fn test_mev_share_failed_refunds() -> eyre::Result<()> {
     test_setup.start_inner_bundle(false);
     test_setup.add_dummy_tx_0_1_no_rev()?;
     test_setup.set_inner_bundle_refund_config(vec![RefundConfig {
-        address: test_setup.named_address(NamedAddr::User(3))?,
+        address: test_setup.named_address(NamedAddr::User(3))?.1,
         percent: 201,
     }]);
     test_setup.finish_inner_bundle();
@@ -523,7 +523,7 @@ fn test_bundle_consistency_check() -> eyre::Result<()> {
 
     // check commit of blocklisted tx from
     {
-        let blocklist = vec![test_setup.named_address(NamedAddr::User(0))?]
+        let blocklist = vec![test_setup.named_address(NamedAddr::User(0))?.1]
             .into_iter()
             .collect();
         let mut built_block_trace = BuiltBlockTrace::new();
@@ -541,7 +541,7 @@ fn test_bundle_consistency_check() -> eyre::Result<()> {
 
     // check commit of blocklisted tx to
     {
-        let blocklist = vec![test_setup.named_address(NamedAddr::User(1))?]
+        let blocklist = vec![test_setup.named_address(NamedAddr::User(1))?.1]
             .into_iter()
             .collect();
         let mut built_block_trace = BuiltBlockTrace::new();
@@ -734,7 +734,7 @@ fn test_mergeable_multibackrun() -> eyre::Result<()> {
     assert_eq!(
         result.paid_kickbacks,
         vec![(
-            test_setup.named_address(a_sender)?,
+            test_setup.named_address(a_sender)?.1,
             U256::from(expected_kickback)
         )]
     );

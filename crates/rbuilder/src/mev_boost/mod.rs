@@ -9,6 +9,7 @@ use alloy_primitives::{Address, BlockHash, Bytes, U256};
 use alloy_rpc_types_beacon::relay::{
     BidTrace, SignedBidSubmissionV2, SignedBidSubmissionV3, SignedBidSubmissionV4,
 };
+use alloy_rpc_types_engine::ExecutionPayload;
 use flate2::{write::GzEncoder, Compression};
 use primitive_types::H384;
 use reqwest::{
@@ -443,6 +444,7 @@ impl RelayClient {
         ssz: bool,
         gzip: bool,
     ) -> Result<Response, SubmitBlockErr> {
+        println!("[rb] call_relay_submit_block");
         let url = {
             let mut url = self.url.clone();
             url.set_path("/relay/v1/builder/blocks");
@@ -616,6 +618,17 @@ impl SubmitBlockRequest {
             SubmitBlockRequest::Electra(req) => req.0.message.clone(),
         }
     }
+    pub fn execution_payload(&self) -> ExecutionPayload {
+        match self {
+            SubmitBlockRequest::Capella(req) => {
+                ExecutionPayload::V2(req.0.execution_payload.clone())
+            }
+            SubmitBlockRequest::Deneb(req) => ExecutionPayload::V3(req.0.execution_payload.clone()),
+            SubmitBlockRequest::Electra(req) => {
+                ExecutionPayload::V4(req.0.execution_payload.clone())
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -747,9 +760,9 @@ mod tests {
             .await
             .expect("Failed to get validators");
 
-        println!("len: {}", result.len());
+        println!("[rb] len: {}", result.len());
         assert!(!result.is_empty());
-        println!("result[0]: {:#?}", result[0]);
+        println!("[rb] result[0]: {:#?}", result[0]);
     }
 
     #[ignore]
@@ -758,7 +771,7 @@ mod tests {
         let srv = match FakeMevBoostRelay::new().spawn() {
             Some(srv) => srv,
             None => {
-                println!("mev-boost binary not found, skipping test");
+                println!("[rb] mev-boost binary not found, skipping test");
                 return;
             }
         };

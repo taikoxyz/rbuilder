@@ -49,7 +49,12 @@ impl BestBlockCell {
             .as_ref()
             .map(|b| b.trace.bid_value)
             .unwrap_or_default();
+        //println!("[rb] compare_and_update: {:?} > {:?}", block.trace.bid_value, old_value);
         if block.trace.bid_value > old_value {
+            println!(
+                "best_block update: {:?} > {:?}",
+                block.trace.bid_value, old_value
+            );
             *best_block = Some(block);
             self.block_notify.notify_one();
         }
@@ -135,6 +140,9 @@ async fn run_submit_to_relays_job(
     cancel: CancellationToken,
     competition_bid_value_source: Arc<dyn BidValueSource + Send + Sync>,
 ) -> Option<BuiltBlockInfo> {
+    println!("[rb] run_submit_to_relays_job");
+    // Brecht: block submission
+
     let best_bid_sync_source = BestBidSyncSource::new(
         competition_bid_value_source,
         slot_data.block(),
@@ -142,6 +150,7 @@ async fn run_submit_to_relays_job(
     );
     let mut res = None;
 
+    //println!("[rb] Sleeping done");
     let (normal_relays, optimistic_relays) = {
         let mut normal_relays = Vec::new();
         let mut optimistic_relays = Vec::new();
@@ -154,9 +163,13 @@ async fn run_submit_to_relays_job(
         }
         (normal_relays, optimistic_relays)
     };
+    //println!("[rb] normal_relays: {:?}", normal_relays);
+    //println!("[rb] optimistic_relays: {:?}", optimistic_relays);
 
     let mut last_bid_value = U256::from(0);
     'submit: loop {
+        //println!("[rb] poll loop");
+
         if cancel.is_cancelled() {
             break 'submit res;
         }
@@ -172,6 +185,8 @@ async fn run_submit_to_relays_job(
         } else {
             continue 'submit;
         };
+
+        println!("[rb] submit block!");
 
         res = Some(BuiltBlockInfo {
             bid_value: block.trace.bid_value,
@@ -209,6 +224,8 @@ async fn run_submit_to_relays_job(
         );
         inc_initiated_submissions(submission_optimistic);
 
+        //println!("[rb] submit block 2!");
+
         let (normal_signed_submission, optimistic_signed_submission) = {
             let normal_signed_submission = match sign_block_for_relay(
                 &config.signer,
@@ -221,10 +238,12 @@ async fn run_submit_to_relays_job(
             ) {
                 Ok(res) => res,
                 Err(err) => {
+                    println!("[rb] couldn't sign block for relay: {:?}", err);
                     error!(parent: &submission_span, err = ?err, "Error signing block for relay");
                     continue 'submit;
                 }
             };
+            //println!("[rb] normal_signed_submission ok");
             let optimistic_signed_submission = match sign_block_for_relay(
                 &config.optimistic_signer,
                 &block.sealed_block,
@@ -240,8 +259,11 @@ async fn run_submit_to_relays_job(
                     continue 'submit;
                 }
             };
+            //println!("[rb] optimistic_signed_submission ok");
             (normal_signed_submission, optimistic_signed_submission)
         };
+
+        //println!("[rb] normal_signed_submission: {:?}", normal_signed_submission);
 
         if config.dry_run {
             validate_block(
@@ -257,9 +279,12 @@ async fn run_submit_to_relays_job(
             continue 'submit;
         }
 
+        //println!("[rb] submit block 3!");
+
         measure_block_e2e_latency(&block.trace.included_orders);
 
         for relay in &normal_relays {
+            //println!("[rb] relay: {:?}", relay);
             let span = info_span!(parent: &submission_span, "relay_submit", relay = &relay.id, optimistic = false);
             let relay = relay.clone();
             let cancel = cancel.clone();
@@ -421,6 +446,7 @@ async fn submit_bid_to_the_relay(
     signed_submit_request: SubmitBlockRequest,
     optimistic: bool,
 ) {
+    println!("[rb] submit_bid_to_the_relay");
     let submit_start = Instant::now();
 
     if let Some(limiter) = &relay.submission_rate_limiter {
@@ -529,6 +555,8 @@ impl BuilderSinkFactory for RelaySubmitSinkFactory {
     ) -> Box<dyn BlockBuildingSink> {
         let best_block_cell = Arc::new(BestBlockCell::default());
 
+        //println!("[rb] builder relays: {:?}", self.relays);
+
         let relays = slot_data
             .relays
             .iter()
@@ -539,6 +567,9 @@ impl BuilderSinkFactory for RelaySubmitSinkFactory {
                     .clone()
             })
             .collect();
+
+        //println!("[rb] filtered relays: {:?}", self.relays);
+
         tokio::spawn(run_submit_to_relays_job_and_metrics(
             best_block_cell.clone(),
             slot_data,

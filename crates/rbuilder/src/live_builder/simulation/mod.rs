@@ -16,7 +16,6 @@ use simulation_job::SimulationJob;
 use std::sync::{Arc, Mutex};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::{info_span, Instrument};
 
 #[derive(Debug)]
 pub struct SlotOrderSimResults {
@@ -50,7 +49,7 @@ pub struct CurrentSimulationContexts {
 
 #[derive(Debug)]
 pub struct OrderSimulationPool<P> {
-    provider: P,
+    providers: HashMap<u64, P>,
     running_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
     current_contexts: Arc<Mutex<CurrentSimulationContexts>>,
     worker_threads: Vec<std::thread::JoinHandle<()>>,
@@ -69,9 +68,13 @@ impl<P> OrderSimulationPool<P>
 where
     P: StateProviderFactory + Clone + 'static,
 {
-    pub fn new(provider: P, num_workers: usize, global_cancellation: CancellationToken) -> Self {
+    pub fn new(
+        providers: HashMap<u64, P>,
+        num_workers: usize,
+        global_cancellation: CancellationToken,
+    ) -> Self {
         let mut result = Self {
-            provider,
+            providers,
             running_tasks: Arc::new(Mutex::new(Vec::new())),
             current_contexts: Arc::new(Mutex::new(CurrentSimulationContexts {
                 contexts: HashMap::default(),
@@ -79,13 +82,13 @@ where
             worker_threads: Vec::new(),
         };
         for i in 0..num_workers {
-            let ctx = Arc::clone(&result.current_contexts);
-            let provider = result.provider.clone();
+            let ctx: Arc<Mutex<CurrentSimulationContexts>> = Arc::clone(&result.current_contexts);
+            let providers = result.providers.clone();
             let cancel = global_cancellation.clone();
-            let handle = std::thread::Builder::new()
+            let handle = std::thread::Builder::new() 
                 .name(format!("sim_thread:{}", i))
                 .spawn(move || {
-                    sim_worker::run_sim_worker(i, ctx, provider, cancel);
+                    sim_worker::run_sim_worker(i, ctx, providers, cancel);
                 })
                 .expect("Failed to start sim worker thread");
             result.worker_threads.push(handle);
@@ -101,37 +104,43 @@ where
     pub fn spawn_simulation_job(
         &self,
         ctx: BlockBuildingContext,
-        input: OrdersForBlock,
+        input: HashMap<u64, OrdersForBlock>,
         block_cancellation: CancellationToken,
     ) -> SlotOrderSimResults {
         let (slot_sim_results_sender, slot_sim_results_receiver) = mpsc::channel(10_000);
 
-        let provider = self.provider.clone();
+        let providers = self.providers.clone();
         let current_contexts = Arc::clone(&self.current_contexts);
         let block_context: BlockContextId = gen_uid();
-        let span = info_span!("sim_ctx", block = ctx.block_env.number.to::<u64>(), parent = ?ctx.attributes.parent);
+        // let span = info_span!("sim_ctx", block = ctx.block_env.number.to::<u64>(), parent = ?ctx.attributes.parent);
 
-        let handle = tokio::spawn(
-            async move {
-                let sim_tree = SimTree::new(provider, ctx.attributes.parent);
-                let new_order_sub = input.new_order_sub;
+        let handle = tokio::spawn(async move {
+            for (_chain_id, new_order_sub) in input {
+                let sim_tree = SimTree::new(
+                    providers.clone(),
+                    ctx.chains
+                        .iter()
+                        .map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent))
+                        .collect(),
+                );
+                let new_order_sub = new_order_sub.new_order_sub;
                 let (sim_req_sender, sim_req_receiver) = flume::unbounded();
                 let (sim_results_sender, sim_results_receiver) = mpsc::channel(1024);
                 {
                     let mut contexts = current_contexts.lock().unwrap();
                     let sim_context = SimulationContext {
-                        block_ctx: ctx,
+                        block_ctx: ctx.clone(),
                         requests: sim_req_receiver,
                         results: sim_results_sender,
                     };
                     contexts.contexts.insert(block_context, sim_context);
                 }
                 let mut simulation_job = SimulationJob::new(
-                    block_cancellation,
+                    block_cancellation.clone(),
                     new_order_sub,
                     sim_req_sender,
                     sim_results_receiver,
-                    slot_sim_results_sender,
+                    slot_sim_results_sender.clone(),
                     sim_tree,
                 );
 
@@ -143,8 +152,7 @@ where
                     contexts.contexts.remove(&block_context);
                 }
             }
-            .instrument(span),
-        );
+        });
 
         {
             let mut tasks = self.running_tasks.lock().unwrap();
@@ -167,6 +175,7 @@ mod tests {
         primitives::{MempoolTx, Order, TransactionSignedEcRecoveredWithBlobs},
         utils::ProviderFactoryReopener,
     };
+    
     use reth_primitives::U256;
 
     #[tokio::test]
@@ -179,18 +188,37 @@ mod tests {
             ProviderFactoryReopener::new_from_existing(test_context.provider_factory().clone())
                 .unwrap();
 
-        let sim_pool = OrderSimulationPool::new(provider_factory_reopener, 4, cancel.clone());
+        let mut providers = HashMap::default();
+        providers.insert(
+            test_context.chain_spec.chain.id(),
+            provider_factory_reopener.clone(),
+        );
+        providers.insert(
+            test_context.chain_spec.chain.id() + 1,
+            provider_factory_reopener,
+        );
+
+        let sim_pool = OrderSimulationPool::new(providers, 4, cancel.clone());
         let (order_sender, order_receiver) = mpsc::unbounded_channel();
         let orders_for_block = OrdersForBlock {
             new_order_sub: order_receiver,
         };
 
+        let (order_sender2, order_receiver2) = mpsc::unbounded_channel();
+        let orders_for_block2 = OrdersForBlock {
+            new_order_sub: order_receiver2,
+        };
+
+        let mut orders_for_blocks = HashMap::default();
+        orders_for_blocks.insert(test_context.chain_spec.chain.id(), orders_for_block);
+        orders_for_blocks.insert(test_context.chain_spec.chain.id() + 1, orders_for_block2);
         let mut sim_results = sim_pool.spawn_simulation_job(
             test_context.block_building_context().clone(),
-            orders_for_block,
+            orders_for_blocks,
             cancel.clone(),
         );
 
+        // Cecilia!
         // Create a simple tx that sends to coinbase 5 wei.
         let coinbase_profit = 5;
         // max_priority_fee will be 0

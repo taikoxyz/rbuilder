@@ -111,7 +111,7 @@ where
         result
     };
 
-    let provider_factory = config.base_config().create_provider_factory()?;
+    let provider_factory = config.base_config().create_provider_reopener()?;
     let chain_spec = config.base_config().chain_spec()?;
 
     let mut profits = Vec::new();
@@ -252,8 +252,8 @@ fn print_backtest_value(mut output: BlockBacktestValue) {
             .cmp(&a.our_bid_value)
             .then(b.builder_name.cmp(&a.builder_name))
     });
-    println!("block:       {}", output.block_number);
-    println!("bid_val:     {}", format_ether(output.winning_bid_value));
+    println!("[rb] block:       {}", output.block_number);
+    println!("[rb] bid_val:     {}", format_ether(output.winning_bid_value));
     if let Some(best_b) = output.builder_outputs.first() {
         println!(
             "best_bldr:   {} {} {}",
@@ -262,10 +262,10 @@ fn print_backtest_value(mut output: BlockBacktestValue) {
             best_b.builder_name
         );
     }
-    println!("won_by:      {}", output.extra_data);
-    println!("sim_ord:     {}", output.simulated_orders_count);
-    println!("sim_blocked: {}", output.filtered_orders_blocklist_count);
-    println!("sim_n_ref:   {}", output.simulated_orders_with_refund);
+    println!("[rb] won_by:      {}", output.extra_data);
+    println!("[rb] sim_ord:     {}", output.simulated_orders_count);
+    println!("[rb] sim_blocked: {}", output.filtered_orders_blocklist_count);
+    println!("[rb] sim_n_ref:   {}", output.simulated_orders_with_refund);
     println!(
         "sim_sum_ref: {}",
         format_ether(output.simulated_refunds_paid)

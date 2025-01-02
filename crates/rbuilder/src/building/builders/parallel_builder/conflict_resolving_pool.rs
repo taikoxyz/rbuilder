@@ -104,7 +104,7 @@ where
     pub fn process_task(
         task: ConflictTask,
         ctx: &BlockBuildingContext,
-        provider: &P,
+         uprovider: &P,
         cancellation_token: CancellationToken,
         simulation_cache: Arc<SharedSimulationCache>,
     ) -> Result<(GroupId, (ResolutionResult, ConflictGroup))> {

@@ -10,6 +10,7 @@ use crate::{
     live_builder::{payload_events::MevBoostSlotData, simulation::SlotOrderSimResults},
     roothash::run_trie_prefetcher,
 };
+use ahash::HashMap;
 use reth_db::Database;
 use reth_provider::{DatabaseProviderFactory, StateProviderFactory};
 use tokio::sync::{broadcast, mpsc};
@@ -26,10 +27,10 @@ use super::{
 
 #[derive(Debug)]
 pub struct BlockBuildingPool<P, DB> {
-    provider: P,
+    providers: HashMap<u64, P>,
     builders: Vec<Arc<dyn BlockBuildingAlgorithm<P, DB>>>,
     sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
-    orderpool_subscriber: order_input::OrderPoolSubscriber,
+    orderpool_subscribers: HashMap<u64, order_input::OrderPoolSubscriber>,
     order_simulation_pool: OrderSimulationPool<P>,
     run_sparse_trie_prefetcher: bool,
     phantom: PhantomData<DB>,
@@ -41,18 +42,18 @@ where
     P: DatabaseProviderFactory<DB> + StateProviderFactory + Clone + 'static,
 {
     pub fn new(
-        provider: P,
+        providers: HashMap<u64, P>,
         builders: Vec<Arc<dyn BlockBuildingAlgorithm<P, DB>>>,
         sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
-        orderpool_subscriber: order_input::OrderPoolSubscriber,
+        orderpool_subscribers: HashMap<u64, order_input::OrderPoolSubscriber>,
         order_simulation_pool: OrderSimulationPool<P>,
         run_sparse_trie_prefetcher: bool,
     ) -> Self {
         BlockBuildingPool {
-            provider,
+            providers,
             builders,
             sink_factory,
-            orderpool_subscriber,
+            orderpool_subscribers,
             order_simulation_pool,
             run_sparse_trie_prefetcher,
             phantom: PhantomData,
@@ -67,7 +68,7 @@ where
         global_cancellation: CancellationToken,
         max_time_to_build: Duration,
     ) {
-        let block_cancellation = global_cancellation.child_token();
+        let block_cancellation: CancellationToken = global_cancellation.child_token();
 
         let cancel = block_cancellation.clone();
         tokio::spawn(async move {
@@ -75,18 +76,21 @@ where
             cancel.cancel();
         });
 
-        let (orders_for_block, sink) = OrdersForBlock::new_with_sink();
         // add OrderReplacementManager to manage replacements and cancellations
-        let order_replacement_manager = OrderReplacementManager::new(Box::new(sink));
         // sink removal is automatic via OrderSink::is_alive false
-        let _block_sub = self.orderpool_subscriber.add_sink(
-            block_ctx.block_env.number.to(),
-            Box::new(order_replacement_manager),
-        );
+        let mut orders_for_blocks = HashMap::default();
+        for (chain_id, orderpool_subscriber) in self.orderpool_subscribers.iter_mut() {
+            let (orders_for_block, sink) = OrdersForBlock::new_with_sink();
+            let _block_sub = orderpool_subscriber.add_sink(
+                block_ctx.chains[chain_id].block_env.number.to(),
+                Box::new(OrderReplacementManager::new(Box::new(sink))),
+            );
+            orders_for_blocks.insert(*chain_id, orders_for_block);
+        }
 
         let simulations_for_block = self.order_simulation_pool.spawn_simulation_job(
             block_ctx.clone(),
-            orders_for_block,
+            orders_for_blocks,
             block_cancellation.clone(),
         );
         self.start_building_job(
@@ -105,16 +109,19 @@ where
         input: SlotOrderSimResults,
         cancel: CancellationToken,
     ) {
+        // Brecht: start building
         let builder_sink = self.sink_factory.create_sink(slot_data, cancel.clone());
         let (broadcast_input, _) = broadcast::channel(10_000);
 
-        let block_number = ctx.block_env.number.to::<u64>();
-
         for builder in self.builders.iter() {
             let builder_name = builder.name();
-            debug!(block = block_number, builder_name, "Spawning builder job");
+
+            debug!(
+                /* block = block_number,  */ builder_name,
+                "Spawning builder job"
+            );
             let input = BlockBuildingAlgorithmInput::<P> {
-                provider: self.provider.clone(),
+                providers: self.providers.clone(),
                 ctx: ctx.clone(),
                 input: broadcast_input.subscribe(),
                 sink: builder_sink.clone(),
@@ -123,23 +130,29 @@ where
             let builder = builder.clone();
             tokio::task::spawn_blocking(move || {
                 builder.build_blocks(input);
-                debug!(block = block_number, builder_name, "Stopped builder job");
             });
         }
 
         if self.run_sparse_trie_prefetcher {
             let input = broadcast_input.subscribe();
-            let provider = self.provider.clone();
-            tokio::task::spawn_blocking(move || {
-                run_trie_prefetcher(
-                    ctx.attributes.parent,
-                    ctx.shared_sparse_mpt_cache,
-                    provider,
-                    input,
-                    cancel.clone(),
-                );
-                debug!(block = block_number, "Stopped trie prefetcher job");
-            });
+
+            // Spawn a prefetcher task for each chain
+            for (chain_id, provider) in self.providers.clone() {
+                let chain_input = input.resubscribe();
+                let chain_cancel = cancel.clone();
+                let chain_ctx = ctx.clone();
+
+                tokio::task::spawn_blocking(move || {
+                    run_trie_prefetcher(
+                        chain_ctx.chains[&chain_id].attributes.parent,
+                        chain_ctx.chains[&chain_id].shared_sparse_mpt_cache.clone(),
+                        provider,
+                        chain_input,
+                        chain_cancel,
+                    );
+                    debug!(chain = chain_id, "Stopped trie prefetcher job");
+                });
+            }
         }
 
         tokio::spawn(multiplex_job(input.orders, broadcast_input));

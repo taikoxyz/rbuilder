@@ -17,6 +17,10 @@ pub struct ResolutionResult {
     pub sequence_of_orders: Vec<(usize, U256)>,
 }
 
+/// ResolutionResult describes order of certain groups of orders.
+#[derive(Debug, Default, Clone)]
+pub type SyncResolutionResult = HashMap<u64, ResolutionResult>;
+
 /// ConflictGroups describes set of conflicting orders.
 /// It's meant to be shared between thread who merges the group and who uses the best ordering to combine the result.
 #[derive(Debug, Clone)]

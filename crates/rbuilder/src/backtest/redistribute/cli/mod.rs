@@ -57,7 +57,7 @@ where
     let mut historical_data_storage =
         HistoricalDataStorage::new_from_path(&config.base_config().backtest_fetch_output_file)
             .await?;
-    let provider = config.base_config().create_provider_factory()?;
+    let provider = config.base_config().create_provider_reopener()?;
     let mut csv_writer = cli
         .csv
         .map(|path| -> io::Result<_> { CSVResultWriter::new(path) })
@@ -167,7 +167,7 @@ where
         csv_writer.write_data(values)?;
     } else {
         for (address, value) in old_output {
-            println!("{}: {}", address, format_ether(value));
+            println!("[rb] {}: {}", address, format_ether(value));
         }
     }
 

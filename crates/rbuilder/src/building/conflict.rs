@@ -1,9 +1,9 @@
 use super::{BlockBuildingContext, BlockState, PartialBlockFork};
 use crate::primitives::{Order, OrderId};
 use itertools::Itertools;
-use reth::{primitives::Address, providers::StateProviderBox};
+use reth::providers::StateProviderBox;
 use reth_provider::StateProvider;
-use revm_primitives::U256;
+use revm_primitives::{ChainAddress, U256};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -14,7 +14,7 @@ use std::{
 pub enum Conflict {
     NoConflict,
     /// First order changed a nonce used by the second one.
-    Nonce(Address),
+    Nonce(ChainAddress),
     /// First order caused second one to fail.
     Fatal,
     /// Second order executed ok but with different profit.
@@ -33,12 +33,12 @@ pub fn find_conflict_slow(
     let profits_alone = {
         let mut profits_alone = HashMap::new();
         for order in orders {
-            let mut state = BlockState::new_arc(state_provider);
+            let mut state = BlockState::new_arc_single(state_provider, ctx.parent_chain_id);
             let mut fork = PartialBlockFork::new(&mut state);
             if let Ok(res) = fork.commit_order(order, ctx, 0, 0, 0, true)? {
                 profits_alone.insert(order.id(), res.coinbase_profit);
             };
-            state_provider = state.into_provider();
+            state_provider = state.into_provider(ctx.parent_chain_id);
         }
         profits_alone
     };
@@ -71,7 +71,7 @@ pub fn find_conflict_slow(
             continue;
         }
 
-        let mut state = BlockState::new_arc(state_provider);
+        let mut state = BlockState::new_arc_single(state_provider, ctx.parent_chain_id);
         let mut fork = PartialBlockFork::new(&mut state);
         let mut gas_used = 0;
         let mut blob_gas_used = 0;
@@ -102,7 +102,7 @@ pub fn find_conflict_slow(
                 results.insert(pair, Conflict::Fatal);
             }
         };
-        state_provider = state.into_provider();
+        state_provider = state.into_provider(ctx.parent_chain_id);
     }
 
     Ok(results)

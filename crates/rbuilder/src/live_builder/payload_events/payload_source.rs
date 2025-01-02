@@ -47,7 +47,7 @@ impl CLPayloadSource {
                             match event_res {
                                 Ok(event) => {
                                     if sender.send(event).is_err() {
-                                        error!("Error while sending payload event,CLPayloadSource closed");
+                                        error!("Error while sending payload event, CLPayloadSource closed");
                                         return;
                                     }
                                 }
@@ -181,6 +181,7 @@ impl PayloadSourceMuxer {
             let join_handle = tokio::spawn(async move {
                 let mut source =
                     PayloadSourceReconnector::new(cl, recv_timeout, reconnect_wait, cancellation);
+                println!("[rb] ==> PayloadSourceReconnector::new done timeout={:?}", recv_timeout);
                 while let Some(payload) = source.recv().await {
                     if sender.send(payload).is_err() {
                         error!("PayloadSourceMuxer send error");

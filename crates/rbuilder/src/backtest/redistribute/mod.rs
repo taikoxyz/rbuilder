@@ -25,6 +25,7 @@ use rayon::prelude::*;
 use reth_chainspec::ChainSpec;
 use reth_db::Database;
 use reth_provider::{DatabaseProviderFactory, HeaderProvider, StateProviderFactory};
+use revm_primitives::ChainAddress;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::{max, min},
@@ -336,7 +337,7 @@ impl AvailableOrders {
                 .all_orders_by_id
                 .get(id)
                 .expect("order not found it all orders set");
-            let mandatory_nonces: HashSet<Address> = order
+            let mandatory_nonces: HashSet<ChainAddress> = order
                 .nonces()
                 .iter()
                 .filter_map(|n| {

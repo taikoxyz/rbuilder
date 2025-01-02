@@ -110,13 +110,13 @@ pub fn run_trie_prefetcher<P, DB>(
                 );
 
             for (address, destroyed) in changed_accounts_iter {
-                if fetched_accounts.contains(address) {
+                if fetched_accounts.contains(&address.1) {
                     continue;
                 }
-                fetched_accounts.insert(*address);
+                fetched_accounts.insert(address.1);
                 fetch_request
-                    .entry(*address)
-                    .or_insert_with(|| ChangedAccountData::new(*address, destroyed));
+                    .entry(address.1)
+                    .or_insert_with(|| ChangedAccountData::new(address.1, destroyed));
             }
 
             for (written_slot, value) in &used_state_trace.written_slot_values {
@@ -125,8 +125,8 @@ pub fn run_trie_prefetcher<P, DB>(
                 }
                 fetched_slots.insert(written_slot.clone());
                 let account_request = fetch_request
-                    .entry(written_slot.address)
-                    .or_insert_with(|| ChangedAccountData::new(written_slot.address, false));
+                    .entry(written_slot.address.1)
+                    .or_insert_with(|| ChangedAccountData::new(written_slot.address.1, false));
                 account_request
                     .slots
                     .push((written_slot.key, value.is_zero()));

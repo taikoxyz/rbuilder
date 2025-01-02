@@ -121,7 +121,7 @@ async fn main() -> eyre::Result<()> {
             )
             .await?;
             let blocks = historical_data_storage.get_blocks_info().await?;
-            println!("block_number,block_hash,order_count,profit");
+            println!("[rb] block_number,block_hash,order_count,profit");
             for block in blocks {
                 println!(
                     "{},{:?},{},{}",

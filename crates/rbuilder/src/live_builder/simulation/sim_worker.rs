@@ -7,8 +7,10 @@ use crate::{
     telemetry,
     telemetry::add_sim_thread_utilisation_timings,
 };
-use reth_payload_builder::database::CachedReads;
+use ahash::HashMap;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_provider::StateProviderFactory;
+use revm_primitives::ChainAddress;
 use std::{
     sync::{Arc, Mutex},
     thread::sleep,
@@ -23,7 +25,7 @@ use tracing::error;
 pub fn run_sim_worker<P>(
     worker_id: usize,
     ctx: Arc<Mutex<CurrentSimulationContexts>>,
-    provider: P,
+    providers: HashMap<u64, P>,
     global_cancellation: CancellationToken,
 ) where
     P: StateProviderFactory,
@@ -37,14 +39,31 @@ pub fn run_sim_worker<P>(
                 let ctxs = ctx.lock().unwrap();
                 ctxs.contexts.iter().next().map(|(_, c)| c.clone())
             };
-            // @Perf chose random context so its more fair when we have 2 instead of 1
             if let Some(ctx) = next_ctx {
                 break ctx;
             } else {
-                // contexts are created for a duration of the slot so this is not a problem
                 sleep(Duration::from_millis(50));
             }
+            sleep(Duration::from_millis(500));
         };
+
+        let state_providers = providers
+            .iter()
+            .map(|(chain_id, provider)| {
+                let provider = provider
+                    .history_by_block_hash(
+                        current_sim_context
+                            .block_ctx
+                            .chains
+                            .get(chain_id)
+                            .unwrap()
+                            .attributes
+                            .parent,
+                    )
+                    .unwrap();
+                (*chain_id, Arc::from(provider))
+            })
+            .collect::<HashMap<_, _>>();
 
         let mut cached_reads = CachedReads::default();
         let mut last_sim_finished = Instant::now();
@@ -52,43 +71,38 @@ pub fn run_sim_worker<P>(
             let sim_thread_wait_time = last_sim_finished.elapsed();
             let sim_start = Instant::now();
 
-            let state_provider = match provider
-                .history_by_block_hash(current_sim_context.block_ctx.attributes.parent)
-            {
-                Ok(state_provider) => state_provider,
-                Err(err) => {
-                    error!(?err, "Error while getting state for block");
-                    // break here so we can try to get new context
-                    // @Metric
-                    break;
-                }
-            };
             let start_time = Instant::now();
-            let mut block_state = BlockState::new(state_provider).with_cached_reads(cached_reads);
+            let mut block_state =
+                BlockState::new_arc(state_providers.clone()).with_cached_reads(cached_reads);
             let sim_result = simulate_order(
                 task.parents.clone(),
-                task.order,
+                task.order.clone(),
                 &current_sim_context.block_ctx,
                 &mut block_state,
             );
             match sim_result {
                 Ok(sim_result) => {
-                    let sim_ok = match sim_result.result {
+                    let sim_ok = match &sim_result.result {
                         OrderSimResult::Success(simulated_order, nonces_after) => {
+                            println!("[rb] sim okay for: {:?} -> {:?}", task, sim_result);
                             let result = SimulatedResult {
                                 id: task.id,
-                                simulated_order,
+                                simulated_order: simulated_order.clone(),
                                 previous_orders: task.parents,
                                 nonces_after: nonces_after
-                                    .into_iter()
-                                    .map(|(address, nonce)| NonceKey { address, nonce })
+                                    .iter()
+                                    .map(|(address, nonce)| NonceKey {
+                                        address: ChainAddress(
+                                            task.order.chain_id().unwrap(),
+                                            *address,
+                                        ),
+                                        nonce: *nonce,
+                                    })
                                     .collect(),
                                 simulation_time: start_time.elapsed(),
                             };
-                            current_sim_context
-                                .results
-                                .try_send(result)
-                                .unwrap_or_default();
+                            let result_send = current_sim_context.results.try_send(result);
+                            println!("[rb] sending result: {:?}", result_send);
                             true
                         }
                         OrderSimResult::Failed(_) => false,
@@ -98,7 +112,6 @@ pub fn run_sim_worker<P>(
                 }
                 Err(err) => {
                     error!(?err, "Critical error while simulating order");
-                    // @Metric
                     break;
                 }
             }

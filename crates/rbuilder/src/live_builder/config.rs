@@ -12,17 +12,19 @@ use super::{
         },
         block_sealing_bidder_factory::BlockSealingBidderFactory,
         relay_submit::{RelaySubmitSinkFactory, SubmissionConfig},
-    },
+    }, gwyneth::{EthApiStream, EthTxSender, GwynethMempoolReciever},
 };
 use crate::{
     beacon_api_client::Client,
     building::{
         builders::{
             ordering_builder::{OrderingBuilderConfig, OrderingBuildingAlgorithm},
-            parallel_builder::{
-                parallel_build_backtest, ParallelBuilderConfig, ParallelBuildingAlgorithm,
-            },
-            BacktestSimulateBlockInput, Block, BlockBuildingAlgorithm,
+            // parallel_builder::{
+            //     parallel_build_backtest, ParallelBuilderConfig, ParallelBuildingAlgorithm,
+            // },
+            BacktestSimulateBlockInput,
+            Block,
+            BlockBuildingAlgorithm,
         },
         Sorting,
     },
@@ -33,7 +35,10 @@ use crate::{
     mev_boost::BLSBlockSigner,
     primitives::mev_boost::{MevBoostRelay, RelayConfig},
     roothash::RootHashConfig,
-    utils::{build_info::rbuilder_version, ProviderFactoryReopener, Signer},
+    utils::{
+        build_info::rbuilder_version,
+        ProviderFactoryReopener, ProviderFactoryUnchecked, Signer,
+    },
     validation_api_client::ValidationAPIClient,
 };
 use alloy_chains::ChainKind;
@@ -41,22 +46,26 @@ use alloy_primitives::{
     utils::{format_ether, parse_ether},
     Address, FixedBytes, B256,
 };
+use alloy_provider::Provider;
 use ethereum_consensus::{
     builder::compute_builder_domain, crypto::SecretKey, primitives::Version,
     state_transition::Context as ContextEth,
 };
 use eyre::Context;
-use reth::tasks::pool::BlockingTaskPool;
+use gwyneth::exex::L1ParentStates;
+use jsonrpsee::http_client::HttpClient;
+use reth::{builder::NodeConfig, tasks::pool::BlockingTaskPool};
 use reth_chainspec::{Chain, ChainSpec, NamedChain};
 use reth_db::{Database, DatabaseEnv};
-use reth_payload_builder::database::CachedReads;
+use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_primitives::StaticFileSegment;
 use reth_provider::{
     DatabaseProviderFactory, HeaderProvider, StateProviderFactory, StaticFileProviderFactory,
 };
 use serde::Deserialize;
 use serde_with::{serde_as, OneOrMany};
-use std::fmt::Debug;
+use tracing_subscriber::fmt::format;
+use std::{fmt::Debug, net::SocketAddr};
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
@@ -75,7 +84,8 @@ pub const DEFAULT_MAX_CONCURRENT_SEALS: u64 = 1;
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "algo", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum SpecificBuilderConfig {
-    ParallelBuilder(ParallelBuilderConfig),
+    // TODO (Cecilia)
+    // ParallelBuilder(ParallelBuilderConfig),
     OrderingBuilder(OrderingBuilderConfig),
 }
 
@@ -99,6 +109,23 @@ pub struct Config {
     /// selected builder configurations
     pub builders: Vec<BuilderConfig>,
 }
+
+#[derive(Clone, Debug)]
+pub struct RethInput<P> {
+    /// States of L1 client used in the building process
+    pub l1_provider: P,
+    /// States of L2 client used in the building process
+    pub l2_providers: Vec<P>,
+    // Latest L1 parent of each L2 chain
+    pub l1_parents: L1ParentStates,
+    /// Get header stream to for build ctx and transaction stream from reth mempool for L1
+    pub l1_ethapi: Option<Arc<dyn EthApiStream>>,
+    /// Get header stream to for build ctx and transaction stream from reth mempool for L2
+    pub l2_ethapis: Option<Vec<Arc<dyn EthApiStream>>>,
+    // Send transactions to L1 in BlockProposer
+    pub l1_client: Option<HttpClient>
+}
+
 
 #[serde_as]
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -152,6 +179,22 @@ impl Default for L1Config {
 }
 
 impl L1Config {
+
+    pub fn update_in_process_setting(
+        &mut self, 
+        l1_node_config: &NodeConfig,
+    ) {
+        assert!(!self.relays.is_empty(), "Must contains at least one relay for L1 proposing");
+        let relay_proposer = self.relays.get_mut(0).unwrap();
+
+        assert!(relay_proposer.l1_proposer_pk.is_some(), "L1 proposer private key should be set");
+        assert!(relay_proposer.l1_rollup_contract.is_some(), "L1 rollup contract should be set");    
+        // let url = format!("https://{}", SocketAddr::new(l1_node_config.rpc.http_addr, l1_node_config.rpc.http_port).to_string());
+        // relay_proposer.l1_rpc_url = Some(url);
+        // println!("[rb] Cecilia ==> L1Config::update_in_process_setting {:?}", self.relays.get_mut(0).unwrap().l1_rpc_url);
+        // relay_proposer.chain_id = Some(l1_node_config.chain.chain.id());
+    }
+
     pub fn resolve_cl_node_urls(&self) -> eyre::Result<Vec<String>> {
         crate::live_builder::base_config::resolve_env_or_values::<String>(&self.cl_node_url)
     }
@@ -160,16 +203,20 @@ impl L1Config {
         self.cl_node_url
             .iter()
             .map(|url| {
+                println!("[rb] cl_node_url: {:?} {:?}", url, url.value());
                 let url = Url::parse(&url.value()?)?;
                 Ok(Client::new(url))
             })
             .collect()
     }
 
-    pub fn create_relays(&self) -> eyre::Result<Vec<MevBoostRelay>> {
+    pub fn create_relays(&self, l1_client: Option<HttpClient>) -> eyre::Result<Vec<MevBoostRelay>> {
         let mut results = Vec::new();
-        for relay in &self.relays {
-            results.push(MevBoostRelay::from_config(relay)?);
+        for config in &self.relays {
+            println!("[rb] Dani debug - create relays: {:?}", config);
+            // Only the config with l1 proposer infos will have BlockProposer
+            let relay = MevBoostRelay::from_config(config, l1_client.clone())?;
+            results.push(relay);
         }
         Ok(results)
     }
@@ -258,6 +305,7 @@ impl L1Config {
         &self,
         chain_spec: Arc<ChainSpec>,
         bid_observer: Box<dyn BidObserver + Send + Sync>,
+        l1_client: Option<HttpClient>,
     ) -> eyre::Result<(Box<dyn BuilderSinkFactory>, Vec<MevBoostRelay>)> {
         let submission_config = self.submission_config(chain_spec, bid_observer)?;
         info!(
@@ -275,7 +323,7 @@ impl L1Config {
             format_ether(submission_config.optimistic_max_bid_value),
         );
 
-        let relays = self.create_relays()?;
+        let relays = self.create_relays(l1_client)?;
         let sink_factory: Box<dyn BuilderSinkFactory> = Box::new(RelaySubmitSinkFactory::new(
             submission_config,
             relays.clone(),
@@ -288,23 +336,29 @@ impl LiveBuilderConfig for Config {
     fn base_config(&self) -> &BaseConfig {
         &self.base_config
     }
+
     async fn new_builder<P, DB>(
         &self,
-        provider: P,
+        reth_input: RethInput<P>,
         cancellation_token: tokio_util::sync::CancellationToken,
     ) -> eyre::Result<super::LiveBuilder<P, DB, MevBoostSlotDataGenerator>>
     where
         DB: Database + Clone + 'static,
         P: DatabaseProviderFactory<DB> + StateProviderFactory + HeaderProvider + Clone + 'static,
     {
+        println!("[rb] Cecilia ==> LiveBuilderConfig::new_builder");
+
+        let RethInput { l1_provider, l2_providers, l1_parents, l1_ethapi, l2_ethapis, l1_client } = reth_input.clone();
+
         let (sink_sealed_factory, relays) = self.l1_config.create_relays_sealed_sink_factory(
             self.base_config.chain_spec()?,
             Box::new(NullBidObserver {}),
+            l1_client
         )?;
 
         let (wallet_balance_watcher, wallet_history) = WalletBalanceWatcher::new(
-            provider.clone(),
-            self.base_config.coinbase_signer()?.address,
+            l1_provider.clone(),
+            self.base_config.coinbase_signer()?.address.1,
             WALLET_INIT_HISTORY_SIZE,
         )?;
         let bidding_service: Box<dyn BiddingService> =
@@ -324,15 +378,17 @@ impl LiveBuilderConfig for Config {
             self.base_config.blocklist()?,
             cancellation_token.clone(),
         );
+
         let live_builder = self
             .base_config
-            .create_builder_with_provider_factory(
+            .create_in_process_builder(
                 cancellation_token,
                 sink_factory,
                 payload_event,
-                provider,
+                reth_input,
             )
             .await?;
+            
         let root_hash_config = self.base_config.live_root_hash_config()?;
         let root_hash_task_pool = self.base_config.root_hash_task_pool()?;
         let builders = create_builders(
@@ -341,6 +397,7 @@ impl LiveBuilderConfig for Config {
             root_hash_task_pool,
             self.base_config.sbundle_mergeabe_signers(),
         );
+
         Ok(live_builder.with_builders(builders))
     }
 
@@ -361,10 +418,7 @@ impl LiveBuilderConfig for Config {
         match builder_cfg.builder {
             SpecificBuilderConfig::OrderingBuilder(config) => {
                 crate::building::builders::ordering_builder::backtest_simulate_block(config, input)
-            }
-            SpecificBuilderConfig::ParallelBuilder(config) => {
-                parallel_build_backtest(input, config)
-            }
+            } 
         }
     }
 }
@@ -464,9 +518,9 @@ fn open_reth_db(reth_db_path: &Path) -> eyre::Result<Arc<DatabaseEnv>> {
     ))
 }
 
-pub fn coinbase_signer_from_secret_key(secret_key: &str) -> eyre::Result<Signer> {
+pub fn coinbase_signer_from_secret_key(chain_id: u64, secret_key: &str) -> eyre::Result<Signer> {
     let secret_key = B256::from_str(secret_key)?;
-    Ok(Signer::try_from_secret(secret_key)?)
+    Ok(Signer::try_from_secret(chain_id, secret_key)?)
 }
 
 pub fn create_builders<P, DB>(
@@ -511,16 +565,16 @@ where
                 order_cfg,
                 cfg.name,
             ))
-        }
-        SpecificBuilderConfig::ParallelBuilder(parallel_cfg) => {
-            Arc::new(ParallelBuildingAlgorithm::new(
-                root_hash_config.clone(),
-                root_hash_task_pool.clone(),
-                sbundle_mergeabe_signers.to_vec(),
-                parallel_cfg,
-                cfg.name,
-            ))
-        }
+        } // TODO (Cecilia)
+          // SpecificBuilderConfig::ParallelBuilder(parallel_cfg) => {
+          //     Arc::new(ParallelBuildingAlgorithm::new(
+          //         root_hash_config.clone(),
+          //         root_hash_task_pool.clone(),
+          //         sbundle_mergeabe_signers.to_vec(),
+          //         parallel_cfg,
+          //         cfg.name,
+          //     ))
+          // }
     }
 }
 
@@ -615,7 +669,8 @@ mod test {
                 .base_config
                 .coinbase_signer()
                 .expect("Coinbase signer")
-                .address,
+                .address
+                .1,
             address!("75618c70B1BBF111F6660B0E3760387fb494102B")
         );
 

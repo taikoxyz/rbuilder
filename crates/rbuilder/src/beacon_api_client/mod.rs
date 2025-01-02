@@ -10,7 +10,7 @@ pub const DEFAULT_CL_NODE_URL: &str = "http://localhost:8000";
 #[derive(Deserialize, Clone)]
 #[serde(try_from = "String")]
 pub struct Client {
-    inner: bClient,
+    pub inner: bClient,
 }
 
 impl Debug for Client {

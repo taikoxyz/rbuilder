@@ -1,6 +1,6 @@
 use reth_primitives::{transaction::FillTxEnv, Address, TransactionSignedEcRecovered};
 use revm::{inspector_handle_register, primitives::Env};
-use revm_primitives::TxEnv;
+use revm_primitives::{ChainAddress, TxEnv};
 
 use crate::building::{
     evm_inspector::{RBuilderEVMInspector, UsedStateTrace},
@@ -20,11 +20,11 @@ impl TestSetup {
         })
     }
 
-    pub fn named_address(&self, named_addr: NamedAddr) -> eyre::Result<Address> {
+    pub fn named_address(&self, named_addr: NamedAddr) -> eyre::Result<ChainAddress> {
         self.test_chain.named_address(named_addr)
     }
 
-    pub fn test_contract_address(&self) -> eyre::Result<Address> {
+    pub fn test_contract_address(&self) -> eyre::Result<ChainAddress> {
         self.test_chain.named_address(NamedAddr::MevTest)
     }
 
@@ -88,7 +88,10 @@ impl TestSetup {
 
         // block state
         let state_provider = self.test_chain.provider_factory().latest()?;
-        let mut block_state = BlockState::new(state_provider);
+        let mut block_state = BlockState::new(
+            state_provider,
+            self.test_chain.block_building_context().parent_chain_id,
+        );
         let mut db_ref = block_state.new_db_ref();
 
         // execute transaction
@@ -96,7 +99,7 @@ impl TestSetup {
             let mut tx_env = TxEnv::default();
             tx.as_ref().fill_tx_env(&mut tx_env, tx.signer());
             let mut evm = revm::Evm::builder()
-                .with_spec_id(self.test_chain.block_building_context().spec_id)
+                .with_spec_id(self.test_chain.parant_chain_building_context().spec_id)
                 .with_env(Box::new(Env {
                     cfg: self
                         .test_chain
@@ -104,7 +107,11 @@ impl TestSetup {
                         .initialized_cfg
                         .cfg_env
                         .clone(),
-                    block: self.test_chain.block_building_context().block_env.clone(),
+                    block: self
+                        .test_chain
+                        .parant_chain_building_context()
+                        .block_env
+                        .clone(),
                     tx: tx_env,
                 }))
                 .with_external_context(&mut inspector)

@@ -30,6 +30,7 @@ pub async fn start_server_accepting_bundles(
     global_cancel: CancellationToken,
 ) -> eyre::Result<JoinHandle<()>> {
     let addr = SocketAddr::V4(SocketAddrV4::new(config.server_ip, config.server_port));
+    println!("[rb] Cecilia ==> start_server_accepting_bundles {:?}", addr);
     let timeout = config.results_channel_timeout;
 
     let server = Server::builder()
@@ -41,7 +42,7 @@ pub async fn start_server_accepting_bundles(
     let mut module = RpcModule::new(());
 
     let results_clone = results.clone();
-    module.register_async_method("eth_sendBundle", move |params, _| {
+    module.register_async_method("eth_sendBundle", move |params, _, _| {
         let results = results_clone.clone();
         async move {
             let start = Instant::now();
@@ -71,17 +72,17 @@ pub async fn start_server_accepting_bundles(
     })?;
 
     let results_clone = results.clone();
-    module.register_async_method("mev_sendBundle", move |params, _| {
+    module.register_async_method("mev_sendBundle", move |params, _, _| {
         handle_mev_send_bundle(results_clone.clone(), timeout, params)
     })?;
 
     let results_clone = results.clone();
-    module.register_async_method("eth_cancelBundle", move |params, _| {
+    module.register_async_method("eth_cancelBundle", move |params, _, _| {
         handle_cancel_bundle(results_clone.clone(), timeout, params)
     })?;
 
     let results_clone = results.clone();
-    module.register_async_method("eth_sendRawTransaction", move |params, _| {
+    module.register_async_method("eth_sendRawTransaction", move |params, _, _| {
         let start = Instant::now();
         let results = results_clone.clone();
         async move {

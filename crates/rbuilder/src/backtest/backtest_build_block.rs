@@ -82,13 +82,13 @@ where
         .map(|order| (order.order.clone(), (order.order.id(), order.timestamp_ms)))
         .unzip();
 
-    println!("Available orders: {}", orders.len());
+    println!("[rb] Available orders: {}", orders.len());
 
     if cli.show_orders {
         print_order_and_timestamp(&block_data.available_orders, &block_data);
     }
 
-    let provider_factory = config.base_config().create_provider_factory()?;
+    let provider_factory = config.base_config().create_provider_reopener()?;
     let chain_spec = config.base_config().chain_spec()?;
     let sbundle_mergeabe_signers = config.base_config().sbundle_mergeabe_signers();
 
@@ -121,28 +121,33 @@ where
             .builders
             .iter()
             .filter_map(|builder_name: &String| {
+                // HashMap with a provider factory
+                let mut providers = HashMap::default();
+                // Use ctx.parent_chain_id as the key - one is OK for testing
+                providers.insert(ctx.parent_chain_id, provider_factory.clone());
+
                 let input = BacktestSimulateBlockInput {
                     ctx: ctx.clone(),
                     builder_name: builder_name.clone(),
                     sbundle_mergeabe_signers: sbundle_mergeabe_signers.clone(),
                     sim_orders: &sim_orders,
-                    provider: provider_factory.clone(),
+                    providers,
                     cached_reads: None,
                 };
                 let build_res = config.build_backtest_block(builder_name, input);
                 if let Err(err) = &build_res {
-                    println!("Error building block: {:?}", err);
+                    println!("[rb] Error building block: {:?}", err);
                     return None;
                 }
                 let (block, _) = build_res.ok()?;
-                println!("Built block {} with builder: {:?}", cli.block, builder_name);
-                println!("Builder profit: {}", format_ether(block.trace.bid_value));
+                println!("[rb] Built block {} with builder: {:?}", cli.block, builder_name);
+                println!("[rb] Builder profit: {}", format_ether(block.trace.bid_value));
                 println!(
                     "Number of used orders: {}",
                     block.trace.included_orders.len()
                 );
 
-                println!("Used orders:");
+                println!("[rb] Used orders:");
                 for order_result in &block.trace.included_orders {
                     println!(
                         "{:>74} gas: {:>8} profit: {}",
@@ -152,7 +157,7 @@ where
                     );
                     if let Order::Bundle(_) | Order::ShareBundle(_) = order_result.order {
                         for tx in &order_result.txs {
-                            println!("      ↳ {:?}", tx.hash());
+                            println!("[rb]       ↳ {:?}", tx.hash());
                         }
 
                         for (to, value) in &order_result.paid_kickbacks {
@@ -242,7 +247,7 @@ fn print_order_and_timestamp(orders_with_ts: &[OrdersWithTimestamp], block_data:
             )
         );
         for (tx, optional) in owt.order.list_txs() {
-            println!("    {:?} {:?}", tx.hash(), optional);
+            println!("[rb]     {:?} {:?}", tx.hash(), optional);
             println!(
                 "        from: {:?} to: {:?} nonce: {}",
                 tx.signer(),
@@ -262,7 +267,7 @@ fn show_missing_txs(block_data: &BlockData) {
             missing_txs.len()
         );
         for missing_tx in missing_txs.iter() {
-            println!("Tx: {:?}", missing_tx);
+            println!("[rb] Tx: {:?}", missing_tx);
         }
     }
     let missing_nonce_txs = block_data.search_missing_account_nonce_on_available_orders();
@@ -286,7 +291,7 @@ fn print_simulated_orders(
     order_and_timestamp: &HashMap<OrderId, u64>,
     block_data: &BlockData,
 ) {
-    println!("Simulated orders: ({} total)", sim_orders.len());
+    println!("[rb] Simulated orders: ({} total)", sim_orders.len());
     let mut sorted_orders = sim_orders.to_owned();
     sorted_orders.sort_by_key(|order| order.sim_value.coinbase_profit);
     sorted_orders.reverse();
@@ -327,7 +332,7 @@ fn print_onchain_block_data(
         .map(|(idx, tx)| (tx.hash(), idx))
         .collect();
 
-    println!("Onchain block txs:");
+    println!("[rb] Onchain block txs:");
     for (idx, tx) in tx_sim_results.into_iter().enumerate() {
         println!(
             "{:>4}, {:>74} revert: {:>5} profit: {}",
@@ -337,14 +342,14 @@ fn print_onchain_block_data(
             format_ether(tx.coinbase_profit)
         );
         if !tx.conflicting_txs.is_empty() {
-            println!("   conflicts: ");
+            println!("[rb]    conflicts: ");
         }
         for (tx, slots) in &tx.conflicting_txs {
             for slot in slots {
                 println!(
                     "   {:>4} address: {:?>24}, key: {:?}",
                     txs_to_idx.get(tx).unwrap(),
-                    slot.address,
+                    slot.address.1,
                     slot.key
                 );
             }
@@ -382,7 +387,7 @@ fn print_onchain_block_data(
 
     if let Some(built_block) = &block_data.built_block_data {
         println!();
-        println!("Included orders:");
+        println!("[rb] Included orders:");
         for included_order in &built_block.included_orders {
             if let Some(order) = restored_orders.get(included_order) {
                 println!(
@@ -393,10 +398,10 @@ fn print_onchain_block_data(
                     order.error
                 );
                 for (other, tx) in &order.overlapping_txs {
-                    println!("    overlap with: {:>74} tx {:?}", other, tx);
+                    println!("[rb]     overlap with: {:>74} tx {:?}", other, tx);
                 }
             } else {
-                println!("{:>74} included order not found: ", included_order);
+                println!("[rb] {:>74} included order not found: ", included_order);
             }
         }
     }
