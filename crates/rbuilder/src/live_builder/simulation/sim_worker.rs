@@ -111,7 +111,10 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                             println!("sending result: {:?}", result_send);
                             true
                         }
-                        OrderSimResult::Failed(_) => false,
+                        OrderSimResult::Failed(err) => {
+                            println!("sim failed for: {:?} -> {:?}", task, err);
+                            false
+                        },
                     };
                     telemetry::inc_simulated_orders(sim_ok);
                     telemetry::inc_simulation_gas_used(sim_result.gas_used);

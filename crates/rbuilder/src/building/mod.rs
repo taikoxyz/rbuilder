@@ -12,8 +12,9 @@ pub mod testing;
 pub mod tracers;
 pub use block_orders::BlockOrders;
 use eth_sparse_mpt::SparseTrieSharedCache;
-use reth_primitives::proofs::calculate_requests_root;
-use revm_primitives::ChainAddress;
+use reth_primitives::{proofs::calculate_requests_root, Requests};
+use reth_provider::execution_outcome_to_state_diff;
+use revm_primitives::{Bytes, ChainAddress, B256};
 
 use crate::{
     primitives::{Order, OrderId, SimValue, SimulatedOrder, TransactionSignedEcRecoveredWithBlobs},
@@ -186,6 +187,7 @@ impl ChainBlockBuildingContext {
         extra_data: Vec<u8>,
         spec_id: Option<SpecId>,
     ) -> ChainBlockBuildingContext {
+        println!("from_attributes");
         let attributes = EthPayloadBuilderAttributes::try_new(
             attributes.data.parent_block_hash,
             attributes.data.payload_attributes.clone(),
@@ -683,11 +685,13 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         self,
         state: &mut BlockState,
         ctx: &BlockBuildingContext,
-        provider_factory: ProviderFactory<DB>,
+        provider_factories: HashMap<u64, ProviderFactory<DB>>,
         root_hash_config: RootHashConfig,
         root_hash_task_pool: BlockingTaskPool,
     ) -> Result<FinalizeResult, FinalizeError> {
-        let ctx = &ctx.chains[&ctx.parent_chain_id];
+        let super_ctx = ctx;
+        let chain_id = ctx.parent_chain_id;
+        let ctx = &super_ctx.chains[&chain_id];
         let (withdrawals_root, withdrawals) = {
             let mut db = state.new_db_ref();
             let WithdrawalsOutcome {
@@ -738,6 +742,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             let requests_root = calculate_requests_root(&requests);
             (Some(requests.into()), Some(requests_root))
         } else {
+            println!("prague not active");
             (None, None)
         };
 
@@ -764,15 +769,15 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         // Brecht: state root calculation
         // TODO Brecht: Fix
-        let mut root_hash_config = root_hash_config;
-        root_hash_config.mode = RootHashMode::IgnoreParentHash;
+        let mut root_hash_config = root_hash_config.clone();
+        //root_hash_config.mode = RootHashMode::IgnoreParentHash;
         let state_root = calculate_state_root(
-            provider_factory,
+            provider_factories.get(&chain_id).unwrap().clone(),
             ctx.attributes.parent,
             &execution_outcome,
-            root_hash_task_pool,
+            root_hash_task_pool.clone(),
             ctx.shared_sparse_mpt_cache.clone(),
-            root_hash_config,
+            root_hash_config.clone(),
         )?;
 
         // create the block header
@@ -807,6 +812,97 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             (Some(0), Some(0))
         };
 
+        let mut chain_ids = Vec::new();
+        for account in execution_outcome.bundle.state.keys() {
+            if !chain_ids.contains(&account.0) {
+                chain_ids.push(account.0);
+            }
+        }
+
+        let mut blocks = HashMap::default();
+        for chain_id in chain_ids {
+            let mut execution_outcome = execution_outcome.filter_chain(chain_id);
+
+            let mut state_diff = execution_outcome_to_state_diff(&execution_outcome, B256::ZERO, self.gas_used);
+            // Filter out accounts
+            state_diff.accounts = state_diff.clone().accounts.into_iter().filter(|account| account.address != alloy_eips::eip4788::BEACON_ROOTS_ADDRESS && account.address != alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS).collect::<Vec<_>>();
+            if chain_id == super_ctx.parent_chain_id {
+                state_diff.accounts = state_diff.clone().accounts.into_iter().filter(|account| account.address != ctx.block_env.coinbase.1).collect::<Vec<_>>();
+            }
+
+            if chain_id == super_ctx.parent_chain_id {
+                execution_outcome.bundle.state = execution_outcome.bundle.state.into_iter().filter(|account| account.0.1 != ctx.block_env.coinbase.1).collect();
+            }
+
+            if !state_diff.accounts.is_empty() {
+                let ctx = &super_ctx.chains[&chain_id];
+
+                let state_root = calculate_state_root(
+                    provider_factories.get(&chain_id).unwrap().clone(),
+                    ctx.attributes.parent,
+                    &execution_outcome,
+                    root_hash_task_pool.clone(),
+                    //ctx.shared_sparse_mpt_cache.clone(),
+                    SparseTrieSharedCache::default(),
+                    root_hash_config.clone(),
+                )?;
+
+                state_diff.state_root = state_root;
+
+                //let extra_data = Bytes::from(serde_json::to_string(&state_diff).unwrap().into_bytes());
+                let extra_data = Bytes::from(bincode::serialize(&state_diff).unwrap());
+
+                println!("extra_data: {}", extra_data);
+
+                let header = Header {
+                    parent_hash: ctx.attributes.parent,
+                    ommers_hash: EMPTY_OMMER_ROOT_HASH,
+                    beneficiary: ctx.block_env.coinbase.1,
+                    state_root,
+                    transactions_root,
+                    receipts_root,
+                    withdrawals_root,
+                    logs_bloom,
+                    timestamp: ctx.attributes.timestamp,
+                    mix_hash: /* ctx.attributes.prev_randao */ B256::ZERO,
+                    nonce: BEACON_NONCE,
+                    base_fee_per_gas: Some(ctx.block_env.basefee.to()),
+                    number: ctx.block_env.number.to::<u64>(),
+                    gas_limit: ctx.block_env.gas_limit.to(),
+                    difficulty: U256::ZERO,
+                    gas_used: self.gas_used,
+                    extra_data,
+                    parent_beacon_block_root: /* ctx.attributes.parent_beacon_block_root */ Some(B256::ZERO),
+                    blob_gas_used,
+                    excess_blob_gas,
+                    requests_root,
+                };
+
+                println!("chain {} header: {:?}", chain_id, header);
+
+                let block = Block {
+                    header,
+                    body: self
+                        .executed_tx
+                        .clone()
+                        .into_iter()
+                        .map(|t| t.into_internal_tx_unsecure().into())
+                        .collect(),
+                    ommers: vec![],
+                    withdrawals: Some(Withdrawals::default()),
+                    requests: Some(Requests::default()),
+                };
+
+                let sealed_block = block.seal_slow();
+
+                println!("chain {} calculated block hash: {:?}", chain_id, sealed_block.hash());
+
+                blocks.insert(chain_id, sealed_block);
+            }
+        }
+
+        let extra_data = Bytes::from(bincode::serialize(&(execution_outcome, blocks)).unwrap());
+
         let header = Header {
             parent_hash: ctx.attributes.parent,
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
@@ -824,7 +920,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             gas_limit: ctx.block_env.gas_limit.to(),
             difficulty: U256::ZERO,
             gas_used: self.gas_used,
-            extra_data: ctx.extra_data.clone().into(),
+            extra_data/*: ctx.extra_data.clone().into()*/,
             parent_beacon_block_root: ctx.attributes.parent_beacon_block_root,
             blob_gas_used,
             excess_blob_gas,
@@ -857,26 +953,27 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         ctx: &BlockBuildingContext,
         state: &mut BlockState,
     ) -> eyre::Result<()> {
-        let ctx = &ctx.chains[&ctx.parent_chain_id];
-        let evm_config = EthEvmConfig::default();
-        let mut db = state.new_db_ref();
-        pre_block_beacon_root_contract_call(
-            db.as_mut(),
-            &evm_config,
-            &ctx.chain_spec,
-            &ctx.initialized_cfg,
-            &ctx.block_env,
-            ctx.attributes.parent_beacon_block_root(),
-        )?;
-        pre_block_blockhashes_contract_call(
-            db.as_mut(),
-            &evm_config,
-            &ctx.chain_spec,
-            &ctx.initialized_cfg,
-            &ctx.block_env,
-            ctx.attributes.parent,
-        )?;
-        db.as_mut().merge_transitions(BundleRetention::Reverts);
+        // TODO(Brecht): all chains (or none)
+        // let ctx = &ctx.chains[&ctx.parent_chain_id];
+        // let evm_config = EthEvmConfig::default();
+        // let mut db = state.new_db_ref();
+        // pre_block_beacon_root_contract_call(
+        //     db.as_mut(),
+        //     &evm_config,
+        //     &ctx.chain_spec,
+        //     &ctx.initialized_cfg,
+        //     &ctx.block_env,
+        //     ctx.attributes.parent_beacon_block_root(),
+        // )?;
+        // pre_block_blockhashes_contract_call(
+        //     db.as_mut(),
+        //     &evm_config,
+        //     &ctx.chain_spec,
+        //     &ctx.initialized_cfg,
+        //     &ctx.block_env,
+        //     ctx.attributes.parent,
+        // )?;
+        // db.as_mut().merge_transitions(BundleRetention::Reverts);
         Ok(())
     }
 }

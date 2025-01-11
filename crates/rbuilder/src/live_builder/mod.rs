@@ -37,6 +37,7 @@ use reth::{
 use reth_chainspec::ChainSpec;
 use reth_db::database::Database;
 use reth_evm::provider;
+use revm_primitives::{BlobExcessGasAndPrice, ChainAddress};
 use std::{cmp::min, path::PathBuf, sync::Arc, thread::sleep, time::Duration};
 use time::OffsetDateTime;
 use tokio::{sync::mpsc, task::spawn_blocking};
@@ -167,8 +168,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         all_chain_ids.append(&mut provider_factories.keys().cloned().collect::<Vec<_>>());
 
         while let Some(payload) = payload_events_channel.recv().await {
-            println!("Payload_attributes event received");
-            println!("Parent block's hash: {:?}", payload.parent_block_hash());
+            println!("Payload_attributes event received: {:?}", payload);
 
             if self.blocklist.contains(&payload.fee_recipient()) {
                 warn!(
@@ -255,6 +255,8 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             // TODO(Brecht): hack to wait until latest L2 block is also created, which is later then when we get the payload build event
             sleep(Duration::from_millis(4000));
 
+            println!("payload: {:?}", payload);
+
             // TODO: Brecht
             let mut chains = HashMap::default();
             for (&chain_id, _) in provider_factories.iter() {
@@ -266,15 +268,37 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                     println!("updating ctx for {}", chain_id);
                     let latest_block = self.layer2_info.get_latest_block(chain_id, BlockId::Number(BlockNumberOrTag::Latest)).await?;
                     if let Some(latest_block) = latest_block {
+                        println!("[{}] Building on top of {:?}", chain_id, latest_block.header.hash);
+                        //let reth_block: Block = latest_block.try_into().unwrap();
+                        block_ctx = ChainBlockBuildingContext::from_attributes(
+                            payload.payload_attributes_event.clone(),
+                            &latest_block.header.clone().try_into().unwrap(),
+                            self.coinbase_signer.clone(),
+                            self.chain_chain_spec.clone(),
+                            self.blocklist.clone(),
+                            None,
+                            Vec::new(),
+                            None,
+                        );
                         block_ctx.attributes.parent = latest_block.header.hash;
+                        //block_ctx.attributes.parent_beacon_block_root = Some(B256::ZERO);
                         block_ctx.block_env.number = U256::from(latest_block.header.number + 1);
+                        //block_ctx.block_env.basefee = U256::from(latest_block.header.base_fee_per_gas.unwrap_or_default()); // TODO(Brecht): need to calculate the new one?
+                        //block_ctx.block_env.prevrandao = Some(B256::ZERO);
+                        //block_ctx.block_env.difficulty = U256::ZERO;
+                        //block_ctx.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(0));
+                        block_ctx.block_env.coinbase = ChainAddress(chain_id, block_ctx.block_env.coinbase.1);
                     } else {
                         println!("failed to get latest block for {}", chain_id);
                     }
                     chain_spec.chain = Chain::from(chain_id);
+                    chain_spec.genesis.config.chain_id = chain_id;
                     block_ctx.chain_spec = chain_spec.into();
                 }
                 println!("Latest block hash for {} is {}", chain_id, block_ctx.attributes.parent);
+                println!("[{}] attributes: {:?}", chain_id, block_ctx.attributes);
+                println!("[{}] block_env: {:?}", chain_id, block_ctx.block_env);
+                //println!("[{}]  block_ctx.chain_spec: {:?}", chain_id, block_ctx.chain_spec);
                 chains.insert(chain_id, block_ctx);
             }
 
