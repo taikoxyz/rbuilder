@@ -60,6 +60,8 @@ alloy-sol-types.workspace = true
 ethereum_ssz_derive.workspace = true
 ethereum_ssz.workspace = true
 
+bincode.workspace = true
+
 test_utils = { path = "src/test_utils" }
 metrics_macros = { path = "src/telemetry/metrics_macros" }
 

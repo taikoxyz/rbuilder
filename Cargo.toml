@@ -34,7 +34,7 @@ reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6", features = ["test-utils"] }
+reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6", features = ["test-utils", "serde"] }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
@@ -77,30 +77,57 @@ alloy-rpc-types-eth = { version = "0.3.0" }
 alloy-signer-local = { version = "0.3.0" }
 alloy-sol-types = { version = "0.8.2", default-features = false }
 
+# misc
+bincode = "1.3"
+
 [patch.crates-io]
-revm = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
-revm-primitives = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
-revm-interpreter = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
-revm-precompile = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+# revm = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+# revm-primitives = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+# revm-interpreter = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+# revm-precompile = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
+revm = { git = "https://github.com/taikoxyz/revm.git", branch = "gwyneth-debug-shit" }
+revm-primitives = { git = "https://github.com/taikoxyz/revm.git", branch = "gwyneth-debug-shit" }
+revm-interpreter = { git = "https://github.com/taikoxyz/revm.git", branch = "gwyneth-debug-shit" }
+revm-precompile = { git = "https://github.com/taikoxyz/revm.git", branch = "gwyneth-debug-shit" }
 revm-inspectors = { git = "https://github.com/taikoxyz/revm-inspectors.git", branch = "main-rbuilder" }
 
 [patch."https://github.com/paradigmxyz/reth"]
-reth = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-db = {git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-db-common = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-libmdbx = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-node-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-trie = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-trie-parallel = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-basic-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-node-core = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-primitives = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-provider = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-chainspec = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-evm = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-evm-ethereum = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-db-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-execution-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
-reth-trie-db = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-db = {git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-db-common = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-libmdbx = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-node-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-trie = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-trie-parallel = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-basic-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-node-core = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-primitives = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-provider = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-chainspec = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-evm = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-evm-ethereum = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-db-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-execution-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+reth-trie-db = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
+
+#reth = { path = "../../revm-dani/gwyneth/bin/reth" }
+#reth-db = { path = "../../revm-dani/gwyneth/crates/storage/db" }
+#reth-db-common = { path = "../../revm-dani/gwyneth/crates/storage/db-common" }
+#reth-errors = { path = "../../revm-dani/gwyneth/crates/errors" }
+#reth-libmdbx = { path = "../../revm-dani/gwyneth/crates/storage/libmdbx-rs" }
+#reth-payload-builder = { path = "../../revm-dani/gwyneth/crates/payload/builder" }
+#reth-node-api = { path = "../../revm-dani/gwyneth/crates/node/api" }
+#reth-trie = { path = "../../revm-dani/gwyneth/crates/trie/trie" }
+#reth-trie-parallel = { path = "../../revm-dani/gwyneth/crates/trie/parallel" }
+#reth-basic-payload-builder = { path = "../../revm-dani/gwyneth/crates/payload/basic" }
+#reth-node-core = { path = "../../revm-dani/gwyneth/crates/node/core" }
+#reth-primitives = { path = "../../revm-dani/gwyneth/crates/primitives" }
+#reth-provider = { path = "../../revm-dani/gwyneth/crates/storage/provider" }
+#reth-chainspec = { path = "../../revm-dani/gwyneth/crates/chainspec" }
+#reth-evm = { path = "../../revm-dani/gwyneth/crates/evm" }
+#reth-evm-ethereum = { path = "../../revm-dani/gwyneth/crates/ethereum/evm" }
+#reth-db-api = { path = "../../revm-dani/gwyneth/crates/storage/db-api" }
+#reth-execution-errors = { path = "../../revm-dani/gwyneth/crates/evm/execution-errors" }
+#reth-trie-db = { path = "../../revm-dani/gwyneth/crates/trie/db" }

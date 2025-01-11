@@ -1,4 +1,5 @@
 
+use alloy_eips::BlockId;
 use alloy_network::{EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rlp::{Decodable, Encodable};
@@ -7,7 +8,9 @@ use alloy_signer_local::PrivateKeySigner;
 use eyre::Result;
 //use revm_primitives::{Address, B256, U256};
 use alloy_primitives::{B256, U256, Address};
-use reth_primitives::TransactionSigned;
+use reth_primitives::{SealedBlock, TransactionSigned};
+use reth_provider::{execution_outcome_to_state_diff, ExecutionOutcome};
+use revm_primitives::Bytes;
 //use revm_primitives::address;
 use url::Url;
 //use crate::mev_boost::{SubmitBlockRequest};
@@ -15,7 +18,8 @@ use url::Url;
 use alloy_rpc_types_engine::ExecutionPayload;
 use alloy_sol_types::{sol, SolCall, SolType};
 use alloy_network::eip2718::Encodable2718;
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
+use reth_primitives::{GwynethDA, ChainDA};
 
 use alloy_rpc_types::{TransactionInput, TransactionRequest};
 
@@ -40,8 +44,30 @@ sol! {
         uint64 timestamp;
         uint24 txListByteOffset;
         uint24 txListByteSize;
+        // todo: Do we need this below ?
+        // bytes32 blobId OR blobHash; ? as per in current taiko-mono's preconfirmation branch ?
         bool blobUsed;
         bytes txList;
+        bytes stateDiffs;
+        StateDiff l1StateDiff;
+    }
+
+    #[derive(Debug)]
+    /// @dev Struct representing the state delta that has to be applied to L1
+    struct StateDiff {
+        StateDiffAccount[] accounts;
+    }
+
+    #[derive(Debug)]
+    struct StateDiffAccount {
+        address addr;
+        StateDiffStorageSlot[] slots;
+    }
+
+    #[derive(Debug)]
+    struct StateDiffStorageSlot {
+        bytes32 key;
+        bytes32 value;
     }
 
     //#[sol(rpc)]
@@ -68,9 +94,8 @@ impl BlockProposer {
     }
 
     pub async fn propose_block(&self, request: &SubmitBlockRequest) -> Result<()> {
-        println!("propose_block");
-
         let execution_payload = request.execution_payload();
+        println!("propose_block in L1 block {}", execution_payload.block_number());
 
         // Create the transaction data
         let (meta, num_txs) = self.create_propose_block_tx_data(&execution_payload)?;
@@ -97,6 +122,10 @@ impl BlockProposer {
         let chain_id = provider.get_chain_id().await?;
         let nonce = provider.get_transaction_count(signer.address()).await.unwrap();
 
+        println!("proposing with nonce {}", nonce);
+
+        //let block = provider.get_block(BlockId::latest(), BlockTransactionsKind::);
+
         // Build a transaction to send 100 wei from Alice to Bob.
         // The `from` field is automatically filled to the first signer's address (Alice).
         let tx = TransactionRequest::default()
@@ -105,9 +134,9 @@ impl BlockProposer {
             .with_nonce(nonce)
             .with_chain_id(chain_id)
             .with_value(U256::from(0))
-            .with_gas_limit(5_000_000)
-            .with_max_priority_fee_per_gas(1_000_000_000)
-            .with_max_fee_per_gas(20_000_000_000);
+            .with_gas_limit(10_000_000)
+            .with_max_priority_fee_per_gas(2_000_000_000)
+            .with_max_fee_per_gas(200_000_000_000);
 
         // Build the transaction with the provided wallet. Flashbots Protect requires the transaction to
         // be signed locally and send using `eth_sendRawTransaction`.
@@ -147,6 +176,9 @@ impl BlockProposer {
             }
         };
 
+        println!("Proposed payload: {:?}", execution_payload);
+        let l1_chain_id = 160010;
+
         let mut transactions = Vec::new();
         for tx_data in execution_payload.transactions.iter() {
             transactions.push(TransactionSigned::decode(&mut tx_data.to_vec().as_slice()).unwrap());
@@ -160,6 +192,79 @@ impl BlockProposer {
         println!("number of transactions: {}", execution_payload.transactions.len());
         println!("transactions: {:?}", execution_payload.transactions);
         println!("tx list: {:?}", tx_list);
+
+        println!("Block extra data: {:?}", execution_payload.extra_data);
+        let da = if execution_payload.extra_data.len() > 32 {
+            println!("Decoding extra data...");
+            let (execution_outcome, blocks): (ExecutionOutcome, HashMap<u64, SealedBlock>) = bincode::deserialize(&execution_payload.extra_data.to_vec()).unwrap();
+
+            let mut chain_das = HashMap::default();
+            for (&chain_id, block) in blocks.iter() {
+                //let execution_outcome = execution_outcome.filter_chain(chain_id);
+
+                //let json_str = String::from_utf8(block.extra_data.to_vec()).unwrap();
+                //let state_diff = serde_json::from_str(&json_str).unwrap_or(None);
+
+                let state_diff = bincode::deserialize(&block.extra_data.to_vec()).unwrap();
+
+                // Filter out accounts
+                // let mut state_diff = execution_outcome_to_state_diff(&execution_outcome, block.state_root);
+                // state_diff.accounts = state_diff.clone().accounts.into_iter().filter(|account| account.address != alloy_eips::eip4788::BEACON_ROOTS_ADDRESS && account.address != alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS).collect::<Vec<_>>();
+                // if chain_id == l1_chain_id {
+                //     state_diff.accounts = state_diff.clone().accounts.into_iter().filter(|account| account.address != execution_payload.fee_recipient).collect::<Vec<_>>();
+                // }
+                // state_diff.state_root = block.state_root;
+
+                chain_das.insert(chain_id, ChainDA {
+                    block_hash: block.hash(),
+                    state_diff: Some(state_diff),
+                    extra_data: block.extra_data.clone(),
+                    transactions: None,
+                });
+            }
+
+            GwynethDA {
+                chain_das,
+                transactions: None,
+                extra_data: Bytes::new(),
+            }
+        } else {
+            GwynethDA::default()
+        };
+
+        // L1 state diff to apply
+        let l1_state_diff = if da.chain_das.contains_key(&l1_chain_id) {
+            let state_diff = da.chain_das.get(&l1_chain_id).clone().unwrap().state_diff.clone().unwrap();
+            let mut accounts = Vec::new();
+            for account in state_diff.accounts.iter() {
+                let mut slots = Vec::new();
+                for slot in account.storage.iter() {
+                    slots.push(StateDiffStorageSlot {
+                        key: slot.key.into(),
+                        value: slot.value.into(),
+                    });
+                }
+                accounts.push(StateDiffAccount {
+                    addr: account.address,
+                    slots,
+                });
+            }
+            StateDiff {
+                accounts
+            }
+        } else {
+            StateDiff {
+                accounts: Vec::new()
+            }
+        };
+
+        println!("da: {:?}", da);
+
+        let serialized_bytes = bincode::serialize(&da).unwrap();
+        //println!("state_diffs: {:?}", serialized_bytes);
+        let state_diffs = Bytes::from(serialized_bytes);
+
+        println!("l1 state diff: {:?}", l1_state_diff);
 
         let meta = BlockMetadata {
             blockHash: execution_payload.block_hash,
@@ -178,6 +283,8 @@ impl BlockProposer {
             txListByteSize: (tx_list.len() as u32).try_into().map_err(|_| eyre::eyre!("txListByteSize conversion error"))?,
             blobUsed: false,
             txList: tx_list.into(),
+            stateDiffs: state_diffs,
+            l1StateDiff: l1_state_diff,
         };
 
         println!("meta: {:?}", meta);

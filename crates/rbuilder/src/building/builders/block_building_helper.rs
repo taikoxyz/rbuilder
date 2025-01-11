@@ -376,7 +376,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         let finalized_block = match self.partial_block.clone().finalize(
             &mut self.block_state,
             &self.building_ctx,
-            provider_factory.clone(),
+            self.provider_factory.clone(),
             self.root_hash_config,
             self.root_hash_task_pool,
         ) {
