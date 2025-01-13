@@ -45,8 +45,8 @@ use reth_evm_ethereum::{eip6110::parse_deposits_from_receipts, revm_spec, EthEvm
 use reth_node_api::PayloadBuilderAttributes;
 use reth_payload_builder::{database::SyncCachedReads as CachedReads, EthPayloadBuilderAttributes};
 use revm::{
-    db::states::bundle_state::BundleRetention::{self, PlainState},
-    primitives::{BlobExcessGasAndPrice, BlockEnv, CfgEnvWithHandlerCfg, SpecId},
+    db::states::{bundle_state::BundleRetention::{self, PlainState}, reverts::Reverts},
+    primitives::{BlobExcessGasAndPrice, BlockEnv, CfgEnvWithHandlerCfg, SpecId}, TransitionState,
 };
 use serde::Deserialize;
 use std::{hash::Hash, str::FromStr, sync::Arc};
@@ -748,7 +748,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         let (cached_reads, bundle) = state.clone_bundle_and_cache();
         let execution_outcome = ExecutionOutcome::new(
-            Some(ctx.chain_spec.chain.id()),
+            ctx.chain_spec.chain.id(),
             bundle,
             Receipts::from(vec![self
                 .receipts
@@ -769,8 +769,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         // Brecht: state root calculation
         // TODO Brecht: Fix
-        let mut root_hash_config = root_hash_config.clone();
-        //root_hash_config.mode = RootHashMode::IgnoreParentHash;
+        let root_hash_config = root_hash_config.clone();
         let state_root = calculate_state_root(
             provider_factories.get(&chain_id).unwrap().clone(),
             ctx.attributes.parent,
@@ -822,6 +821,16 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         let mut blocks = HashMap::default();
         for chain_id in chain_ids {
             let mut execution_outcome = execution_outcome.filter_chain(chain_id);
+
+            execution_outcome.bundle.reverts = Reverts::default();
+
+            let mut transition_state = TransitionState::default();
+            for trans in state.transitions.iter() {
+                let vec: Vec<(_, _)> = trans.transitions.clone().into_iter().collect();
+                transition_state.add_transitions(vec);
+            }
+            execution_outcome.bundle.apply_transitions_and_create_reverts(transition_state, BundleRetention::Reverts);
+            println!("reverts: {:?}", execution_outcome.bundle.reverts);
 
             let mut state_diff = execution_outcome_to_state_diff(&execution_outcome, B256::ZERO, self.gas_used);
             // Filter out accounts

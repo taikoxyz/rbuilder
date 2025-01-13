@@ -115,11 +115,12 @@ pub fn check_provider_factory_health<DB: Database>(
         let num = current_block_number - i;
         let hash = provider_factory.block_hash(num)?;
         if hash.is_none() {
-            eyre::bail!(
+            println!(
                 "Missing historical block hash for block {}, current block: {}",
                 current_block_number - i,
                 current_block_number
             );
+            break;
         }
 
         if num == 0 {
