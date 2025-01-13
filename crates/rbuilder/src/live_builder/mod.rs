@@ -253,9 +253,9 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             );
 
             // TODO(Brecht): hack to wait until latest L2 block is also created, which is later then when we get the payload build event
-            sleep(Duration::from_millis(4000));
+            //sleep(Duration::from_millis(4000));
 
-            println!("payload: {:?}", payload);
+            //println!("payload: {:?}", payload);
 
             // TODO: Brecht
             let mut chains = HashMap::default();

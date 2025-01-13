@@ -88,7 +88,7 @@ pub fn run_ordering_builder<DB: Database + Clone + 'static>(
     let mut removed_orders = Vec::new();
     let mut use_suggested_fee_recipient_as_coinbase = config.coinbase_payment;
     'building: loop {
-        sleep(Duration::from_millis(1000));
+        //sleep(Duration::from_millis(1000));
 
         if input.cancel.is_cancelled() {
             break 'building;

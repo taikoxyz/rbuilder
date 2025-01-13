@@ -42,7 +42,7 @@ pub async fn subscribe_to_txpool_with_blobs(
         let mut stream = pin!(stream);
 
         while let Some(tx_hash) = stream.next().await {
-            println!("Dani debug: Some txn arrived on {:?}", config.ipc_path);
+            println!("New tx arrived on {:?}!", config.ipc_path);
 
             // TODO: Skip L1 transactions for now because circular
             if config.ipc_path.to_str().unwrap() == "/tmp/reth.ipc" {
@@ -77,7 +77,7 @@ pub async fn subscribe_to_txpool_with_blobs(
             trace!(order = ?order.id(), parse_duration_mus = parse_duration.as_micros(), "Mempool transaction received with blobs");
 
             add_txfetcher_time_to_query(parse_duration);
-            println!("Dani debug: About to send order to results channel. Order ID: {:?}", order_id);
+            println!("About to send order to results channel. Order ID: {:?}", order_id);
             match results
                 .send_timeout(
                     ReplaceableOrderPoolCommand::Order(order),
@@ -90,10 +90,11 @@ pub async fn subscribe_to_txpool_with_blobs(
                     error!("Failed to send txpool tx to results channel, timeout");
                 }
                 Err(SendTimeoutError::Closed(_)) => {
+                    println!("Send timeout error: closed");
                     break;
                 }
             }
-            println!("Dani debug: Successfully sent order to results channel. Order ID: {:?}", order_id);
+            println!("Successfully sent order to results channel. Order ID: {:?}", order_id);
         }
 
         // stream is closed, cancelling token because builder can't work without this stream

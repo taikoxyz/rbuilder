@@ -187,7 +187,6 @@ impl ChainBlockBuildingContext {
         extra_data: Vec<u8>,
         spec_id: Option<SpecId>,
     ) -> ChainBlockBuildingContext {
-        println!("from_attributes");
         let attributes = EthPayloadBuilderAttributes::try_new(
             attributes.data.parent_block_hash,
             attributes.data.payload_attributes.clone(),
@@ -742,7 +741,6 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             let requests_root = calculate_requests_root(&requests);
             (Some(requests.into()), Some(requests_root))
         } else {
-            println!("prague not active");
             (None, None)
         };
 
