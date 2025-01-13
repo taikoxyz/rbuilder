@@ -25,7 +25,7 @@ use reth_provider::{StateProvider, StateProviderBox};
 use revm::{
     db::{states::bundle_state::BundleRetention, BundleState},
     inspector_handle_register,
-    primitives::{db::WrapDatabaseRef, EVMError, Env, ExecutionResult, InvalidTransaction, TxEnv}, DatabaseCommit, State, SyncDatabase as Database, TransitionState,
+    primitives::{db::WrapDatabaseRef, EVMError, Env, ExecutionResult, InvalidTransaction, TxEnv}, DatabaseCommit, State, SyncDatabase as Database,
 };
 use revm_primitives::ChainAddress;
 
@@ -39,7 +39,6 @@ pub struct BlockState {
     providers: HashMap<u64, Arc<dyn StateProvider>>,
     cached_reads: CachedReads,
     bundle_state: Option<BundleState>,
-    pub transitions: Vec<TransitionState>,
 }
 
 impl BlockState {
@@ -54,7 +53,6 @@ impl BlockState {
             providers,
             cached_reads: CachedReads::default(),
             bundle_state: Some(BundleState::default()),
-            transitions: Vec::default(),
         }
     }
 
@@ -363,7 +361,6 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             .rollbacks
             .checked_sub(rollback_point.rollobacks)
             .expect("incorrect rollback");
-        self.state.transitions.pop();
         let bundle_state = self.state.bundle_state.as_mut().expect("no bundle state");
         bundle_state.revert(rollbacks);
         self.rollbacks = rollback_point.rollobacks;
@@ -412,113 +409,105 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
 
         let ctx = &ctx.chains[&tx_with_blobs.as_ref().chain_id().unwrap()];
 
-        let (tx, transition_state) = {
-            let mut db = self.state.new_db_ref();
-            let tx = &tx_with_blobs.internal_tx_unsecure();
-            if ctx.blocklist.contains(&tx.signer())
-                || tx
-                    .to()
-                    .map(|to| ctx.blocklist.contains(&to))
-                    .unwrap_or(false)
-            {
-                return Ok(Err(TransactionErr::Blocklist));
-            }
+        let mut db = self.state.new_db_ref();
+        let tx = &tx_with_blobs.internal_tx_unsecure();
+        if ctx.blocklist.contains(&tx.signer())
+            || tx
+                .to()
+                .map(|to| ctx.blocklist.contains(&to))
+                .unwrap_or(false)
+        {
+            return Ok(Err(TransactionErr::Blocklist));
+        }
 
-            match ctx
-                .block_env
-                .gas_limit
-                .checked_sub(U256::from(cumulative_gas_used + gas_reserved))
-            {
-                Some(gas_left) => {
-                    if tx.gas_limit() > gas_left.to::<u64>() {
-                        return Ok(Err(TransactionErr::GasLeft));
-                    }
+        match ctx
+            .block_env
+            .gas_limit
+            .checked_sub(U256::from(cumulative_gas_used + gas_reserved))
+        {
+            Some(gas_left) => {
+                if tx.gas_limit() > gas_left.to::<u64>() {
+                    return Ok(Err(TransactionErr::GasLeft));
                 }
-                None => return Ok(Err(TransactionErr::GasLeft)),
             }
+            None => return Ok(Err(TransactionErr::GasLeft)),
+        }
 
-            let mut tx_env = TxEnv::default();
-            let tx_signed = tx_with_blobs.internal_tx_unsecure().clone().into_signed();
-            tx_signed.fill_tx_env(&mut tx_env, tx_signed.recover_signer().unwrap());
+        let mut tx_env = TxEnv::default();
+        let tx_signed = tx_with_blobs.internal_tx_unsecure().clone().into_signed();
+        tx_signed.fill_tx_env(&mut tx_env, tx_signed.recover_signer().unwrap());
 
-            let env = Env {
-                cfg: ctx.initialized_cfg.cfg_env.clone(),
-                block: ctx.block_env.clone(),
-                tx: tx_env,
-            };
-
-            let used_state_tracer = self.tracer.as_mut().and_then(|t| t.get_used_state_tracer());
-            let mut rbuilder_inspector = RBuilderEVMInspector::new(tx, used_state_tracer);
-
-            let mut env = env.clone();
-            env.cfg.chain_id = tx.chain_id().unwrap();
-            //println!("active remv chain_id: {}", env.cfg.chain_id);
-
-            let mut evm = revm::Evm::builder()
-                .with_spec_id(ctx.spec_id)
-                .with_env(Box::new(env))
-                .with_db(db.as_mut())
-                .with_external_context(&mut rbuilder_inspector)
-                .append_handler_register(inspector_handle_register)
-                .build();
-            let res = match evm.transact() {
-                Ok(res) => res,
-                Err(err) => match err {
-                    EVMError::Transaction(tx_err) => {
-                        return Ok(Err(TransactionErr::InvalidTransaction(tx_err)))
-                    }
-                    EVMError::Database(_)
-                    | EVMError::Header(_)
-                    | EVMError::Custom(_)
-                    | EVMError::Precompile(_) => return Err(err.into()),
-                },
-            };
-            let mut db_context = evm.into_context();
-            let db = &mut db_context.evm.db;
-            let access_list = rbuilder_inspector.into_access_list();
-            if let Some(tracer) = &mut self.tracer {
-                tracer.gas_used(res.result.gas_used());
-            }
-            if access_list
-                .flatten()
-                .any(|(a, _)| ctx.blocklist.contains(&a))
-            {
-                return Ok(Err(TransactionErr::Blocklist));
-            }
-            db.commit(res.state);
-            let stuff = db.transition_state.clone().unwrap_or_default();
-            db.merge_transitions(BundleRetention::Reverts);
-            self.rollbacks += 1;
-
-            // add gas used by the transaction to cumulative gas used, before creating the receipt
-            let gas_used = res.result.gas_used();
-
-            cumulative_gas_used += gas_used;
-            cumulative_blob_gas_used += blob_gas_used;
-
-            let receipt = Receipt {
-                tx_type: tx.tx_type(),
-                success: res.result.is_success(),
-                cumulative_gas_used,
-                logs: res.result.logs().to_vec(),
-            };
-
-            (TransactionOk {
-                exec_result: res.result,
-                gas_used,
-                blob_gas_used,
-                cumulative_blob_gas_used,
-                cumulative_gas_used,
-                tx: tx_with_blobs.clone(),
-                nonce_updated: (tx.signer(), tx.nonce() + 1),
-                receipt,
-            }
-            , stuff)
+        let env = Env {
+            cfg: ctx.initialized_cfg.cfg_env.clone(),
+            block: ctx.block_env.clone(),
+            tx: tx_env,
         };
 
-        self.state.transitions.push(transition_state);
+        let used_state_tracer = self.tracer.as_mut().and_then(|t| t.get_used_state_tracer());
+        let mut rbuilder_inspector = RBuilderEVMInspector::new(tx, used_state_tracer);
 
-        Ok(Ok(tx))
+        let mut env = env.clone();
+        env.cfg.chain_id = tx.chain_id().unwrap();
+        //println!("active remv chain_id: {}", env.cfg.chain_id);
+
+        let mut evm = revm::Evm::builder()
+            .with_spec_id(ctx.spec_id)
+            .with_env(Box::new(env))
+            .with_db(db.as_mut())
+            .with_external_context(&mut rbuilder_inspector)
+            .append_handler_register(inspector_handle_register)
+            .build();
+        let res = match evm.transact() {
+            Ok(res) => res,
+            Err(err) => match err {
+                EVMError::Transaction(tx_err) => {
+                    return Ok(Err(TransactionErr::InvalidTransaction(tx_err)))
+                }
+                EVMError::Database(_)
+                | EVMError::Header(_)
+                | EVMError::Custom(_)
+                | EVMError::Precompile(_) => return Err(err.into()),
+            },
+        };
+        let mut db_context = evm.into_context();
+        let db = &mut db_context.evm.db;
+        let access_list = rbuilder_inspector.into_access_list();
+        if let Some(tracer) = &mut self.tracer {
+            tracer.gas_used(res.result.gas_used());
+        }
+        if access_list
+            .flatten()
+            .any(|(a, _)| ctx.blocklist.contains(&a))
+        {
+            return Ok(Err(TransactionErr::Blocklist));
+        }
+        db.commit(res.state);
+        db.merge_transitions(BundleRetention::Reverts);
+        self.rollbacks += 1;
+
+        // add gas used by the transaction to cumulative gas used, before creating the receipt
+        let gas_used = res.result.gas_used();
+
+        cumulative_gas_used += gas_used;
+        cumulative_blob_gas_used += blob_gas_used;
+
+        let receipt = Receipt {
+            tx_type: tx.tx_type(),
+            success: res.result.is_success(),
+            cumulative_gas_used,
+            logs: res.result.logs().to_vec(),
+        };
+
+        Ok(Ok(TransactionOk {
+            exec_result: res.result,
+            gas_used,
+            blob_gas_used,
+            cumulative_blob_gas_used,
+            cumulative_gas_used,
+            tx: tx_with_blobs.clone(),
+            nonce_updated: (tx.signer(), tx.nonce() + 1),
+            receipt,
+        }))
     }
 
     /// block/timestamps check + commit_bundle_no_rollback + rollbacks

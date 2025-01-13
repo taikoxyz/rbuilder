@@ -822,16 +822,6 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         for chain_id in chain_ids {
             let mut execution_outcome = execution_outcome.filter_chain(chain_id);
 
-            execution_outcome.bundle.reverts = Reverts::default();
-
-            let mut transition_state = TransitionState::default();
-            for trans in state.transitions.iter() {
-                let vec: Vec<(_, _)> = trans.transitions.clone().into_iter().collect();
-                transition_state.add_transitions(vec);
-            }
-            execution_outcome.bundle.apply_transitions_and_create_reverts(transition_state, BundleRetention::Reverts);
-            println!("reverts: {:?}", execution_outcome.bundle.reverts);
-
             let mut state_diff = execution_outcome_to_state_diff(&execution_outcome, B256::ZERO, self.gas_used);
             // Filter out accounts
             state_diff.accounts = state_diff.clone().accounts.into_iter().filter(|account| account.address != alloy_eips::eip4788::BEACON_ROOTS_ADDRESS && account.address != alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS).collect::<Vec<_>>();
@@ -840,9 +830,11 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             }
 
             if chain_id == super_ctx.parent_chain_id {
+                // The reverts will still contain the address but that's fine, we're never going to use that on L1 anyway
                 execution_outcome.bundle.state = execution_outcome.bundle.state.into_iter().filter(|account| account.0.1 != ctx.block_env.coinbase.1).collect();
             }
 
+            // Only make a block for chains that have changes
             if !state_diff.accounts.is_empty() {
                 let ctx = &super_ctx.chains[&chain_id];
 
@@ -857,11 +849,11 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
                 )?;
 
                 state_diff.state_root = state_root;
+                state_diff.transactions_root = transactions_root;
+                state_diff.bundle.reverts = reth_provider::merge_reverts(&state_diff.bundle.reverts);
 
-                //let extra_data = Bytes::from(serde_json::to_string(&state_diff).unwrap().into_bytes());
                 let extra_data = Bytes::from(bincode::serialize(&state_diff).unwrap());
-
-                println!("extra_data: {}", extra_data);
+                // println!("extra_data: {}", extra_data);
 
                 let header = Header {
                     parent_hash: ctx.attributes.parent,
