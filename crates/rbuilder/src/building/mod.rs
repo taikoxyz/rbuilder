@@ -45,8 +45,8 @@ use reth_evm_ethereum::{eip6110::parse_deposits_from_receipts, revm_spec, EthEvm
 use reth_node_api::PayloadBuilderAttributes;
 use reth_payload_builder::{database::SyncCachedReads as CachedReads, EthPayloadBuilderAttributes};
 use revm::{
-    db::states::bundle_state::BundleRetention::{self, PlainState},
-    primitives::{BlobExcessGasAndPrice, BlockEnv, CfgEnvWithHandlerCfg, SpecId},
+    db::states::{bundle_state::BundleRetention::{self, PlainState}, reverts::Reverts},
+    primitives::{BlobExcessGasAndPrice, BlockEnv, CfgEnvWithHandlerCfg, SpecId}, TransitionState,
 };
 use serde::Deserialize;
 use std::{hash::Hash, str::FromStr, sync::Arc};
@@ -187,7 +187,6 @@ impl ChainBlockBuildingContext {
         extra_data: Vec<u8>,
         spec_id: Option<SpecId>,
     ) -> ChainBlockBuildingContext {
-        println!("from_attributes");
         let attributes = EthPayloadBuilderAttributes::try_new(
             attributes.data.parent_block_hash,
             attributes.data.payload_attributes.clone(),
@@ -742,13 +741,12 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             let requests_root = calculate_requests_root(&requests);
             (Some(requests.into()), Some(requests_root))
         } else {
-            println!("prague not active");
             (None, None)
         };
 
         let (cached_reads, bundle) = state.clone_bundle_and_cache();
         let execution_outcome = ExecutionOutcome::new(
-            Some(ctx.chain_spec.chain.id()),
+            ctx.chain_spec.chain.id(),
             bundle,
             Receipts::from(vec![self
                 .receipts
@@ -769,8 +767,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         // Brecht: state root calculation
         // TODO Brecht: Fix
-        let mut root_hash_config = root_hash_config.clone();
-        //root_hash_config.mode = RootHashMode::IgnoreParentHash;
+        let root_hash_config = root_hash_config.clone();
         let state_root = calculate_state_root(
             provider_factories.get(&chain_id).unwrap().clone(),
             ctx.attributes.parent,
@@ -831,9 +828,11 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             }
 
             if chain_id == super_ctx.parent_chain_id {
+                // The reverts will still contain the address but that's fine, we're never going to use that on L1 anyway
                 execution_outcome.bundle.state = execution_outcome.bundle.state.into_iter().filter(|account| account.0.1 != ctx.block_env.coinbase.1).collect();
             }
 
+            // Only make a block for chains that have changes
             if !state_diff.accounts.is_empty() {
                 let ctx = &super_ctx.chains[&chain_id];
 
@@ -848,11 +847,11 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
                 )?;
 
                 state_diff.state_root = state_root;
+                state_diff.transactions_root = transactions_root;
+                state_diff.bundle.reverts = reth_provider::merge_reverts(&state_diff.bundle.reverts);
 
-                //let extra_data = Bytes::from(serde_json::to_string(&state_diff).unwrap().into_bytes());
                 let extra_data = Bytes::from(bincode::serialize(&state_diff).unwrap());
-
-                println!("extra_data: {}", extra_data);
+                // println!("extra_data: {}", extra_data);
 
                 let header = Header {
                     parent_hash: ctx.attributes.parent,
