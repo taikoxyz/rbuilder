@@ -18,7 +18,7 @@ use url::Url;
 use alloy_rpc_types_engine::ExecutionPayload;
 use alloy_sol_types::{sol, SolCall, SolType};
 use alloy_network::eip2718::Encodable2718;
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, hash::{DefaultHasher, Hash, Hasher}, str::FromStr};
 use reth_primitives::{GwynethDA, ChainDA};
 
 use alloy_rpc_types::{TransactionInput, TransactionRequest};
@@ -77,6 +77,14 @@ sol! {
     }
 }
 
+
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
+
+static HISTORY: Lazy<Mutex<HashMap<u64, (u64, u64)>>> = Lazy::new(|| {
+    Mutex::new(HashMap::new())
+});
+
 #[derive(Debug, Clone)]
 pub struct BlockProposer {
     rpc_url: String,
@@ -95,7 +103,8 @@ impl BlockProposer {
 
     pub async fn propose_block(&self, request: &SubmitBlockRequest) -> Result<()> {
         let execution_payload = request.execution_payload();
-        println!("propose_block in L1 block {}", execution_payload.block_number());
+        let block_idx = execution_payload.block_number();
+        println!("propose_block in L1 block {} (block gas used: {})", block_idx, request.bid_trace().gas_used);
 
         // Create the transaction data
         let (meta, num_txs) = self.create_propose_block_tx_data(&execution_payload)?;
@@ -110,7 +119,7 @@ impl BlockProposer {
         // }
 
         let decoded_transactions: Vec<TransactionSigned> = decode_transactions(&meta.txList);
-        println!("decoded_transactions: {:?}", decoded_transactions);
+        //println!("decoded_transactions: {:?}", decoded_transactions);
 
         let provider = ProviderBuilder::new().on_http(Url::parse(&self.rpc_url.clone()).unwrap());
 
@@ -122,9 +131,29 @@ impl BlockProposer {
         let chain_id = provider.get_chain_id().await?;
         let nonce = provider.get_transaction_count(signer.address()).await.unwrap();
 
-        println!("proposing with nonce {}", nonce);
+        println!("proposing with nonce: {}", nonce);
 
         //let block = provider.get_block(BlockId::latest(), BlockTransactionsKind::);
+
+        let num_txs_sent = {
+            let mut history = HISTORY.lock().unwrap();
+            if !history.contains_key(&block_idx) {
+                history.insert(block_idx, (0, 0));
+            }
+            let slot_history = history.get_mut(&execution_payload.block_number()).unwrap();
+            if slot_history.1 >= request.bid_trace().gas_used {
+                println!("skipping request: {} (<= {})", request.bid_trace().gas_used, slot_history.1);
+                return Ok(());
+            }
+            *slot_history = (slot_history.0 + 1, request.bid_trace().gas_used);
+            println!("New slot history: {:?}", slot_history);
+            slot_history.0
+        };
+        println!("num_txs_sent: {}", num_txs_sent);
+
+        let multiplier = (num_txs_sent * num_txs_sent) as u128;
+
+        println!("multiplier: {}", multiplier);
 
         // Build a transaction to send 100 wei from Alice to Bob.
         // The `from` field is automatically filled to the first signer's address (Alice).
@@ -134,9 +163,28 @@ impl BlockProposer {
             .with_nonce(nonce)
             .with_chain_id(chain_id)
             .with_value(U256::from(0))
-            .with_gas_limit(10_000_000)
-            .with_max_priority_fee_per_gas(2_000_000_000)
-            .with_max_fee_per_gas(200_000_000_000);
+            .with_gas_limit(15_000_000)
+            .with_max_priority_fee_per_gas(1_000_000_000 * multiplier)
+            .with_max_fee_per_gas(200_000_000_000 * multiplier);
+
+
+        // let mut hasher = DefaultHasher::new();
+        // tx.hash(&mut hasher);
+        // let tx_hash = hasher.finish();
+        // println!("Hash is {:x}!", tx_hash);
+
+        // {
+        //     let mut history = HISTORY.lock().unwrap();
+        //     let slot_history = history.get_mut(&execution_payload.block_number()).unwrap();
+        //     println!("history: {:?}", slot_history);
+        //     if slot_history.contains(&tx_hash) {
+        //         println!("Skipping tx proposal: {:?}", tx_hash);
+        //         return Ok(())
+        //     } else {
+        //         println!("Proposing tx: {:?}", tx_hash);
+        //         slot_history.push(tx_hash);
+        //     }
+        // }
 
         // Build the transaction with the provided wallet. Flashbots Protect requires the transaction to
         // be signed locally and send using `eth_sendRawTransaction`.
@@ -145,18 +193,25 @@ impl BlockProposer {
         // Encode the transaction using EIP-2718 encoding.
         let tx_encoded = tx_envelope.encoded_2718();
 
-        // Send the transaction and wait for the broadcast.
-        let pending_tx = provider.send_raw_transaction(&tx_encoded).await?;
+        println!("tx size: {}", tx_encoded.len());
 
-        println!("Pending transaction... {}", pending_tx.tx_hash());
+        // Send the transaction and wait for the broadcast.
+        match provider.send_raw_transaction(&tx_encoded).await {
+            Ok(pending_tx) => {
+                println!("Pending transaction... {}", pending_tx.tx_hash());
+            },
+            Err(e) => {
+                println!("Error while proposing tx: {}", e)
+            },
+        };
 
         // Wait for the transaction to be included and get the receipt.
-        let receipt = pending_tx.get_receipt().await?;
+        // let receipt = pending_tx.get_receipt().await?;
 
-        println!(
-            "Transaction included in block {}",
-            receipt.block_number.expect("Failed to get block number")
-        );
+        // println!(
+        //     "Transaction included in block {}",
+        //     receipt.block_number.expect("Failed to get block number")
+        // );
 
         Ok(())
     }
@@ -176,7 +231,7 @@ impl BlockProposer {
             }
         };
 
-        println!("Proposed payload: {:?}", execution_payload);
+        //println!("Proposed payload: {:?}", execution_payload);
         let l1_chain_id = 160010;
 
         let mut transactions = Vec::new();
@@ -184,18 +239,23 @@ impl BlockProposer {
             transactions.push(TransactionSigned::decode(&mut tx_data.to_vec().as_slice()).unwrap());
         }
 
+        println!("num transactions: {}", transactions.len());
+        for tx in transactions.iter() {
+            println!("Included tx: {:?}", tx.hash());
+        }
+
         let mut tx_list = Vec::new();
         transactions.encode(&mut tx_list);
         let tx_list_hash = B256::from(alloy_primitives::keccak256(&tx_list));
 
-        println!("proposing for block: {}", execution_payload.block_number);
-        println!("number of transactions: {}", execution_payload.transactions.len());
-        println!("transactions: {:?}", execution_payload.transactions);
-        println!("tx list: {:?}", tx_list);
+        //println!("proposing for block: {}", execution_payload.block_number);
+        //println!("number of transactions: {}", execution_payload.transactions.len());
+        //println!("transactions: {:?}", execution_payload.transactions);
+        //println!("tx list: {:?}", tx_list);
 
-        println!("Block extra data: {:?}", execution_payload.extra_data);
+        //println!("Block extra data: {:?}", execution_payload.extra_data);
         let da = if execution_payload.extra_data.len() > 32 {
-            println!("Decoding extra data...");
+            //println!("Decoding extra data...");
             let (execution_outcome, blocks): (ExecutionOutcome, HashMap<u64, SealedBlock>) = bincode::deserialize(&execution_payload.extra_data.to_vec()).unwrap();
 
             let mut chain_das = HashMap::default();
@@ -258,13 +318,13 @@ impl BlockProposer {
             }
         };
 
-        println!("da: {:?}", da);
+        //println!("da: {:?}", da);
 
         let serialized_bytes = bincode::serialize(&da).unwrap();
         //println!("state_diffs: {:?}", serialized_bytes);
         let state_diffs = Bytes::from(serialized_bytes);
 
-        println!("l1 state diff: {:?}", l1_state_diff);
+        //println!("l1 state diff: {:?}", l1_state_diff);
 
         let meta = BlockMetadata {
             blockHash: execution_payload.block_hash,
@@ -287,7 +347,7 @@ impl BlockProposer {
             l1StateDiff: l1_state_diff,
         };
 
-        println!("meta: {:?}", meta);
+        //println!("meta: {:?}", meta);
 
         Ok((meta, execution_payload.transactions.len()))
     }

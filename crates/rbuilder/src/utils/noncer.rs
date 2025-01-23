@@ -53,13 +53,6 @@ impl NonceCacheRef {
         if let Some(nonce) = cache.get(&address) {
             return Ok(*nonce);
         }
-        // TODO: Brecht
-        let mut default_chain_id = 1;
-        for (chain_id, _state) in self.states.iter() {
-            if default_chain_id == 1 {
-                default_chain_id = *chain_id;
-            }
-        }
         let nonce = self.states[&address.0].account_nonce(address.1)?.unwrap_or_default();
         cache.insert(address, nonce);
         Ok(nonce)

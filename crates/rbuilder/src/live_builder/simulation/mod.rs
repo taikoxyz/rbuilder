@@ -71,6 +71,7 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
         num_workers: usize,
         global_cancellation: CancellationToken,
     ) -> Self {
+        println!("number of simulation workers: {}", num_workers);
         let mut result = Self {
             provider_factory,
             running_tasks: Arc::new(Mutex::new(Vec::new())),
@@ -105,6 +106,8 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
         input: HashMap<u64, OrdersForBlock>,
         block_cancellation: CancellationToken,
     ) -> SlotOrderSimResults {
+        println!("spawn_simulation_job");
+
         let (slot_sim_results_sender, slot_sim_results_receiver) = mpsc::channel(10_000);
 
         let providers: HashMap<u64, _> = self.provider_factory.iter().map(|(chain_id, factory)| (*chain_id, factory.provider_factory_unchecked())).collect();
@@ -139,12 +142,14 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
                     );
 
                     simulation_job.run().await;
+                    println!("simulation job done");
 
                     // clean up
                     {
                         let mut contexts = current_contexts.lock().unwrap();
                         contexts.contexts.remove(&block_context);
                     }
+                    println!("simulation job cleaned up");
                 }
             }
             //.instrument(span)

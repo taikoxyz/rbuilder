@@ -1168,7 +1168,7 @@ fn coinbase_profit(
     if coinbase_balance_after >= coinbase_balance_before {
         Ok(coinbase_balance_after - coinbase_balance_before)
     } else {
-        Ok(U256::ZERO)
+        Ok(U256::from(1))
         // Err(OrderErr::NegativeProfit(
         //     coinbase_balance_before - coinbase_balance_after,
         // ))

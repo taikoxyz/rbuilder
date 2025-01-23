@@ -44,12 +44,13 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
                 break ctx;
             } else {
                 // contexts are created for a duration of the slot so this is not a problem
+                println!("waiting on next sim context...");
                 sleep(Duration::from_millis(50));
             }
             //sleep(Duration::from_millis(500));
         };
 
-        println!("Brecht: simming 3");
+        println!("simming");
 
         let mut provider_factories = HashMap::default();
         for (chain_id, provider_factory) in provider_factory.iter() {
@@ -70,6 +71,8 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
         let mut cached_reads = CachedReads::default();
         let mut last_sim_finished = Instant::now();
         while let Ok(task) = current_sim_context.requests.recv() {
+            println!("Simming task: {:?}", task);
+
             let sim_thread_wait_time = last_sim_finished.elapsed();
             let sim_start = Instant::now();
 

@@ -70,6 +70,7 @@ impl<DB: Database + Clone> ProviderFactoryReopener<DB> {
             match check_provider_factory_health(current_block_number, &provider_factory) {
                 Ok(()) => {}
                 Err(err) => {
+                    println!("Reopening DB!");
                     debug!(?err, "Provider factory is inconsistent, reopening");
                     inc_provider_reopen_counter();
 
@@ -116,7 +117,8 @@ pub fn check_provider_factory_health<DB: Database>(
         let hash = provider_factory.block_hash(num)?;
         if hash.is_none() {
             println!(
-                "Missing historical block hash for block {}, current block: {}",
+                "[{}] Missing historical block hash for block {}, current block: {}",
+                provider_factory.chain_spec().chain.id(),
                 current_block_number - i,
                 current_block_number
             );

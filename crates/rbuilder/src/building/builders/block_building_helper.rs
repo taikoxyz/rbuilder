@@ -284,9 +284,9 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         let bid_value = U256::from(self.partial_block.gas_used);
         let true_value = U256::from(self.partial_block.gas_used);
 
-        if self.partial_block.gas_used > 0 {
-            println!("gas used: {:?}", self.partial_block.gas_used);
-        }
+        // if self.partial_block.gas_used > 0 {
+        //     println!("gas used: {:?}", self.partial_block.gas_used);
+        // }
         // Since some extra money might arrived directly the suggested_fee_recipient (when suggested_fee_recipient != coinbase)
         // we check the fee_recipient delta and make our bid include that! This is supposed to be what the relay will check.
         let fee_recipient_balance_after = self
@@ -298,7 +298,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         self.built_block_trace.bid_value = max(bid_value, fee_recipient_balance_diff);
         self.built_block_trace.true_bid_value = true_value;
 
-        self.built_block_trace.bid_value = U256::from(self.partial_block.gas_used);
+        self.built_block_trace.bid_value = U256::from(self.building_context().block() * 30000000 + self.partial_block.gas_used);
         self.built_block_trace.true_bid_value = self.built_block_trace.bid_value;
 
         Ok(())
@@ -314,7 +314,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         let result =
             self.partial_block
                 .commit_order(order, &self.building_ctx, &mut self.block_state);
-        println!("commit order: {:?}", order);
+        //println!("commit order: {:?}", order);
         match result {
             Ok(ok_result) => match ok_result {
                 Ok(res) => {

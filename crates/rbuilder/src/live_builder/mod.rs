@@ -47,10 +47,10 @@ use tracing::{debug, error, info, warn};
 use layer2_info::Layer2Info;
 
 /// Time the proposer have to propose a block from the beginning of the slot (https://www.paradigm.xyz/2023/04/mev-boost-ethereum-consensus Slot anatomy)
-const SLOT_PROPOSAL_DURATION: std::time::Duration = Duration::from_secs(4);
+const SLOT_PROPOSAL_DURATION: std::time::Duration = Duration::from_secs(11);
 /// Delta from slot time to get_header dead line. If we can't get the block header before slot_time + BLOCK_HEADER_DEAD_LINE_DELTA we cancel the slot.
 /// Careful: It's signed and usually negative since we need de header BEFORE the slot time.
-const BLOCK_HEADER_DEAD_LINE_DELTA: time::Duration = time::Duration::milliseconds(-2500);
+const BLOCK_HEADER_DEAD_LINE_DELTA: time::Duration = time::Duration::milliseconds(-500);
 /// Polling period while trying to get a block header
 const GET_BLOCK_HEADER_PERIOD: time::Duration = time::Duration::milliseconds(250);
 
@@ -97,7 +97,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         Self { builders, ..self }
     }
 
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(mut self) -> eyre::Result<()> {
         info!("Builder block list size: {}", self.blocklist.len(),);
         info!(
             "Builder coinbase address: {:?}",
@@ -131,6 +131,11 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         provider_factories.insert(self.chain_chain_spec.chain.id(), self.provider_factory.clone());
 
         for (chain_id, node) in self.layer2_info.nodes.iter() {
+            // let latest_block = self.layer2_info.get_latest_block(*chain_id, BlockId::Number(BlockNumberOrTag::Latest)).await?;
+            // if let Some(latest_block) = latest_block {
+            //     node.provider_factory.check_consistency_and_reopen_if_needed(latest_block.header.number);
+            // }
+
             let orderpool_subscriber = {
                 let (handle, sub) = start_orderpool_jobs(
                     node.order_input_config.clone(),
