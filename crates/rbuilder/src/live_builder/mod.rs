@@ -174,6 +174,12 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
         while let Some(payload) = payload_events_channel.recv().await {
             println!("Payload_attributes event received: {:?}", payload);
+            println!("Building for block {} (parent: {})", payload.slot(), payload.parent_block_hash());
+
+            // if payload.slot() != payload.payload_attributes_event.data.parent_block_number + 1 {
+            //     println!("not building on top of the previous block, skipping this event.");
+            //     continue;
+            // }
 
             if self.blocklist.contains(&payload.fee_recipient()) {
                 warn!(
@@ -186,6 +192,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             // see if we can get parent header in a reasonable time
 
             let time_to_slot = payload.timestamp() - OffsetDateTime::now_utc();
+            println!("time to slot: {}", time_to_slot);
             debug!(
                 slot = payload.slot(),
                 block = payload.block(),
@@ -195,6 +202,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
             let time_until_slot_end = time_to_slot + SLOT_PROPOSAL_DURATION;
             if time_until_slot_end.is_negative() {
+                println!("bailing slot");
                 warn!(
                     slot = payload.slot(),
                     "Slot already ended, skipping block building"
@@ -237,6 +245,9 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 }
             }
 
+            // Wait until L2 is synced as well
+            self.layer2_info.wait_until_synced(parent_header.number).await;
+
             debug!(
                 slot = payload.slot(),
                 block = payload.block(),
@@ -257,6 +268,8 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 None,
             );
 
+            // Also wait for all L2s to have synced until at least this L1 block
+
             // TODO(Brecht): hack to wait until latest L2 block is also created, which is later then when we get the payload build event
             //sleep(Duration::from_millis(4000));
 
@@ -271,6 +284,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 println!("chain spec chain id: {}", chain_spec.chain.id());
                 if chain_spec.chain.id() != chain_id {
                     println!("updating ctx for {}", chain_id);
+                    // TODO(Brecht): wait on latest L2 block to be available
                     let latest_block = self.layer2_info.get_latest_block(chain_id, BlockId::Number(BlockNumberOrTag::Latest)).await?;
                     if let Some(latest_block) = latest_block {
                         println!("[{}] Building on top of {:?}", chain_id, latest_block.header.hash);
@@ -362,8 +376,10 @@ async fn wait_for_block_header<DB: Database>(
     provider_factory: &ProviderFactory<DB>,
 ) -> eyre::Result<Header> {
     let dead_line = slot_time + BLOCK_HEADER_DEAD_LINE_DELTA;
+    println!("Waiting for {}...", block);
     while OffsetDateTime::now_utc() < dead_line {
         if let Some(header) = provider_factory.header(&block)? {
+            println!("Waiting for done. {}", block);
             return Ok(header);
         } else {
             let time_to_sleep = min(
@@ -376,5 +392,6 @@ async fn wait_for_block_header<DB: Database>(
             tokio::time::sleep(time_to_sleep.try_into().unwrap()).await;
         }
     }
+    println!("Waiting failed: {}", block);
     Err(eyre::eyre!("Block header not found"))
 }

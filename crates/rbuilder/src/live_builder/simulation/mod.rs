@@ -106,7 +106,7 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
         input: HashMap<u64, OrdersForBlock>,
         block_cancellation: CancellationToken,
     ) -> SlotOrderSimResults {
-        println!("spawn_simulation_job");
+        println!("spawn_simulation_job on top of {} {}", ctx.block(), ctx.chains.get(&ctx.parent_chain_id).unwrap().attributes.parent);
 
         let (slot_sim_results_sender, slot_sim_results_receiver) = mpsc::channel(10_000);
 
@@ -118,9 +118,9 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
 
         let handle = tokio::spawn(
             async move {
-                for (_chain_id, new_order_sub) in input {
+                //for (_chain_id, new_order_sub) in input {
                     let sim_tree = SimTree::new(providers.clone(), ctx.chains.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect());
-                    let new_order_sub = new_order_sub.new_order_sub;
+                    let new_order_sub = input.into_iter().map(|(chain_id, new_order_sub)| (chain_id, new_order_sub.new_order_sub)).collect();
                     let (sim_req_sender, sim_req_receiver) = flume::unbounded();
                     let (sim_results_sender, sim_results_receiver) = mpsc::channel(1024);
                     {
@@ -150,7 +150,7 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
                         contexts.contexts.remove(&block_context);
                     }
                     println!("simulation job cleaned up");
-                }
+                //}
             }
             //.instrument(span)
             ,

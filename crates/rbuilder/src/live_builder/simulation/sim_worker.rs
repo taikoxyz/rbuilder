@@ -32,6 +32,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
 ) {
     loop {
         if global_cancellation.is_cancelled() {
+            println!("simming cancelled");
             return;
         }
         let current_sim_context = loop {
@@ -50,7 +51,7 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
             //sleep(Duration::from_millis(500));
         };
 
-        println!("simming");
+        println!("simming for block {} (parent: {})", current_sim_context.block_ctx.block(), current_sim_context.block_ctx.chains.get(&current_sim_context.block_ctx.parent_chain_id).unwrap().attributes.parent);
 
         let mut provider_factories = HashMap::default();
         for (chain_id, provider_factory) in provider_factory.iter() {

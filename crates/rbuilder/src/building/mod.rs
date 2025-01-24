@@ -767,7 +767,9 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         // Brecht: state root calculation
         // TODO Brecht: Fix
-        let root_hash_config = root_hash_config.clone();
+        //let mut root_hash_config = root_hash_config.clone();
+        //root_hash_config.mode = RootHashMode::IgnoreParentHash;
+        //println!("root_hash_config: {:?}", root_hash_config);
         let state_root = calculate_state_root(
             provider_factories.get(&chain_id).unwrap().clone(),
             ctx.attributes.parent,
@@ -776,6 +778,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             ctx.shared_sparse_mpt_cache.clone(),
             root_hash_config.clone(),
         )?;
+        //let state_root = B256::ZERO;
 
         // create the block header
         let transactions_root = proofs::calculate_transaction_root(&self.executed_tx);

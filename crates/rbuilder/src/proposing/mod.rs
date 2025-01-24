@@ -81,7 +81,7 @@ sol! {
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
-static HISTORY: Lazy<Mutex<HashMap<u64, (u64, u64)>>> = Lazy::new(|| {
+static HISTORY: Lazy<Mutex<HashMap<u64, (u64, u64, u64)>>> = Lazy::new(|| {
     Mutex::new(HashMap::new())
 });
 
@@ -137,15 +137,15 @@ impl BlockProposer {
 
         let num_txs_sent = {
             let mut history = HISTORY.lock().unwrap();
-            if !history.contains_key(&block_idx) {
-                history.insert(block_idx, (0, 0));
+            if !history.contains_key(&nonce) {
+                history.insert(nonce, (0, 0, 0));
             }
-            let slot_history = history.get_mut(&execution_payload.block_number()).unwrap();
-            if slot_history.1 >= request.bid_trace().gas_used {
-                println!("skipping request: {} (<= {})", request.bid_trace().gas_used, slot_history.1);
+            let slot_history = history.get_mut(&nonce).unwrap();
+            if block_idx < slot_history.1 || (block_idx == slot_history.1 && request.bid_trace().gas_used < slot_history.2) {
+                println!("skipping request: ({} {}) (<= ({} {}))", block_idx, request.bid_trace().gas_used, slot_history.1, slot_history.2);
                 return Ok(());
             }
-            *slot_history = (slot_history.0 + 1, request.bid_trace().gas_used);
+            *slot_history = (slot_history.0 + 1, block_idx, request.bid_trace().gas_used);
             println!("New slot history: {:?}", slot_history);
             slot_history.0
         };

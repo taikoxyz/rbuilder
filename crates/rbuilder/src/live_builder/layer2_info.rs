@@ -1,6 +1,7 @@
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::thread::sleep;
 use std::time::Duration;
 use ahash::HashMap;
 use alloy_primitives::U256;
@@ -8,8 +9,10 @@ use alloy_provider::{IpcConnect, ProviderBuilder, Provider, RootProvider};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactionsKind};
 use alloy_eips::BlockId;
 use alloy_pubsub::PubSubFrontend;
+use alloy_transport::TransportResult;
 use eyre::Result;
 use reth_db::DatabaseEnv;
+use revm_primitives::hex;
 use tracing::warn;
 use reth_node_core::args::utils::chain_value_parser;
 
@@ -141,6 +144,34 @@ impl<DB: Clone> Layer2Info<DB> {
             }
         } else {
             Ok(None)
+        }
+    }
+
+    pub async fn wait_until_synced(&self, target_block: u64) {
+        let providers = self.ipc_providers.lock().unwrap();
+        for (chain_id, (provider, _)) in providers.iter() {
+            println!("checking L2: {}", chain_id);
+            //if self.ensure_connection(chain_id).await {
+                println!("calling eth_getSyncData");
+                let result: TransportResult<String>  = provider.client().request_noparams("eth_getSyncData").await;
+                println!("sync data: {:?}", result);
+                if result.is_ok() {
+                    let res = result.unwrap();
+                    let without_prefix = res.trim_start_matches("0x");
+                    // Parse as base 16
+                    let l1_block = u64::from_str_radix(without_prefix, 16).expect("Invalid hex input");
+                    println!("l1_block: {:?}", l1_block);
+                    if l1_block < target_block {
+                        println!("waiting on L2 to sync... ({} < {})", l1_block, target_block);
+                        sleep(Duration::from_millis(100));
+                    } else {
+                        println!("L2 synced to {}", target_block);
+                        break;
+                    }
+                } else {
+                    println!("error getting sync data: {:?}", result);
+                }
+            //}
         }
     }
 

@@ -371,9 +371,11 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
 
         let provider_factory = &self.provider_factory[&self.building_ctx.parent_chain_id];
 
+        let body = self.partial_block.executed_tx.iter().cloned().map(|t| t.tx.into()).collect();
+
         let sim_gas_used = self.partial_block.tracer.used_gas;
         let block_number = self.building_context().block();
-        let finalized_block = match self.partial_block.clone().finalize(
+        let finalized_block = match self.partial_block.finalize(
             &mut self.block_state,
             &self.building_ctx,
             self.provider_factory.clone(),
@@ -390,6 +392,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
                         block_number,
                         last_block_number, "Can't build on this head, cancelling slot"
                     );
+                    println!("Err: {:?}", err);
                     self.cancel_on_fatal_error.cancel();
                 }
                 return Err(BlockBuildingHelperError::FinalizeError(err));
@@ -415,7 +418,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
             builder_name: self.builder_name.clone(),
         };
 
-        block.sealed_block.body = self.partial_block.executed_tx.into_iter().map(|t| t.tx.into()).collect();
+        block.sealed_block.body = body;
 
         Ok(FinalizeBlockResult {
             block,

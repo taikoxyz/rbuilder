@@ -116,7 +116,8 @@ pub fn check_provider_factory_health<DB: Database>(
         let num = current_block_number - i;
         let hash = provider_factory.block_hash(num)?;
         if hash.is_none() {
-            println!(
+            //println!(
+            eyre::bail!(
                 "[{}] Missing historical block hash for block {}, current block: {}",
                 provider_factory.chain_spec().chain.id(),
                 current_block_number - i,
