@@ -33,6 +33,7 @@ reth-provider.workspace = true
 reth-chainspec.workspace = true
 reth-evm.workspace = true
 reth-evm-ethereum.workspace = true
+reth-stages.workspace = true
 revm.workspace = true
 revm-primitives.workspace = true
 revm-inspectors.workspace = true
@@ -131,6 +132,7 @@ derivative = "2.2.0"
 mockall = "0.12.1"
 shellexpand = "3.1.0"
 async-trait = "0.1.80"
+parking_lot = "0.12.3"
 
 eth-sparse-mpt = { git = "https://github.com/flashbots/eth-sparse-mpt", rev = "664759b" }
 

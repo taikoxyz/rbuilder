@@ -108,7 +108,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
         let provider_factories: HashMap<u64, ProviderFactory<DB>> = self
             .provider_factory.iter().map(|(chain_id, provider_factory)| {
                 let block_number = ctx.chains[chain_id].block_env.number.to::<u64>();
-                match provider_factory.check_consistency_and_reopen_if_needed(block_number)
+                match provider_factory.check_consistency_and_reopen_if_needed(/*block_number*/)
                 {
                     Ok(provider_factory) => (*chain_id, provider_factory),
                     Err(err) => {

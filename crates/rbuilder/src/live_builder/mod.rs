@@ -37,6 +37,8 @@ use reth::{
 use reth_chainspec::ChainSpec;
 use reth_db::database::Database;
 use reth_evm::provider;
+use reth_provider::StageCheckpointReader;
+use reth_stages::StageId;
 use revm_primitives::{BlobExcessGasAndPrice, ChainAddress};
 use std::{cmp::min, path::PathBuf, sync::Arc, thread::sleep, time::Duration};
 use time::OffsetDateTime;
@@ -224,11 +226,23 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 }
             };
 
+            loop {
+                let provider_factory = self.provider_factory.clone().provider_factory_unchecked();
+                if let Some(latest_block_number_synced) = provider_factory.get_stage_checkpoint(StageId::Finish).expect("failed to get header") {
+                    if latest_block_number_synced.block_number >= parent_header.number {
+                        println!("Waiting for {} to pipeline done.", parent_header.number);
+                        break;
+                    }
+                }
+                println!("waiting on L1 block {} to pipeline...", parent_header.number);
+                sleep(Duration::from_millis(100));
+            }
+
             {
                 let provider_factory = self.provider_factory.clone();
-                let block = payload.block();
+                // let block = payload.block();
                 match spawn_blocking(move || {
-                    provider_factory.check_consistency_and_reopen_if_needed(block)
+                    provider_factory.check_consistency_and_reopen_if_needed(/*block*/)
                 })
                 .await
                 {
@@ -275,9 +289,26 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
             //println!("payload: {:?}", payload);
 
-            // TODO: Brecht
             let mut chains = HashMap::default();
-            for (&chain_id, _) in provider_factories.iter() {
+            for (chain_id, provider_factory) in provider_factories.clone().into_iter() {
+
+                match spawn_blocking(move || {
+                    provider_factory.check_consistency_and_reopen_if_needed(/*block*/)
+                })
+                .await
+                {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        error!(?err, "Failed to check historical block hashes");
+                        // This error is unrecoverable so we restart.
+                        break;
+                    }
+                    Err(err) => {
+                        error!(?err, "Failed to join historical block hashes task");
+                        continue;
+                    }
+                }
+
                 println!("setting up {}", chain_id);
                 let mut block_ctx = block_ctx.clone();
                 let mut chain_spec = (*block_ctx.chain_spec).clone();

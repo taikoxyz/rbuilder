@@ -258,7 +258,7 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
         // Create a new ctx to remove builder_signer if necessary
         let new_ctx = self.ctx.clone();
         for (chain_id, provider_factory) in self.provider_factory.iter() {
-            check_provider_factory_health(self.ctx.chains[chain_id].block(), provider_factory)?;
+            check_provider_factory_health(self.ctx.chains[chain_id].block() - 1, provider_factory)?;
             if use_suggested_fee_recipient_as_coinbase {
                 self.ctx.chains.get_mut(chain_id).unwrap().modify_use_suggested_fee_recipient_as_coinbase();
             }

@@ -38,6 +38,7 @@ reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6", f
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
+reth-stages = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
 
 # version is copied from reth  "v1.0.6" dependencies
 revm = { version = "14.0.0", features = [
@@ -111,6 +112,7 @@ reth-evm-ethereum = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwy
 reth-db-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 reth-execution-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 reth-trie-db = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
+reth-stages = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth" }
 
 #reth = { path = "../../revm-dani/gwyneth/bin/reth" }
 #reth-db = { path = "../../revm-dani/gwyneth/crates/storage/db" }
