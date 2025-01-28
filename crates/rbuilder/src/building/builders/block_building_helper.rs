@@ -24,7 +24,7 @@ use crate::{
     },
     primitives::SimulatedOrder,
     roothash::RootHashConfig,
-    telemetry,
+    telemetry, utils::check_provider_factory_health,
 };
 
 use super::Block;
@@ -122,6 +122,8 @@ pub enum BlockBuildingHelperError {
     FinalizeError(#[from] FinalizeError),
     #[error("Payout tx not allowed for block")]
     PayoutTxNotAllowed,
+    #[error("Historical block error")]
+    HistoricalBlockError,
 }
 
 impl BlockBuildingHelperError {
@@ -168,6 +170,9 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         // @Maybe an issue - we have 2 db txs here (one for hash and one for finalize)
         let mut state_providers: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
         for (chain_id, provider_factory) in provider_factory.iter() {
+            //let last_committed_block = building_ctx.chains[chain_id].block() - 1;
+            //check_provider_factory_health(last_committed_block, provider_factory).map_err(|_| BlockBuildingHelperError::HistoricalBlockError)?;
+
             state_providers.insert(
                 *chain_id,
                 provider_factory.history_by_block_hash(building_ctx.chains[chain_id].attributes.parent)?.into(),

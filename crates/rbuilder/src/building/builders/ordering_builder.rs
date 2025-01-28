@@ -120,9 +120,10 @@ pub fn run_ordering_builder<DB: Database + Clone + 'static>(
                 input.sink.new_block(block);
             }
             Err(err) => {
-                if !handle_building_error(err) {
-                    break 'building;
-                }
+                println!("Error while building block: {:?}", err);
+                // if !handle_building_error(err) {
+                //     break 'building;
+                // }
             }
         }
         if config.drop_failed_orders {
@@ -257,8 +258,7 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
 
         // Create a new ctx to remove builder_signer if necessary
         let new_ctx = self.ctx.clone();
-        for (chain_id, provider_factory) in self.provider_factory.iter() {
-            check_provider_factory_health(self.ctx.chains[chain_id].block() - 1, provider_factory)?;
+        for (chain_id, _) in self.provider_factory.iter() {
             if use_suggested_fee_recipient_as_coinbase {
                 self.ctx.chains.get_mut(chain_id).unwrap().modify_use_suggested_fee_recipient_as_coinbase();
             }

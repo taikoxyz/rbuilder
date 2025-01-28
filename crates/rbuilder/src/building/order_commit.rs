@@ -498,9 +498,9 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             logs: res.result.logs().to_vec(),
         };
 
-        if !res.result.is_success() {
-            println!("tx reverted with reason: {:?}", res.result);
-        }
+        // if !res.result.is_success() {
+        //     println!("tx reverted with reason: {:?}", res.result);
+        // }
 
         Ok(Ok(TransactionOk {
             exec_result: res.result,
