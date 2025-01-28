@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use crate::{
     building::sim::{SimTree, SimulatedResult, SimulationRequest},
@@ -7,8 +7,10 @@ use crate::{
 };
 use ahash::HashSet;
 use alloy_primitives::utils::format_ether;
+use futures::stream::{select_all, SelectAll};
 use reth_db::database::Database;
 use tokio::sync::mpsc;
+use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
@@ -28,7 +30,8 @@ use super::SimulatedOrderCommand;
 pub struct SimulationJob<DB> {
     block_cancellation: CancellationToken,
     /// Input orders to be simulated
-    new_order_sub: mpsc::UnboundedReceiver<OrderPoolCommand>,
+    //merged_stream: HashMap<u64, mpsc::UnboundedReceiver<OrderPoolCommand>>,
+    merged_stream: SelectAll<UnboundedReceiverStream<OrderPoolCommand>>,
     /// Here we send requests to the simulator pool
     sim_req_sender: flume::Sender<SimulationRequest>,
     /// Here we receive the results we asked to sim_req_sender
@@ -59,15 +62,26 @@ pub struct SimulationJob<DB> {
 impl<DB: Database + Clone + Send + 'static> SimulationJob<DB> {
     pub fn new(
         block_cancellation: CancellationToken,
-        new_order_sub: mpsc::UnboundedReceiver<OrderPoolCommand>,
+        new_order_sub: HashMap<u64, mpsc::UnboundedReceiver<OrderPoolCommand>>,
         sim_req_sender: flume::Sender<SimulationRequest>,
         sim_results_receiver: mpsc::Receiver<SimulatedResult>,
         slot_sim_results_sender: mpsc::Sender<SimulatedOrderCommand>,
         sim_tree: SimTree<DB>,
     ) -> Self {
+        // Wrap each UnboundedReceiver with UnboundedReceiverStream
+        let streams = new_order_sub
+            .into_iter()
+            .map(|(_, s)| UnboundedReceiverStream::new(s))
+            .collect::<Vec<_>>();
+
+
+        // This single merged stream will yield commands from all new_order_sub
+        let merged_stream = select_all(streams);
+
         Self {
             block_cancellation,
-            new_order_sub,
+            //new_order_sub,
+            merged_stream,
             sim_req_sender,
             sim_results_receiver,
             slot_sim_results_sender,
@@ -89,24 +103,45 @@ impl<DB: Database + Clone + Send + 'static> SimulationJob<DB> {
         );
     }
     async fn run_no_trace(&mut self) {
-        let mut new_commands = Vec::new();
+        //let mut new_commands = Vec::new();
         let mut new_sim_results = Vec::new();
+
+
+
         loop {
             self.send_new_tasks_for_simulation();
+
             // tokio::select appears to be fair so no channel will be polled more than the other
             tokio::select! {
-                n = self.new_order_sub.recv_many(&mut new_commands, 1024) => {
-                    if n != 0 {
-                        if !self.process_new_commands(&new_commands).await {
+                // Receive commands from any unbounded channel
+                maybe_cmd = self.merged_stream.next() => {
+                    match maybe_cmd {
+                        Some(cmd) => {
+                            println!("command on merged stream!: {:?}", cmd);
+                            // Process each command as it arrives
+                            if !self.process_new_commands(&[cmd]).await {
+                                return;
+                            }
+                        }
+                        None => {
+                            // All unbounded receivers have closed
                             return;
                         }
-                        new_commands.clear();
-                    } else {
-                        trace!("New order sub is closed");
-                        return;
-                        // channel is closed, we should cancel this job
                     }
-                }
+                },
+
+                // n = new_order_sub.recv_many(&mut new_commands, 1024) => {
+                //     if n != 0 {
+                //         if !self.process_new_commands(&new_commands).await {
+                //             return;
+                //         }
+                //         new_commands.clear();
+                //     } else {
+                //         trace!("New order sub is closed");
+                //         return;
+                //         // channel is closed, we should cancel this job
+                //     }
+                // }
                 n = self.sim_results_receiver.recv_many(&mut new_sim_results, 1024) => {
                     if n != 0 {
                         if !self.process_new_simulations(&mut new_sim_results).await {

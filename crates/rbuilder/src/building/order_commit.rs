@@ -498,6 +498,10 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             logs: res.result.logs().to_vec(),
         };
 
+        // if !res.result.is_success() {
+        //     println!("tx reverted with reason: {:?}", res.result);
+        // }
+
         Ok(Ok(TransactionOk {
             exec_result: res.result,
             gas_used,
@@ -1168,7 +1172,7 @@ fn coinbase_profit(
     if coinbase_balance_after >= coinbase_balance_before {
         Ok(coinbase_balance_after - coinbase_balance_before)
     } else {
-        Ok(U256::ZERO)
+        Ok(U256::from(1))
         // Err(OrderErr::NegativeProfit(
         //     coinbase_balance_before - coinbase_balance_after,
         // ))

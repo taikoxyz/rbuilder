@@ -24,7 +24,7 @@ use crate::{
     },
     primitives::SimulatedOrder,
     roothash::RootHashConfig,
-    telemetry,
+    telemetry, utils::check_provider_factory_health,
 };
 
 use super::Block;
@@ -122,6 +122,8 @@ pub enum BlockBuildingHelperError {
     FinalizeError(#[from] FinalizeError),
     #[error("Payout tx not allowed for block")]
     PayoutTxNotAllowed,
+    #[error("Historical block error")]
+    HistoricalBlockError,
 }
 
 impl BlockBuildingHelperError {
@@ -168,6 +170,9 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         // @Maybe an issue - we have 2 db txs here (one for hash and one for finalize)
         let mut state_providers: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
         for (chain_id, provider_factory) in provider_factory.iter() {
+            //let last_committed_block = building_ctx.chains[chain_id].block() - 1;
+            //check_provider_factory_health(last_committed_block, provider_factory).map_err(|_| BlockBuildingHelperError::HistoricalBlockError)?;
+
             state_providers.insert(
                 *chain_id,
                 provider_factory.history_by_block_hash(building_ctx.chains[chain_id].attributes.parent)?.into(),
@@ -284,9 +289,9 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         let bid_value = U256::from(self.partial_block.gas_used);
         let true_value = U256::from(self.partial_block.gas_used);
 
-        if self.partial_block.gas_used > 0 {
-            println!("gas used: {:?}", self.partial_block.gas_used);
-        }
+        // if self.partial_block.gas_used > 0 {
+        //     println!("gas used: {:?}", self.partial_block.gas_used);
+        // }
         // Since some extra money might arrived directly the suggested_fee_recipient (when suggested_fee_recipient != coinbase)
         // we check the fee_recipient delta and make our bid include that! This is supposed to be what the relay will check.
         let fee_recipient_balance_after = self
@@ -298,7 +303,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelperFromDB<DB> {
         self.built_block_trace.bid_value = max(bid_value, fee_recipient_balance_diff);
         self.built_block_trace.true_bid_value = true_value;
 
-        self.built_block_trace.bid_value = U256::from(self.partial_block.gas_used);
+        self.built_block_trace.bid_value = U256::from(self.building_context().block() * 30000000 + self.partial_block.gas_used);
         self.built_block_trace.true_bid_value = self.built_block_trace.bid_value;
 
         Ok(())
@@ -314,7 +319,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
         let result =
             self.partial_block
                 .commit_order(order, &self.building_ctx, &mut self.block_state);
-        println!("commit order: {:?}", order);
+        //println!("commit order: {:?}", order);
         match result {
             Ok(ok_result) => match ok_result {
                 Ok(res) => {
@@ -371,9 +376,11 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
 
         let provider_factory = &self.provider_factory[&self.building_ctx.parent_chain_id];
 
+        let body = self.partial_block.executed_tx.iter().cloned().map(|t| t.tx.into()).collect();
+
         let sim_gas_used = self.partial_block.tracer.used_gas;
         let block_number = self.building_context().block();
-        let finalized_block = match self.partial_block.clone().finalize(
+        let finalized_block = match self.partial_block.finalize(
             &mut self.block_state,
             &self.building_ctx,
             self.provider_factory.clone(),
@@ -390,6 +397,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
                         block_number,
                         last_block_number, "Can't build on this head, cancelling slot"
                     );
+                    println!("Err: {:?}", err);
                     self.cancel_on_fatal_error.cancel();
                 }
                 return Err(BlockBuildingHelperError::FinalizeError(err));
@@ -415,7 +423,7 @@ impl<DB: Database + Clone + 'static> BlockBuildingHelper for BlockBuildingHelper
             builder_name: self.builder_name.clone(),
         };
 
-        block.sealed_block.body = self.partial_block.executed_tx.into_iter().map(|t| t.tx.into()).collect();
+        block.sealed_block.body = body;
 
         Ok(FinalizeBlockResult {
             block,

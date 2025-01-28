@@ -65,8 +65,8 @@ impl BestBlockCell {
             .map(|b| b.trace.bid_value)
             .unwrap_or_default();
         //println!("compare_and_update: {:?} > {:?}", block.trace.bid_value, old_value);
-        if block.trace.bid_value > old_value {
-            println!("best_block update: {:?} > {:?}", block.trace.bid_value, old_value);
+        if best_block.is_none() || block.trace.bid_value > old_value {
+            //println!("best_block update: {:?} > {:?}", block.trace.bid_value, old_value);
             *best_block = Some(block);
         }
     }
@@ -178,6 +178,7 @@ async fn run_submit_to_relays_job(
 
     let mut last_bid_value = U256::from(0);
     let mut last_submit_time = Instant::now();
+    let mut submitted_any_block = false;
     'submit: loop {
         //println!("poll loop");
 
@@ -192,8 +193,12 @@ async fn run_submit_to_relays_job(
         last_submit_time = Instant::now();
 
         let block = if let Some(new_block) = best_bid.take_best_block() {
-            if new_block.trace.bid_value > last_bid_value {
+            if new_block.trace.included_orders.len() == 0 {
+                continue 'submit;
+            }
+            if new_block.trace.bid_value > last_bid_value || !submitted_any_block {
                 last_bid_value = new_block.trace.bid_value;
+                submitted_any_block = true;
                 new_block
             } else {
                 continue 'submit;

@@ -113,11 +113,13 @@ impl ParallelSealerBidMakerProcess {
 
     /// block.finalize_block + self.sink.new_block inside spawn_blocking.
     async fn check_for_new_bid(&mut self) {
+        println!("ParallelSealerBidMakerProcess: check_for_new_bid");
         if *self.seal_control.seals_in_progress.lock().unwrap() >= self.max_concurrent_seals {
+            println!("can't seal: max_concurrent_seals reached");
             return;
         }
         if let Some(bid) = self.pending_bid.consume_bid() {
-            println!("check_for_new_bid");
+            //println!("there is a bid");
             let payout_tx_val = bid.payout_tx_value();
             let block = bid.block();
             let block_number = block.building_context().block();

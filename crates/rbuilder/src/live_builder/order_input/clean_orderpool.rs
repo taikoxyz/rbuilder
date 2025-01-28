@@ -64,6 +64,7 @@ pub async fn spawn_clean_orderpool_job<DB: Database + Clone + 'static>(
             let update_time = start.elapsed();
             let (tx_count, bundle_count) = orderpool.content_count();
             set_ordepool_count(tx_count, bundle_count);
+            println!("new order pool count: {}", tx_count);
             debug!(
                 block_number,
                 tx_count,

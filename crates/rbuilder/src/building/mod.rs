@@ -49,7 +49,7 @@ use revm::{
     primitives::{BlobExcessGasAndPrice, BlockEnv, CfgEnvWithHandlerCfg, SpecId}, TransitionState,
 };
 use serde::Deserialize;
-use std::{hash::Hash, str::FromStr, sync::Arc};
+use std::{hash::Hash, str::FromStr, sync::Arc, thread::sleep, time::Duration};
 use thiserror::Error;
 use time::OffsetDateTime;
 
@@ -551,13 +551,13 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         ctx: &BlockBuildingContext,
         state: &mut BlockState,
     ) -> Result<Result<ExecutionResult, ExecutionError>, CriticalCommitOrderError> {
-        println!("commit_order: {:?}", order.order);
-        if ctx.builder_signer.is_none() && !order.sim_value.paid_kickbacks.is_empty() {
-            // Return here to avoid wasting time on a call to fork.commit_order that 99% will fail
-            return Ok(Err(ExecutionError::OrderError(OrderErr::Bundle(
-                BundleErr::NoSigner,
-            ))));
-        }
+        // println!("commit_order: {:?}", order.order);
+        // if ctx.builder_signer.is_none() && !order.sim_value.paid_kickbacks.is_empty() {
+        //     // Return here to avoid wasting time on a call to fork.commit_order that 99% will fail
+        //     return Ok(Err(ExecutionError::OrderError(OrderErr::Bundle(
+        //         BundleErr::NoSigner,
+        //     ))));
+        // }
 
         let mut fork = PartialBlockFork::new(state).with_tracer(&mut self.tracer);
         let rollback = fork.rollback_point();
@@ -767,7 +767,9 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         // Brecht: state root calculation
         // TODO Brecht: Fix
-        let root_hash_config = root_hash_config.clone();
+        //let mut root_hash_config = root_hash_config.clone();
+        //root_hash_config.mode = RootHashMode::IgnoreParentHash;
+        //println!("root_hash_config: {:?}", root_hash_config);
         let state_root = calculate_state_root(
             provider_factories.get(&chain_id).unwrap().clone(),
             ctx.attributes.parent,
@@ -776,6 +778,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             ctx.shared_sparse_mpt_cache.clone(),
             root_hash_config.clone(),
         )?;
+        //let state_root = B256::ZERO;
 
         // create the block header
         let transactions_root = proofs::calculate_transaction_root(&self.executed_tx);
@@ -877,7 +880,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
                     requests_root,
                 };
 
-                println!("chain {} header: {:?}", chain_id, header);
+                //println!("chain {} header: {:?}", chain_id, header);
 
                 let block = Block {
                     header,
@@ -894,7 +897,9 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
                 let sealed_block = block.seal_slow();
 
-                println!("chain {} calculated block hash: {:?}", chain_id, sealed_block.hash());
+                sleep(Duration::from_millis(10));
+
+                println!("[{}] chain {} calculated block hash: {:?}", super_ctx.block(), chain_id, sealed_block.hash());
 
                 blocks.insert(chain_id, sealed_block);
             }

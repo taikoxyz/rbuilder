@@ -37,6 +37,8 @@ use reth::{
 use reth_chainspec::ChainSpec;
 use reth_db::database::Database;
 use reth_evm::provider;
+use reth_provider::StageCheckpointReader;
+use reth_stages::StageId;
 use revm_primitives::{BlobExcessGasAndPrice, ChainAddress};
 use std::{cmp::min, path::PathBuf, sync::Arc, thread::sleep, time::Duration};
 use time::OffsetDateTime;
@@ -47,10 +49,10 @@ use tracing::{debug, error, info, warn};
 use layer2_info::Layer2Info;
 
 /// Time the proposer have to propose a block from the beginning of the slot (https://www.paradigm.xyz/2023/04/mev-boost-ethereum-consensus Slot anatomy)
-const SLOT_PROPOSAL_DURATION: std::time::Duration = Duration::from_secs(4);
+const SLOT_PROPOSAL_DURATION: std::time::Duration = Duration::from_secs(11);
 /// Delta from slot time to get_header dead line. If we can't get the block header before slot_time + BLOCK_HEADER_DEAD_LINE_DELTA we cancel the slot.
 /// Careful: It's signed and usually negative since we need de header BEFORE the slot time.
-const BLOCK_HEADER_DEAD_LINE_DELTA: time::Duration = time::Duration::milliseconds(-2500);
+const BLOCK_HEADER_DEAD_LINE_DELTA: time::Duration = time::Duration::milliseconds(-500);
 /// Polling period while trying to get a block header
 const GET_BLOCK_HEADER_PERIOD: time::Duration = time::Duration::milliseconds(250);
 
@@ -97,7 +99,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         Self { builders, ..self }
     }
 
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(mut self) -> eyre::Result<()> {
         info!("Builder block list size: {}", self.blocklist.len(),);
         info!(
             "Builder coinbase address: {:?}",
@@ -131,6 +133,11 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
         provider_factories.insert(self.chain_chain_spec.chain.id(), self.provider_factory.clone());
 
         for (chain_id, node) in self.layer2_info.nodes.iter() {
+            // let latest_block = self.layer2_info.get_latest_block(*chain_id, BlockId::Number(BlockNumberOrTag::Latest)).await?;
+            // if let Some(latest_block) = latest_block {
+            //     node.provider_factory.check_consistency_and_reopen_if_needed(latest_block.header.number);
+            // }
+
             let orderpool_subscriber = {
                 let (handle, sub) = start_orderpool_jobs(
                     node.order_input_config.clone(),
@@ -169,6 +176,12 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
         while let Some(payload) = payload_events_channel.recv().await {
             println!("Payload_attributes event received: {:?}", payload);
+            println!("Building for block {} (parent: {})", payload.slot(), payload.parent_block_hash());
+
+            // if payload.slot() != payload.payload_attributes_event.data.parent_block_number + 1 {
+            //     println!("not building on top of the previous block, skipping this event.");
+            //     continue;
+            // }
 
             if self.blocklist.contains(&payload.fee_recipient()) {
                 warn!(
@@ -181,6 +194,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             // see if we can get parent header in a reasonable time
 
             let time_to_slot = payload.timestamp() - OffsetDateTime::now_utc();
+            println!("time to slot: {}", time_to_slot);
             debug!(
                 slot = payload.slot(),
                 block = payload.block(),
@@ -190,6 +204,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
 
             let time_until_slot_end = time_to_slot + SLOT_PROPOSAL_DURATION;
             if time_until_slot_end.is_negative() {
+                println!("bailing slot");
                 warn!(
                     slot = payload.slot(),
                     "Slot already ended, skipping block building"
@@ -211,11 +226,23 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 }
             };
 
+            loop {
+                let provider_factory = self.provider_factory.clone().provider_factory_unchecked();
+                if let Some(latest_block_number_synced) = provider_factory.get_stage_checkpoint(StageId::Finish).expect("failed to get header") {
+                    if latest_block_number_synced.block_number >= parent_header.number {
+                        println!("Waiting for {} to pipeline done.", parent_header.number);
+                        break;
+                    }
+                }
+                println!("waiting on L1 block {} to pipeline...", parent_header.number);
+                sleep(Duration::from_millis(100));
+            }
+
             {
                 let provider_factory = self.provider_factory.clone();
-                let block = payload.block();
+                // let block = payload.block();
                 match spawn_blocking(move || {
-                    provider_factory.check_consistency_and_reopen_if_needed(block)
+                    provider_factory.check_consistency_and_reopen_if_needed(/*block*/)
                 })
                 .await
                 {
@@ -231,6 +258,9 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                     }
                 }
             }
+
+            // Wait until L2 is synced as well
+            self.layer2_info.wait_until_synced(parent_header.number).await;
 
             debug!(
                 slot = payload.slot(),
@@ -252,20 +282,40 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 None,
             );
 
+            // Also wait for all L2s to have synced until at least this L1 block
+
             // TODO(Brecht): hack to wait until latest L2 block is also created, which is later then when we get the payload build event
             //sleep(Duration::from_millis(4000));
 
             //println!("payload: {:?}", payload);
 
-            // TODO: Brecht
             let mut chains = HashMap::default();
-            for (&chain_id, _) in provider_factories.iter() {
+            for (chain_id, provider_factory) in provider_factories.clone().into_iter() {
+
+                match spawn_blocking(move || {
+                    provider_factory.check_consistency_and_reopen_if_needed(/*block*/)
+                })
+                .await
+                {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        error!(?err, "Failed to check historical block hashes");
+                        // This error is unrecoverable so we restart.
+                        break;
+                    }
+                    Err(err) => {
+                        error!(?err, "Failed to join historical block hashes task");
+                        continue;
+                    }
+                }
+
                 println!("setting up {}", chain_id);
                 let mut block_ctx = block_ctx.clone();
                 let mut chain_spec = (*block_ctx.chain_spec).clone();
                 println!("chain spec chain id: {}", chain_spec.chain.id());
                 if chain_spec.chain.id() != chain_id {
                     println!("updating ctx for {}", chain_id);
+                    // TODO(Brecht): wait on latest L2 block to be available
                     let latest_block = self.layer2_info.get_latest_block(chain_id, BlockId::Number(BlockNumberOrTag::Latest)).await?;
                     if let Some(latest_block) = latest_block {
                         println!("[{}] Building on top of {:?}", chain_id, latest_block.header.hash);
@@ -357,8 +407,10 @@ async fn wait_for_block_header<DB: Database>(
     provider_factory: &ProviderFactory<DB>,
 ) -> eyre::Result<Header> {
     let dead_line = slot_time + BLOCK_HEADER_DEAD_LINE_DELTA;
+    println!("Waiting for {}...", block);
     while OffsetDateTime::now_utc() < dead_line {
         if let Some(header) = provider_factory.header(&block)? {
+            println!("Waiting for done. {}", block);
             return Ok(header);
         } else {
             let time_to_sleep = min(
@@ -371,5 +423,6 @@ async fn wait_for_block_header<DB: Database>(
             tokio::time::sleep(time_to_sleep.try_into().unwrap()).await;
         }
     }
+    println!("Waiting failed: {}", block);
     Err(eyre::eyre!("Block header not found"))
 }
