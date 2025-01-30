@@ -102,7 +102,8 @@ pub fn run_ordering_builder<DB: Database + Clone + 'static>(
             }
             Err(err) => {
                 error!(?err, "Error consuming next order batch");
-                continue;
+                //continue;
+                break;
             }
         }
 
