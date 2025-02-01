@@ -60,6 +60,7 @@ pub fn sim_historical_block(
 
     let mut cumulative_gas_used = 0;
     let mut cumulative_blob_gas_used = 0;
+    let mut cumulative_data_used = 0;
     let mut written_slots: HashMap<SlotKey, Vec<B256>> = HashMap::default();
 
     for (idx, tx) in txs.into_iter().enumerate() {
@@ -67,7 +68,7 @@ pub fn sim_historical_block(
         let mut accumulator_tracer = AccumulatorSimulationTracer::default();
         let result = {
             let mut fork = PartialBlockFork::new(&mut state).with_tracer(&mut accumulator_tracer);
-            fork.commit_tx(&tx, &ctx, cumulative_gas_used, 0, cumulative_blob_gas_used)?
+            fork.commit_tx(&tx, &ctx, cumulative_gas_used, 0, cumulative_blob_gas_used, cumulative_data_used)?
                 .with_context(|| format!("Failed to commit tx: {} {:?}", idx, tx.hash()))?
         };
         let coinbase_balance_after = state.balance(coinbase)?;

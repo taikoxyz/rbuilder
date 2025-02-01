@@ -441,8 +441,9 @@ pub fn simulate_order_using_fork<Tracer: SimulationTracer>(
     let mut prev_order = None;
     let mut gas_used = 0;
     let mut blob_gas_used = 0;
+    let mut data_used = 0;
     for parent in parent_orders {
-        let result = fork.commit_order(&parent, ctx, gas_used, 0, blob_gas_used, true)?;
+        let result = fork.commit_order(&parent, ctx, gas_used, 0, blob_gas_used, data_used, true)?;
         match result {
             Ok(res) => {
                 prev_order = Some(parent.id());
@@ -461,7 +462,7 @@ pub fn simulate_order_using_fork<Tracer: SimulationTracer>(
     }
 
     // simulate
-    let result = fork.commit_order(&order, ctx, gas_used, 0, blob_gas_used, true)?;
+    let result = fork.commit_order(&order, ctx, gas_used, 0, blob_gas_used, data_used, true)?;
     match result {
         Ok(res) => {
             let sim_value = SimValue::new(
