@@ -63,6 +63,8 @@ pub use order_commit::*;
 pub use payout_tx::*;
 pub use sim::simulate_order;
 
+pub const MAX_CALLDATA_LEN: u64 = 128000;
+
 #[derive(Debug, Clone)]
 pub struct BlockBuildingContext {
     pub initialized_cfg: CfgEnvWithHandlerCfg,
@@ -77,6 +79,8 @@ pub struct BlockBuildingContext {
     pub chains: HashMap<u64, ChainBlockBuildingContext>,
 
     pub blocklist: HashSet<Address>,
+
+    pub max_data_len: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +113,7 @@ impl BlockBuildingContext {
             chains,
             builder_signer,
             blocklist: HashSet::default(),
+            max_data_len: Some(MAX_CALLDATA_LEN),
         }
     }
 
@@ -153,6 +158,7 @@ impl BlockBuildingContext {
             chains,
             builder_signer: None,
             blocklist: HashSet::default(),
+            max_data_len: None,
         }
     }
 
@@ -413,6 +419,7 @@ pub struct PartialBlock<Tracer: SimulationTracer> {
     /// If some [`enforce_inplace_sim_result`] is called after each tx to check the profit.
     pub enforce_sorting: Option<Sorting>,
     pub gas_used: u64,
+    pub data_used: u64,
     /// Reserved gas for later use (usually final payout tx). When simulating we subtract this from the block gas limit.
     pub gas_reserved: u64,
     pub blob_gas_used: u64,
@@ -528,6 +535,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             discard_txs: self.discard_txs,
             enforce_sorting: self.enforce_sorting,
             gas_used: self.gas_used,
+            data_used: self.data_used,
             gas_reserved: self.gas_reserved,
             blob_gas_used: self.blob_gas_used,
             coinbase_profit: self.coinbase_profit,
@@ -567,6 +575,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             self.gas_used,
             self.gas_reserved,
             self.blob_gas_used,
+            self.data_used,
             self.discard_txs,
         )?;
         let ok_result = match exec_result {
@@ -661,7 +670,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         // payout tx has no blobs so it's safe to unwrap
         let tx = TransactionSignedEcRecoveredWithBlobs::new_no_blobs(tx).unwrap();
         let mut fork = PartialBlockFork::new(state).with_tracer(&mut self.tracer);
-        let exec_result = fork.commit_tx(&tx, ctx, self.gas_used, 0, self.blob_gas_used)?;
+        let exec_result = fork.commit_tx(&tx, ctx, self.gas_used, 0, self.blob_gas_used, self.data_used)?;
         let ok_result = exec_result?;
         if !ok_result.receipt.success {
             return Err(InsertPayoutTxErr::PayoutTxReverted);
@@ -988,6 +997,7 @@ impl PartialBlock<()> {
             discard_txs,
             enforce_sorting,
             gas_used: 0,
+            data_used: 0,
             gas_reserved: 0,
             blob_gas_used: 0,
             coinbase_profit: U256::ZERO,

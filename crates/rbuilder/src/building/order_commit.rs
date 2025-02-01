@@ -17,11 +17,9 @@ use reth::revm::database::{StateProviderDatabase, SyncStateProviderDatabase};
 use reth_errors::ProviderError;
 use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_primitives::{
-    constants::eip4844::{DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK},
-    transaction::FillTxEnv,
-    Receipt, KECCAK_EMPTY,
+    constants::eip4844::{DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK}, transaction::FillTxEnv, Receipt, Receipts, Requests, KECCAK_EMPTY
 };
-use reth_provider::{StateProvider, StateProviderBox};
+use reth_provider::{ExecutionOutcome, StateProvider, StateProviderBox};
 use revm::{
     db::{states::bundle_state::BundleRetention, BundleState},
     inspector_handle_register,
@@ -33,6 +31,9 @@ use crate::building::evm_inspector::{RBuilderEVMInspector, UsedStateTrace};
 use std::{sync::Arc};
 use ahash::HashMap;
 use thiserror::Error;
+use reth_provider::execution_outcome_to_state_diff;
+use revm_primitives::Bytes;
+use alloy_rlp::Encodable;
 
 #[derive(Clone)]
 pub struct BlockState {
@@ -194,6 +195,7 @@ pub struct TransactionOk {
     pub cumulative_gas_used: u64,
     pub blob_gas_used: u64,
     pub cumulative_blob_gas_used: u64,
+    pub cumulative_data_used: u64,
     pub tx: TransactionSignedEcRecoveredWithBlobs,
     /// nonces_updates is nonce after tx was applied.
     /// account nonce was 0, tx was included, nonce is 1. => nonce_updated.1 == 1
@@ -211,6 +213,8 @@ pub enum TransactionErr {
     GasLeft,
     #[error("Blob Gas left is too low")]
     BlobGasLeft,
+    #[error("Data left is too low")]
+    DataLeft,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,6 +223,7 @@ pub struct BundleOk {
     pub cumulative_gas_used: u64,
     pub blob_gas_used: u64,
     pub cumulative_blob_gas_used: u64,
+    pub cumulative_data_used: u64,
     pub txs: Vec<TransactionSignedEcRecoveredWithBlobs>,
     /// nonces_updates has a set of deduplicated final nonces of the txs in the order
     pub nonces_updated: Vec<(Address, u64)>,
@@ -281,6 +286,7 @@ pub struct OrderOk {
     pub cumulative_gas_used: u64,
     pub blob_gas_used: u64,
     pub cumulative_blob_gas_used: u64,
+    pub cumulative_data_used: u64,
     pub txs: Vec<TransactionSignedEcRecoveredWithBlobs>,
     /// Patch to get the executed OrderIds for merged sbundles (see: [`BundleOk::original_order_ids`],[`ShareBundleMerger`] )
     pub original_order_ids: Vec<OrderId>,
@@ -399,7 +405,10 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         mut cumulative_gas_used: u64,
         gas_reserved: u64,
         mut cumulative_blob_gas_used: u64,
+        mut cumulative_data_used: u64,
     ) -> Result<Result<TransactionOk, TransactionErr>, CriticalCommitOrderError> {
+        let super_ctx = ctx;
+
         //println!("commit_tx!");
         // Use blobs.len() instead of checking for tx type just in case in the future some other new txs have blobs
         let blob_gas_used = tx_with_blobs.blobs_sidecar.blobs.len() as u64 * DATA_GAS_PER_BLOB;
@@ -409,87 +418,152 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
 
         let ctx = &ctx.chains[&tx_with_blobs.as_ref().chain_id().unwrap()];
 
-        let mut db = self.state.new_db_ref();
-        let tx = &tx_with_blobs.internal_tx_unsecure();
-        if ctx.blocklist.contains(&tx.signer())
-            || tx
-                .to()
-                .map(|to| ctx.blocklist.contains(&to))
-                .unwrap_or(false)
-        {
-            return Ok(Err(TransactionErr::Blocklist));
-        }
+        let res = {
+            let mut db = self.state.new_db_ref();
+            let tx = &tx_with_blobs.internal_tx_unsecure();
+            if ctx.blocklist.contains(&tx.signer())
+                || tx
+                    .to()
+                    .map(|to| ctx.blocklist.contains(&to))
+                    .unwrap_or(false)
+            {
+                return Ok(Err(TransactionErr::Blocklist));
+            }
 
-        match ctx
-            .block_env
-            .gas_limit
-            .checked_sub(U256::from(cumulative_gas_used + gas_reserved))
+            match ctx
+                .block_env
+                .gas_limit
+                .checked_sub(U256::from(cumulative_gas_used + gas_reserved))
+            {
+                Some(gas_left) => {
+                    if tx.gas_limit() > gas_left.to::<u64>() {
+                        return Ok(Err(TransactionErr::GasLeft));
+                    }
+                }
+                None => return Ok(Err(TransactionErr::GasLeft)),
+            }
+
+            let mut tx_env = TxEnv::default();
+            let tx_signed = tx_with_blobs.internal_tx_unsecure().clone().into_signed();
+            tx_signed.fill_tx_env(&mut tx_env, tx_signed.recover_signer().unwrap());
+
+            let env = Env {
+                cfg: ctx.initialized_cfg.cfg_env.clone(),
+                block: ctx.block_env.clone(),
+                tx: tx_env,
+            };
+
+            let used_state_tracer = self.tracer.as_mut().and_then(|t| t.get_used_state_tracer());
+            let mut rbuilder_inspector = RBuilderEVMInspector::new(tx, used_state_tracer);
+
+            let mut env = env.clone();
+            env.cfg.chain_id = tx.chain_id().unwrap();
+            //println!("active remv chain_id: {}", env.cfg.chain_id);
+
+            let mut evm = revm::Evm::builder()
+                .with_spec_id(ctx.spec_id)
+                .with_env(Box::new(env))
+                .with_db(db.as_mut())
+                .with_external_context(&mut rbuilder_inspector)
+                .append_handler_register(inspector_handle_register)
+                .build();
+            let res = match evm.transact() {
+                Ok(res) => res,
+                Err(err) => match err {
+                    EVMError::Transaction(tx_err) => {
+                        return Ok(Err(TransactionErr::InvalidTransaction(tx_err)))
+                    }
+                    EVMError::Database(_)
+                    | EVMError::Header(_)
+                    | EVMError::Custom(_)
+                    | EVMError::Precompile(_) => return Err(err.into()),
+                },
+            };
+            let mut db_context = evm.into_context();
+            let db = &mut db_context.evm.db;
+            let access_list = rbuilder_inspector.into_access_list();
+            if let Some(tracer) = &mut self.tracer {
+                tracer.gas_used(res.result.gas_used());
+            }
+            if access_list
+                .flatten()
+                .any(|(a, _)| ctx.blocklist.contains(&a))
+            {
+                return Ok(Err(TransactionErr::Blocklist));
+            }
+            db.commit(res.state.clone());
+            db.merge_transitions(BundleRetention::Reverts);
+
+            res
+        };
+
+        // Brecht: Insert data cost
         {
-            Some(gas_left) => {
-                if tx.gas_limit() > gas_left.to::<u64>() {
-                    return Ok(Err(TransactionErr::GasLeft));
+            let (_, bundle) = self.state.clone_bundle_and_cache();
+            let execution_outcome = ExecutionOutcome::new(
+                ctx.chain_spec.chain.id(),
+                bundle,
+                Receipts::from(vec![vec![]]),
+                ctx.block_env.number.to::<u64>(),
+                vec![Requests(Vec::new())],
+            );
+
+            let mut chain_ids = Vec::new();
+            for account in execution_outcome.bundle.state.keys() {
+                if !chain_ids.contains(&account.0) {
+                    chain_ids.push(account.0);
                 }
             }
-            None => return Ok(Err(TransactionErr::GasLeft)),
-        }
 
-        let mut tx_env = TxEnv::default();
-        let tx_signed = tx_with_blobs.internal_tx_unsecure().clone().into_signed();
-        tx_signed.fill_tx_env(&mut tx_env, tx_signed.recover_signer().unwrap());
+            let mut calldata_len = 0u64;
+            let mut calldata_gas_used = 0u64;
+            let FIXED_BLOCK_LEN = 1000;
+            for chain_id in chain_ids {
+                let mut execution_outcome = execution_outcome.filter_chain(chain_id);
+                let mut state_diff = execution_outcome_to_state_diff(&execution_outcome, B256::ZERO, 0);
 
-        let env = Env {
-            cfg: ctx.initialized_cfg.cfg_env.clone(),
-            block: ctx.block_env.clone(),
-            tx: tx_env,
-        };
-
-        let used_state_tracer = self.tracer.as_mut().and_then(|t| t.get_used_state_tracer());
-        let mut rbuilder_inspector = RBuilderEVMInspector::new(tx, used_state_tracer);
-
-        let mut env = env.clone();
-        env.cfg.chain_id = tx.chain_id().unwrap();
-        //println!("active remv chain_id: {}", env.cfg.chain_id);
-
-        let mut evm = revm::Evm::builder()
-            .with_spec_id(ctx.spec_id)
-            .with_env(Box::new(env))
-            .with_db(db.as_mut())
-            .with_external_context(&mut rbuilder_inspector)
-            .append_handler_register(inspector_handle_register)
-            .build();
-        let res = match evm.transact() {
-            Ok(res) => res,
-            Err(err) => match err {
-                EVMError::Transaction(tx_err) => {
-                    return Ok(Err(TransactionErr::InvalidTransaction(tx_err)))
+                // Filter out accounts
+                state_diff.accounts = state_diff.clone().accounts.into_iter().filter(|account| account.address != alloy_eips::eip4788::BEACON_ROOTS_ADDRESS && account.address != alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS).collect::<Vec<_>>();
+                if chain_id == super_ctx.parent_chain_id {
+                    state_diff.accounts = state_diff.clone().accounts.into_iter().filter(|account| account.address != ctx.block_env.coinbase.1).collect::<Vec<_>>();
                 }
-                EVMError::Database(_)
-                | EVMError::Header(_)
-                | EVMError::Custom(_)
-                | EVMError::Precompile(_) => return Err(err.into()),
-            },
-        };
-        let mut db_context = evm.into_context();
-        let db = &mut db_context.evm.db;
-        let access_list = rbuilder_inspector.into_access_list();
-        if let Some(tracer) = &mut self.tracer {
-            tracer.gas_used(res.result.gas_used());
+
+                if chain_id == super_ctx.parent_chain_id {
+                    // The reverts will still contain the address but that's fine, we're never going to use that on L1 anyway
+                    execution_outcome.bundle.state = execution_outcome.bundle.state.into_iter().filter(|account| account.0.1 != ctx.block_env.coinbase.1).collect();
+                }
+
+                // Only make a block for chains that have changes
+                if !state_diff.accounts.is_empty() {
+                    state_diff.bundle.reverts = reth_provider::merge_reverts(&state_diff.bundle.reverts);
+
+                    let extra_data = Bytes::from(bincode::serialize(&state_diff).unwrap());
+
+                    calldata_len += extra_data.len() as u64 + FIXED_BLOCK_LEN;
+                    calldata_gas_used += calculate_calldata_cost(&extra_data) + FIXED_BLOCK_LEN * 16;
+                    // println!("extra_data: {}", extra_data);
+                }
+            }
+
+            let tx = &tx_with_blobs.internal_tx_unsecure();
+            if let Some(max_data_len) = super_ctx.max_data_len {
+                if calldata_len + cumulative_data_used + (tx.length() as u64) > max_data_len {
+                    println!("Can't add tx because no data left! {} > {}", calldata_len, max_data_len);
+                    return Ok(Err(TransactionErr::DataLeft));
+                }
+            }
         }
-        if access_list
-            .flatten()
-            .any(|(a, _)| ctx.blocklist.contains(&a))
-        {
-            return Ok(Err(TransactionErr::Blocklist));
-        }
-        db.commit(res.state);
-        db.merge_transitions(BundleRetention::Reverts);
+
         self.rollbacks += 1;
+
+        let tx = &tx_with_blobs.internal_tx_unsecure();
 
         // add gas used by the transaction to cumulative gas used, before creating the receipt
         let gas_used = res.result.gas_used();
 
         cumulative_gas_used += gas_used;
         cumulative_blob_gas_used += blob_gas_used;
+        cumulative_data_used += tx.length() as u64;
 
         let receipt = Receipt {
             tx_type: tx.tx_type(),
@@ -508,6 +582,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             blob_gas_used,
             cumulative_blob_gas_used,
             cumulative_gas_used,
+            cumulative_data_used,
             tx: tx_with_blobs.clone(),
             nonce_updated: (tx.signer(), tx.nonce() + 1),
             receipt,
@@ -522,6 +597,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         cumulative_gas_used: u64,
         gas_reserved: u64,
         cumulative_blob_gas_used: u64,
+        cumulative_data_used: u64,
         allow_tx_skip: bool,
     ) -> Result<Result<BundleOk, BundleErr>, CriticalCommitOrderError> {
         // TODO(Brecht): support bundles with multiple chains
@@ -555,6 +631,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 cumulative_gas_used,
                 gas_reserved,
                 cumulative_blob_gas_used,
+                cumulative_data_used,
                 allow_tx_skip,
             )
         })
@@ -567,6 +644,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         cumulative_gas_used: u64,
         gas_reserved: u64,
         cumulative_blob_gas_used: u64,
+        cumulative_data_used: u64,
         allow_tx_skip: bool,
     ) -> Result<Result<BundleOk, BundleErr>, CriticalCommitOrderError> {
         let mut insert = BundleOk {
@@ -574,6 +652,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             cumulative_gas_used,
             blob_gas_used: 0,
             cumulative_blob_gas_used,
+            cumulative_data_used,
             txs: Vec::new(),
             nonces_updated: Vec::new(),
             receipts: Vec::new(),
@@ -587,6 +666,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 insert.cumulative_gas_used,
                 gas_reserved,
                 insert.cumulative_blob_gas_used,
+                insert.cumulative_data_used,
             )?;
             match result {
                 Ok(res) => {
@@ -600,6 +680,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                     insert.cumulative_gas_used = res.cumulative_gas_used;
                     insert.blob_gas_used += res.blob_gas_used;
                     insert.cumulative_blob_gas_used = res.cumulative_blob_gas_used;
+                    insert.cumulative_data_used = res.cumulative_data_used;
                     insert.txs.push(res.tx);
                     update_nonce_list(&mut insert.nonces_updated, res.nonce_updated);
                     insert.receipts.push(res.receipt);
@@ -631,6 +712,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         cumulative_gas_used: u64,
         gas_reserved: u64,
         cumulative_blob_gas_used: u64,
+        cumulative_data_used: u64,
         allow_tx_skip: bool,
     ) -> Result<Result<BundleOk, BundleErr>, CriticalCommitOrderError> {
         // TODO(Brecht): support bundles with multiple chains
@@ -650,6 +732,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 cumulative_gas_used,
                 gas_reserved,
                 cumulative_blob_gas_used,
+                cumulative_data_used,
                 allow_tx_skip,
             )
         })
@@ -663,6 +746,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         cumulative_gas_used: u64,
         gas_reserved: u64,
         cumulative_blob_gas_used: u64,
+        cumulative_data_used: u64,
         allow_tx_skip: bool,
     ) -> Result<Result<BundleOk, BundleErr>, CriticalCommitOrderError> {
         let res = self.commit_share_bundle_inner(
@@ -671,6 +755,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             cumulative_gas_used,
             gas_reserved,
             cumulative_blob_gas_used,
+            cumulative_data_used,
             allow_tx_skip,
         )?;
         let res = match res {
@@ -724,6 +809,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 insert.cumulative_gas_used,
                 gas_reserved,
                 insert.cumulative_blob_gas_used,
+                insert.cumulative_data_used,
             )?;
             match res {
                 Ok(res) => {
@@ -739,6 +825,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                     insert.gas_used += res.gas_used;
                     insert.cumulative_gas_used = res.cumulative_gas_used;
                     insert.cumulative_blob_gas_used = res.cumulative_blob_gas_used;
+                    insert.cumulative_data_used = res.cumulative_data_used;
                     insert.txs.push(res.tx);
                     update_nonce_list(&mut insert.nonces_updated, res.nonce_updated);
                     insert.receipts.push(res.receipt);
@@ -766,6 +853,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         cumulative_gas_used: u64,
         gas_reserved: u64,
         cumulative_blob_gas_used: u64,
+        cumulative_data_used: u64,
         allow_tx_skip: bool,
     ) -> Result<Result<ShareBundleCommitResult, BundleErr>, CriticalCommitOrderError> {
         self.execute_with_rollback(|s| {
@@ -775,6 +863,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 cumulative_gas_used,
                 gas_reserved,
                 cumulative_blob_gas_used,
+                cumulative_data_used,
                 allow_tx_skip,
             )
         })
@@ -787,6 +876,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         cumulative_gas_used: u64,
         gas_reserved: u64,
         cumulative_blob_gas_used: u64,
+        cumulative_data_used: u64,
         allow_tx_skip: bool,
     ) -> Result<Result<ShareBundleCommitResult, BundleErr>, CriticalCommitOrderError> {
         // TODO(Brecht): support bundles with multiple chains
@@ -798,6 +888,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             cumulative_gas_used,
             blob_gas_used: 0,
             cumulative_blob_gas_used,
+            cumulative_data_used,
             txs: Vec::new(),
             nonces_updated: Vec::new(),
             receipts: Vec::new(),
@@ -824,6 +915,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                         insert.cumulative_gas_used,
                         gas_reserved,
                         insert.cumulative_blob_gas_used,
+                        insert.cumulative_data_used,
                     )?;
                     match result {
                         Ok(res) => {
@@ -855,6 +947,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                             insert.cumulative_gas_used = res.cumulative_gas_used;
                             insert.blob_gas_used += res.blob_gas_used;
                             insert.cumulative_blob_gas_used = res.cumulative_blob_gas_used;
+                            insert.cumulative_data_used = res.cumulative_data_used;
                             insert.txs.push(res.tx);
                             update_nonce_list(&mut insert.nonces_updated, res.nonce_updated);
                             insert.receipts.push(res.receipt);
@@ -876,6 +969,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                         insert.cumulative_gas_used,
                         gas_reserved,
                         insert.cumulative_blob_gas_used,
+                        insert.cumulative_data_used,
                         allow_tx_skip,
                     )?;
                     match inner_res {
@@ -900,6 +994,8 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                             insert.blob_gas_used += res.bundle_ok.blob_gas_used;
                             insert.cumulative_blob_gas_used =
                                 res.bundle_ok.cumulative_blob_gas_used;
+                            insert.cumulative_data_used =
+                                res.bundle_ok.cumulative_data_used;
                             insert.txs.extend(res.bundle_ok.txs);
                             update_nonce_list_with_updates(
                                 &mut insert.nonces_updated,
@@ -1010,6 +1106,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         cumulative_gas_used: u64,
         gas_reserved: u64,
         cumulative_blob_gas_used: u64,
+        cumulative_data_used: u64,
         allow_tx_skip: bool,
     ) -> Result<Result<OrderOk, OrderErr>, CriticalCommitOrderError> {
         self.execute_with_rollback(|s| {
@@ -1019,6 +1116,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 cumulative_gas_used,
                 gas_reserved,
                 cumulative_blob_gas_used,
+                cumulative_data_used,
                 allow_tx_skip,
             )
         })
@@ -1031,6 +1129,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
         cumulative_gas_used: u64,
         gas_reserved: u64,
         cumulative_blob_gas_used: u64,
+        cumulative_data_used: u64,
         allow_tx_skip: bool,
     ) -> Result<Result<OrderOk, OrderErr>, CriticalCommitOrderError> {
         // TODO(Brecht): support bundles with multiple chains
@@ -1045,6 +1144,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                     cumulative_gas_used,
                     gas_reserved,
                     cumulative_blob_gas_used,
+                    cumulative_data_used,
                 )?;
                 match res {
                     Ok(ok) => {
@@ -1064,6 +1164,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                             cumulative_gas_used: ok.cumulative_gas_used,
                             blob_gas_used: ok.blob_gas_used,
                             cumulative_blob_gas_used: ok.cumulative_blob_gas_used,
+                            cumulative_data_used: ok.cumulative_data_used,
                             txs: vec![ok.tx],
                             nonces_updated: vec![ok.nonce_updated],
                             receipts: vec![ok.receipt],
@@ -1082,6 +1183,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                     cumulative_gas_used,
                     gas_reserved,
                     cumulative_blob_gas_used,
+                    cumulative_data_used,
                     allow_tx_skip,
                 )?;
                 match res {
@@ -1102,6 +1204,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                             cumulative_gas_used: ok.cumulative_gas_used,
                             blob_gas_used: ok.blob_gas_used,
                             cumulative_blob_gas_used: ok.cumulative_blob_gas_used,
+                            cumulative_data_used: ok.cumulative_data_used,
                             txs: ok.txs,
                             nonces_updated: ok.nonces_updated,
                             receipts: ok.receipts,
@@ -1120,6 +1223,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                     cumulative_gas_used,
                     gas_reserved,
                     cumulative_blob_gas_used,
+                    cumulative_data_used,
                     allow_tx_skip,
                 )?;
                 match res {
@@ -1140,6 +1244,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                             cumulative_gas_used: ok.cumulative_gas_used,
                             blob_gas_used: ok.blob_gas_used,
                             cumulative_blob_gas_used: ok.cumulative_blob_gas_used,
+                            cumulative_data_used: ok.cumulative_data_used,
                             txs: ok.txs,
                             nonces_updated: ok.nonces_updated,
                             receipts: ok.receipts,
@@ -1196,4 +1301,19 @@ fn update_nonce_list_with_updates(
     for new_update in new_updates {
         update_nonce_list(nonces_updated, new_update);
     }
+}
+
+pub fn calculate_calldata_cost(
+    input: &[u8],
+) -> u64 {
+    let mut initial_gas = 0;
+    let zero_data_len = input.iter().filter(|v| **v == 0).count() as u64;
+    let non_zero_data_len = input.len() as u64 - zero_data_len;
+
+    // initdate stipend
+    initial_gas += zero_data_len * 4;
+    // EIP-2028: Transaction data gas cost reduction
+    initial_gas += non_zero_data_len * 16;
+
+    initial_gas
 }

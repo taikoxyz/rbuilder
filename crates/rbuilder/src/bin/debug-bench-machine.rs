@@ -102,16 +102,18 @@ async fn main() -> eyre::Result<()> {
 
                 let mut cumulative_gas_used = 0;
                 let mut cumulative_blob_gas_used = 0;
+                let mut cumulative_data_used = 0;
                 for (idx, tx) in txs.into_iter().enumerate() {
                     let result = {
                         let mut fork = PartialBlockFork::new(&mut state);
-                        fork.commit_tx(&tx, &ctx, cumulative_gas_used, 0, cumulative_blob_gas_used)?
+                        fork.commit_tx(&tx, &ctx, cumulative_gas_used, 0, cumulative_blob_gas_used, cumulative_data_used)?
                             .with_context(|| {
                                 format!("Failed to commit tx: {} {:?}", idx, tx.hash())
                             })?
                     };
                     cumulative_gas_used += result.gas_used;
                     cumulative_blob_gas_used += result.blob_gas_used;
+                    cumulative_data_used += result.cumulative_data_used;
                 }
 
                 let build_time = build_time.elapsed();
