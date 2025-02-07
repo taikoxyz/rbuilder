@@ -31,7 +31,6 @@ impl TestDataGenerator {
         SimulatedOrder {
             order,
             sim_value,
-            prev_order: None,
             used_state_trace: None,
         }
     }

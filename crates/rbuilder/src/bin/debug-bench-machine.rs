@@ -2,16 +2,18 @@
 //! This only works when reth node is stopped and the chain moved forward form its synced state
 //! It downloads block aftre the last one synced and re-executes all the txs in it.
 use alloy_provider::Provider;
+use alloy_rpc_types::BlockTransactionsKind;
 use clap::Parser;
 use eyre::Context;
 use itertools::Itertools;
 use rbuilder::{
     building::{BlockBuildingContext, BlockState, PartialBlock, PartialBlockFork},
     live_builder::{base_config::load_config_toml_and_env, cli::LiveBuilderConfig, config::Config},
+    provider::StateProviderFactory,
     utils::{extract_onchain_block_txs, find_suggested_fee_recipient, http_provider},
 };
 use reth::providers::BlockNumReader;
-use reth_payload_builder::database::SyncCachedReads as CachedReads;
+use reth::revm::cached::SyncCachedReads as CachedReads;
 use reth_provider::StateProvider;
 use revm_primitives::ChainAddress;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
@@ -37,21 +39,18 @@ async fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
 
     let config: Config = load_config_toml_and_env(cli.config)?;
-    config.base_config().setup_tracing_subsriber()?;
+    config.base_config().setup_tracing_subscriber()?;
 
     let rpc = http_provider(cli.rpc_url.parse()?);
 
     let chain_spec = config.base_config().chain_spec()?;
 
-    let factory = config
-        .base_config()
-        .provider_factory()?
-        .provider_factory_unchecked();
+    let provider_factory = config.base_config().create_provider_factory()?;
 
-    let last_block = factory.last_block_number()?;
+    let last_block = provider_factory.last_block_number()?;
 
     let onchain_block = rpc
-        .get_block_by_number((last_block + 1).into(), true)
+        .get_block_by_number((last_block + 1).into(), BlockTransactionsKind::Full)
         .await?
         .ok_or_else(|| eyre::eyre!("block not found on rpc"))?;
 
@@ -63,8 +62,9 @@ async fn main() -> eyre::Result<()> {
         txs.len()
     );
 
-    let coinbase = ChainAddress(chain_spec.chain.id(), onchain_block.header.miner);
+    let coinbase = ChainAddress(chain_spec.chain.id(), onchain_block.header.beneficiary);
 
+    let parent_hash = onchain_block.header.parent_hash;
     let ctx = BlockBuildingContext::from_onchain_block(
         onchain_block,
         chain_spec.clone(),
@@ -73,14 +73,16 @@ async fn main() -> eyre::Result<()> {
         coinbase,
         suggested_fee_recipient,
         None,
+        Arc::from(provider_factory.root_hasher(parent_hash)),
     );
 
     let chain_id = chain_spec.clone().chain.id();
 
-    // let signer = Signer::try_from_secret(B256::random())?;
-
-    let state_provider =
-        Arc::<dyn StateProvider>::from(factory.history_by_block_number(last_block)?);
+    let state_provider = Arc::<dyn StateProvider>::from(
+        provider_factory
+            .provider_factory_unchecked()
+            .history_by_block_number(last_block)?,
+    );
 
     let mut build_times_ms = Vec::new();
     let mut finalize_time_ms = Vec::new();
@@ -89,9 +91,6 @@ async fn main() -> eyre::Result<()> {
         let ctx = ctx.clone();
         let txs = txs.clone();
         let state_provider = state_provider.clone();
-        let factory = factory.clone();
-        let config = config.clone();
-        let root_hash_config = config.base_config.live_root_hash_config()?;
         let (new_cached_reads, build_time, finalize_time) =
             tokio::task::spawn_blocking(move || -> eyre::Result<_> {
                 let partial_block = PartialBlock::new(true, None);

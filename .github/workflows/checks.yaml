@@ -13,7 +13,7 @@ env:
 jobs:
   lint_and_test:
     name: Lint and test
-    runs-on: warp-ubuntu-latest-x64-16x
+    runs-on: warp-ubuntu-latest-x64-32x
     env:
       # Set features for the Makefile
       FEATURES: ${{ matrix.features }}
@@ -23,7 +23,6 @@ jobs:
           - stable
         features:
           - ""
-          - "redact_sensitive"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -55,7 +54,7 @@ jobs:
           version: nightly
 
       - name: Install native dependencies
-        run: sudo apt-get install -y libsqlite3-dev
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
       - name: Lint
         run: make lint
@@ -63,20 +62,27 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Validate config files
+        run: make validate-config
+
   integration:
     name: Integration tests
-    runs-on: warp-ubuntu-latest-x64-16x
-    needs: lint_and_test
+    runs-on: warp-ubuntu-latest-x64-32x
     strategy:
       matrix:
         toolchain:
           - stable
         features:
           - ""
-          - "redact_sensitive"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      # https://github.com/dtolnay/rust-toolchain
+      - name: Setup rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
 
       - name: Download builder playground
         uses: flashbots/flashbots-toolchain@v0.1

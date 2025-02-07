@@ -3,10 +3,8 @@ use crate::primitives::{
     serialize::{RawBundle, RawShareBundle, RawShareBundleDecodeResult, RawTx, TxEncoding},
     Bundle, BundleReplacementKey, MempoolTx, Order,
 };
-use alloy_primitives::Address;
-use jsonrpsee::types::ErrorObject;
-use jsonrpsee::{server::Server, RpcModule};
-use reth_primitives::Bytes;
+use alloy_primitives::{Address, Bytes};
+use jsonrpsee::{server::Server, types::ErrorObject, RpcModule};
 use serde::Deserialize;
 use std::{
     net::{SocketAddr, SocketAddrV4},
@@ -54,10 +52,10 @@ pub async fn start_server_accepting_bundles(
                 }
             };
 
-            let bundle: Bundle = match raw_bundle.decode(TxEncoding::WithBlobData) {
+            let bundle: Bundle = match raw_bundle.try_into(TxEncoding::WithBlobData) {
                 Ok(bundle) => bundle,
                 Err(err) => {
-                    warn!(?err, "Failed to parse bundle");
+                    warn!(?err, "Failed to decode raw bundle");
                     // @Metric
                     return;
                 }
@@ -88,7 +86,7 @@ pub async fn start_server_accepting_bundles(
             let raw_tx: Bytes = match params.one() {
                 Ok(raw_tx) => raw_tx,
                 Err(err) => {
-                    warn!(?err, "Failed to parse transaction");
+                    warn!(?err, "Failed to parse raw transaction");
                     // @Metric
                     return Err(err);
                 }
@@ -98,7 +96,7 @@ pub async fn start_server_accepting_bundles(
             let tx: MempoolTx = match raw_tx_order.decode(TxEncoding::WithBlobData) {
                 Ok(tx) => tx,
                 Err(err) => {
-                    warn!(?err, "Failed to verify transaction");
+                    warn!(?err, "Failed to decode raw transaction");
                     // @Metric
                     return Err(ErrorObject::owned(-32602, "failed to verify transaction", None::<()>));
                 }
@@ -148,14 +146,14 @@ async fn handle_mev_send_bundle(
     let decode_res = match raw_bundle.decode(TxEncoding::WithBlobData) {
         Ok(res) => res,
         Err(err) => {
-            warn!(?err, "Failed to verify share bundle");
+            warn!(?err, "Failed to decode raw share bundle");
             // @Metric
             return;
         }
     };
     match decode_res {
         RawShareBundleDecodeResult::NewShareBundle(bundle) => {
-            let order = Order::ShareBundle(bundle);
+            let order = Order::ShareBundle(*bundle);
             let parse_duration = start.elapsed();
             let target_block = order.target_block().unwrap_or_default();
             trace!(order = ?order.id(), parse_duration_mus = parse_duration.as_micros(), target_block, "Received share bundle");
@@ -190,7 +188,7 @@ async fn send_command(
     match channel.send_timeout(command, timeout).await {
         Ok(()) => {}
         Err(SendTimeoutError::Timeout(_)) => {
-            warn!("Failed to sent order, timout");
+            warn!("Failed to sent order, timeout");
         }
         Err(SendTimeoutError::Closed(_)) => {}
     };

@@ -11,27 +11,21 @@ use crate::{
         builders::{
             block_building_helper::BlockBuildingHelper, LiveBuilderInput, OrderIntakeConsumer,
         },
-        BlockBuildingContext, BlockOrders, ExecutionError, Sorting,
+        BlockBuildingContext, ExecutionError, PrioritizedOrderStore, SimulatedOrderSink, Sorting,
     },
     primitives::{AccountNonce, OrderId},
+    provider::StateProviderFactory,
 };
 use ahash::{HashMap, HashSet};
-use alloy_primitives::Address;
-use reth::providers::ProviderFactory;
-use reth_db::database::Database;
-use reth_provider::StateProvider;
-use revm_primitives::ChainAddress;
-use tokio_util::sync::CancellationToken;
-
-use crate::{roothash::RootHashConfig, utils::check_provider_factory_health};
-use reth::tasks::pool::BlockingTaskPool;
-use reth_payload_builder::database::SyncCachedReads as CachedReads;
+use reth::revm::cached::SyncCachedReads as CachedReads;
 use serde::Deserialize;
-use std::{os::unix::fs::lchown, sync::Arc, thread::sleep, time::{Duration, Instant}};
+use std::{thread::sleep, time::{Duration, Instant}};
+use tokio_util::sync::CancellationToken;
+use revm_primitives::ChainAddress;
 use tracing::{error, info_span, trace};
 
 use super::{
-    block_building_helper::BlockBuildingHelperFromDB, handle_building_error,
+    block_building_helper::BlockBuildingHelperFromProvider, handle_building_error,
     BacktestSimulateBlockInput, Block, BlockBuildingAlgorithm, BlockBuildingAlgorithmInput,
 };
 
@@ -44,7 +38,7 @@ pub struct OrderingBuilderConfig {
     pub discard_txs: bool,
     pub sorting: Sorting,
     /// Only when a tx fails because the profit was worst than expected: Number of time an order can fail during a single block building iteration.
-    /// When thi happens it gets reinserted in the BlockStore with the new simulated profit (the one that failed).
+    /// When thi happens it gets reinserted in the PrioritizedOrderStore with the new simulated profit (the one that failed).
     pub failed_order_retries: usize,
     /// if a tx fails in a block building iteration it's dropped so next iterations will not use it.
     pub drop_failed_orders: bool,
@@ -63,25 +57,22 @@ impl OrderingBuilderConfig {
     }
 }
 
-pub fn run_ordering_builder<DB: Database + Clone + 'static>(
-    input: LiveBuilderInput<DB>,
-    config: &OrderingBuilderConfig,
-) {
+pub fn run_ordering_builder<P>(input: LiveBuilderInput<P>, config: &OrderingBuilderConfig)
+where
+    P: StateProviderFactory + Clone + 'static,
+{
     let mut order_intake_consumer = OrderIntakeConsumer::new(
-        input.provider_factory.clone(),
+        input.provider.clone(),
         input.input,
         input.ctx.chains.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect(),
         config.sorting,
-        &input.sbundle_mergeabe_signers,
     );
 
     let mut builder = OrderingBuilderContext::new(
-        input.provider_factory.clone(),
-        input.root_hash_task_pool,
+        input.provider.clone(),
         input.builder_name,
         input.ctx,
         config.clone(),
-        input.root_hash_config,
     );
 
     // this is a hack to mark used orders until built block trace is implemented as a sane thing
@@ -132,22 +123,37 @@ pub fn run_ordering_builder<DB: Database + Clone + 'static>(
     }
 }
 
-pub fn backtest_simulate_block<DB: Database + Clone + 'static>(
+pub fn backtest_simulate_block<P>(
     ordering_config: OrderingBuilderConfig,
-    input: BacktestSimulateBlockInput<'_, DB>,
-) -> eyre::Result<(Block, CachedReads)> {
-    println!("backtest_simulate_block");
-
+    input: BacktestSimulateBlockInput<'_, P>,
+) -> eyre::Result<(Block, CachedReads)>
+where
+    P: StateProviderFactory + Clone + 'static,
+{
     let mut provider_factories = HashMap::default();
-    provider_factories.insert(input.ctx.parent_chain_id, input.provider_factory.clone());
+    provider_factories.insert(input.ctx.parent_chain_id, input.provider.clone());
 
     let mut ctxs = HashMap::default();
     ctxs.insert(input.ctx.parent_chain_id, input.ctx.clone());
 
     let use_suggested_fee_recipient_as_coinbase = ordering_config.coinbase_payment;
     let state_provider = input
-        .provider_factory
-            .history_by_block_number(input.ctx.chains[&input.ctx.parent_chain_id].block_env.number.to::<u64>() - 1)?;
+        .provider
+        .history_by_block_number(input.ctx.chains[&input.ctx.parent_chain_id].block_env.number.to::<u64>() - 1)?;
+    let block_orders =
+        block_orders_from_sim_orders(input.sim_orders, ordering_config.sorting, &state_provider)?;
+    let mut builder = OrderingBuilderContext::new(
+        input.provider.clone(),
+        input.builder_name,
+        input.ctx.clone(),
+        ordering_config,
+    )
+    .with_cached_reads(input.cached_reads.unwrap_or_default());
+    let block_builder = builder.build_block(
+        block_orders,
+        use_suggested_fee_recipient_as_coinbase,
+        CancellationToken::new(),
+    )?;
 
     todo!()
 
@@ -191,13 +197,11 @@ pub fn backtest_simulate_block<DB: Database + Clone + 'static>(
 }
 
 #[derive(Debug)]
-pub struct OrderingBuilderContext<DB> {
-    provider_factory: HashMap<u64, ProviderFactory<DB>>,
-    root_hash_task_pool: BlockingTaskPool,
+pub struct OrderingBuilderContext<P> {
+    provider: HashMap<u64, P>,
     builder_name: String,
     ctx: BlockBuildingContext,
     config: OrderingBuilderConfig,
-    root_hash_config: RootHashConfig,
 
     // caches
     cached_reads: Option<CachedReads>,
@@ -207,22 +211,21 @@ pub struct OrderingBuilderContext<DB> {
     order_attempts: HashMap<OrderId, usize>,
 }
 
-impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
+impl<P> OrderingBuilderContext<P>
+where
+    P: StateProviderFactory + Clone + 'static,
+{
     pub fn new(
-        provider_factory: HashMap<u64, ProviderFactory<DB>>,
-        root_hash_task_pool: BlockingTaskPool,
+        provider: HashMap<u64, P>,
         builder_name: String,
         ctx: BlockBuildingContext,
         config: OrderingBuilderConfig,
-        root_hash_config: RootHashConfig,
     ) -> Self {
         Self {
-            provider_factory,
-            root_hash_task_pool,
+            provider,
             builder_name,
             ctx,
             config,
-            root_hash_config,
             cached_reads: None,
             failed_orders: HashSet::default(),
             order_attempts: HashMap::default(),
@@ -245,7 +248,7 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
     /// !use_suggested_fee_recipient_as_coinbase: all the mev profit goes to the builder and at the end of the block we pay to the suggested_fee_recipient.
     pub fn build_block(
         &mut self,
-        block_orders: BlockOrders,
+        block_orders: PrioritizedOrderStore,
         use_suggested_fee_recipient_as_coinbase: bool,
         cancel_block: CancellationToken,
     ) -> eyre::Result<Box<dyn BlockBuildingHelper>> {
@@ -267,10 +270,8 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
         self.failed_orders.clear();
         self.order_attempts.clear();
 
-        let mut block_building_helper = BlockBuildingHelperFromDB::new(
-            self.provider_factory.clone(),
-            self.root_hash_task_pool.clone(),
-            self.root_hash_config.clone(),
+        let mut block_building_helper = BlockBuildingHelperFromProvider::new(
+            self.provider.clone(),
             new_ctx,
             self.cached_reads.take(),
             self.builder_name.clone(),
@@ -288,7 +289,7 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
     fn fill_orders(
         &mut self,
         block_building_helper: &mut dyn BlockBuildingHelper,
-        mut block_orders: BlockOrders,
+        mut block_orders: PrioritizedOrderStore,
         build_start: Instant,
     ) -> eyre::Result<()> {
         if block_orders.get_all_orders().len() > 0 {
@@ -330,7 +331,7 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
                         if *order_attempts < self.config.failed_order_retries {
                             let mut new_order = sim_order.clone();
                             new_order.sim_value = inplace.clone();
-                            block_orders.readd_order(new_order);
+                            block_orders.insert_order(new_order);
                             *order_attempts += 1;
                             reinserted = true;
                         }
@@ -357,48 +358,32 @@ impl<DB: Database + Clone + 'static> OrderingBuilderContext<DB> {
 
 #[derive(Debug)]
 pub struct OrderingBuildingAlgorithm {
-    root_hash_config: RootHashConfig,
-    root_hash_task_pool: BlockingTaskPool,
-    sbundle_mergeabe_signers: Vec<Address>,
     config: OrderingBuilderConfig,
     name: String,
 }
 
 impl OrderingBuildingAlgorithm {
-    pub fn new(
-        root_hash_config: RootHashConfig,
-        root_hash_task_pool: BlockingTaskPool,
-        sbundle_mergeabe_signers: Vec<Address>,
-        config: OrderingBuilderConfig,
-        name: String,
-    ) -> Self {
-        Self {
-            root_hash_config,
-            root_hash_task_pool,
-            sbundle_mergeabe_signers,
-            config,
-            name,
-        }
+    pub fn new(config: OrderingBuilderConfig, name: String) -> Self {
+        Self { config, name }
     }
 }
 
-impl<DB: Database + Clone + 'static> BlockBuildingAlgorithm<DB> for OrderingBuildingAlgorithm {
+impl<P> BlockBuildingAlgorithm<P> for OrderingBuildingAlgorithm
+where
+    P: StateProviderFactory + Clone + 'static,
+{
     fn name(&self) -> String {
         self.name.clone()
     }
 
-    fn build_blocks(&self, input: BlockBuildingAlgorithmInput<DB>) {
-
+    fn build_blocks(&self, input: BlockBuildingAlgorithmInput<P>) {
         let live_input = LiveBuilderInput {
-            provider_factory: input.provider_factory,
-            root_hash_config: self.root_hash_config.clone(),
-            root_hash_task_pool: self.root_hash_task_pool.clone(),
+            provider: input.provider,
             ctx: input.ctx.clone(),
             input: input.input,
             sink: input.sink,
             builder_name: self.name.clone(),
             cancel: input.cancel,
-            sbundle_mergeabe_signers: self.sbundle_mergeabe_signers.clone(),
         };
         run_ordering_builder(live_input, &self.config);
     }

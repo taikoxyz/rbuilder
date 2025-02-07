@@ -1,13 +1,16 @@
 use super::{
-    Bundle, BundleReplacementData, BundleReplacementKey, MempoolTx, Order,
-    RawTxWithBlobsConvertError, Refund, RefundConfig, ShareBundle, ShareBundleBody,
-    ShareBundleInner, ShareBundleReplacementData, ShareBundleReplacementKey, ShareBundleTx,
-    TransactionSignedEcRecoveredWithBlobs, TxRevertBehavior,
+    Bundle, BundleReplacementData, BundleReplacementKey, MempoolTx, Order, Refund, RefundConfig,
+    ShareBundle, ShareBundleBody, ShareBundleInner, ShareBundleReplacementData,
+    ShareBundleReplacementKey, ShareBundleTx, TransactionSignedEcRecoveredWithBlobs,
+    TxRevertBehavior, TxWithBlobsCreateError,
 };
-use alloy_primitives::Address;
-use reth_primitives::{Bytes, B256, U64};
-use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, DefaultOnNull};
+use alloy_consensus::constants::EIP4844_TX_TYPE_ID;
+use alloy_eips::eip2718::Eip2718Error;
+use alloy_primitives::{Address, Bytes, B256, U64};
+use alloy_rlp::{Buf, Header};
+use reth_chainspec::MAINNET;
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_with::serde_as;
 use thiserror::Error;
 use tracing::error;
 use uuid::Uuid;
@@ -25,16 +28,57 @@ impl TxEncoding {
     pub fn decode(
         &self,
         raw_tx: Bytes,
-    ) -> Result<TransactionSignedEcRecoveredWithBlobs, RawTxWithBlobsConvertError> {
+    ) -> Result<TransactionSignedEcRecoveredWithBlobs, TxWithBlobsCreateError> {
         match self {
             TxEncoding::NoBlobData => {
                 TransactionSignedEcRecoveredWithBlobs::decode_enveloped_with_fake_blobs(raw_tx)
             }
             TxEncoding::WithBlobData => {
-                TransactionSignedEcRecoveredWithBlobs::decode_enveloped_with_real_blobs(raw_tx)
+                let raw_tx_clone = raw_tx.clone(); // This clone is supposed to be cheap
+                let res =
+                    TransactionSignedEcRecoveredWithBlobs::decode_enveloped_with_real_blobs(raw_tx);
+                if let Err(TxWithBlobsCreateError::FailedToDecodeTransaction(
+                    Eip2718Error::RlpError(err),
+                )) = res
+                {
+                    if Self::looks_like_canonical_blob_tx(raw_tx_clone) {
+                        return Err(TxWithBlobsCreateError::FailedToDecodeTransactionProbablyIs4484Canonical(
+                            err,
+                        ));
+                    }
+                }
+                res
             }
         }
     }
+
+    fn looks_like_canonical_blob_tx(raw_tx: Bytes) -> bool {
+        // For full check we could call TransactionSigned::decode_enveloped and fully try to decode it is way more expensive.
+        // We expect EIP4844_TX_TYPE_ID + rlp(chainId = 01,.....)
+        let mut tx_slice = raw_tx.as_ref();
+        if let Some(tx_type) = tx_slice.first() {
+            if *tx_type == EIP4844_TX_TYPE_ID {
+                tx_slice.advance(1);
+                if let Ok(outer_header) = Header::decode(&mut tx_slice) {
+                    if outer_header.list {
+                        if let Some(chain_id) = tx_slice.first() {
+                            return (*chain_id as u64) == MAINNET.chain().id();
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
+fn deserialize_vec_b256_from_null_or_string<'de, D>(deserializer: D) -> Result<Vec<B256>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // Option::deserialize handles null.S
+    let opt = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
 }
 
 /// Struct to de/serialize json Bundles from bundles APIs and from/db.
@@ -45,7 +89,7 @@ impl TxEncoding {
 pub struct RawBundle {
     pub block_number: U64,
     pub txs: Vec<Bytes>,
-    #[serde_as(deserialize_as = "DefaultOnNull")]
+    #[serde(default, deserialize_with = "deserialize_vec_b256_from_null_or_string")]
     pub reverting_tx_hashes: Vec<B256>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replacement_uuid: Option<Uuid>,
@@ -63,7 +107,7 @@ pub struct RawBundle {
 #[derive(Error, Debug)]
 pub enum RawBundleConvertError {
     #[error("Failed to decode transaction, idx: {0}, error: {0}")]
-    FailedToDecodeTransaction(usize, RawTxWithBlobsConvertError),
+    FailedToDecodeTransaction(usize, TxWithBlobsCreateError),
     #[error("Incorrect replacement data")]
     IncorrectReplacementData,
     #[error("Blobs not supported by RawBundle")]
@@ -71,7 +115,7 @@ pub enum RawBundleConvertError {
 }
 
 impl RawBundle {
-    pub fn decode(self, encoding: TxEncoding) -> Result<Bundle, RawBundleConvertError> {
+    pub fn try_into(self, encoding: TxEncoding) -> Result<Bundle, RawBundleConvertError> {
         let txs = self
             .txs
             .into_iter()
@@ -168,7 +212,7 @@ pub struct RawTx {
 }
 
 impl RawTx {
-    pub fn decode(self, encoding: TxEncoding) -> Result<MempoolTx, RawTxWithBlobsConvertError> {
+    pub fn decode(self, encoding: TxEncoding) -> Result<MempoolTx, TxWithBlobsCreateError> {
         Ok(MempoolTx::new(encoding.decode(self.tx)?))
     }
 
@@ -239,7 +283,7 @@ pub struct RawShareBundleMetadatada {
 #[derive(Error, Debug)]
 pub enum RawShareBundleConvertError {
     #[error("Failed to decode transaction, idx: {0}, error: {0}")]
-    FailedToDecodeTransaction(usize, RawTxWithBlobsConvertError),
+    FailedToDecodeTransaction(usize, TxWithBlobsCreateError),
     #[error("Bundle too deep")]
     BundleTooDeep,
     #[error("Incorrect version")]
@@ -262,8 +306,9 @@ pub struct CancelShareBundle {
     pub key: ShareBundleReplacementKey,
 }
 /// Since we use the same API (mev_sendBundle) to get new bundles and also to cancel them we need this struct
+#[allow(clippy::large_enum_variant)]
 pub enum RawShareBundleDecodeResult {
-    NewShareBundle(ShareBundle),
+    NewShareBundle(Box<ShareBundle>),
     CancelShareBundle(CancelShareBundle),
 }
 
@@ -275,7 +320,7 @@ impl RawShareBundle {
     ) -> Result<ShareBundle, RawShareBundleConvertError> {
         let decode_res = self.decode(encoding)?;
         match decode_res {
-            RawShareBundleDecodeResult::NewShareBundle(b) => Ok(b),
+            RawShareBundleDecodeResult::NewShareBundle(b) => Ok(*b),
             RawShareBundleDecodeResult::CancelShareBundle(_) => {
                 Err(RawShareBundleConvertError::FoundCancelExpectingBundle)
             }
@@ -308,7 +353,7 @@ impl RawShareBundle {
                 None
             };
 
-        if self.metadata.as_ref().map_or(false, |r| r.cancelled) {
+        if self.metadata.as_ref().is_some_and(|r| r.cancelled) {
             return Ok(RawShareBundleDecodeResult::CancelShareBundle(
                 CancelShareBundle {
                     block,
@@ -333,7 +378,7 @@ impl RawShareBundle {
 
         bundle.hash_slow();
 
-        Ok(RawShareBundleDecodeResult::NewShareBundle(bundle))
+        Ok(RawShareBundleDecodeResult::NewShareBundle(Box::new(bundle)))
     }
 
     /// See [TransactionSignedEcRecoveredWithBlobs::envelope_encoded_no_blobs]
@@ -499,7 +544,7 @@ pub enum RawOrderConvertError {
     #[error("Failed to decode bundle, error: {0}")]
     FailedToDecodeBundle(RawBundleConvertError),
     #[error("Failed to decode transaction, error: {0}")]
-    FailedToDecodeTransaction(RawTxWithBlobsConvertError),
+    FailedToDecodeTransaction(TxWithBlobsCreateError),
     #[error("Failed to decode share bundle`, error: {0}")]
     FailedToDecodeShareBundle(RawShareBundleConvertError),
     #[error("Blobs not supported by RawOrder")]
@@ -511,7 +556,7 @@ impl RawOrder {
         match self {
             RawOrder::Bundle(bundle) => Ok(Order::Bundle(
                 bundle
-                    .decode(encoding)
+                    .try_into(encoding)
                     .map_err(RawOrderConvertError::FailedToDecodeBundle)?,
             )),
             RawOrder::Tx(tx) => Ok(Order::Tx(
@@ -543,7 +588,10 @@ impl From<Order> for RawOrder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_consensus::Transaction;
+    use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{address, fixed_bytes, keccak256, U256};
+    use revm_primitives::bytes;
     use uuid::uuid;
 
     #[test]
@@ -564,7 +612,7 @@ mod tests {
 
         let bundle = bundle_request
             .clone()
-            .decode(TxEncoding::WithBlobData)
+            .try_into(TxEncoding::WithBlobData)
             .expect("failed to convert bundle request to bundle");
 
         let bundle_roundtrip = RawBundle::encode_no_blobs(bundle.clone());
@@ -628,7 +676,7 @@ mod tests {
                 serde_json::from_str(input).expect("failed to decode bundle");
 
             let bundle = bundle_request
-                .decode(TxEncoding::WithBlobData)
+                .try_into(TxEncoding::WithBlobData)
                 .expect("failed to convert bundle request to bundle");
 
             assert_eq!(
@@ -653,7 +701,7 @@ mod tests {
             serde_json::from_str(bundle_json).expect("failed to decode bundle");
 
         let bundle = bundle_request
-            .decode(TxEncoding::WithBlobData)
+            .try_into(TxEncoding::WithBlobData)
             .expect("failed to convert bundle request to bundle");
 
         assert_eq!(
@@ -661,6 +709,59 @@ mod tests {
             fixed_bytes!("cf3c567aede099e5455207ed81c4884f72a4c0c24ddca331163a335525cd22cc")
         );
         assert_eq!(bundle.uuid, uuid!("5d5bf52c-ac3f-57eb-a3e9-fc01b18ca516"));
+    }
+
+    #[test]
+    fn test_correct_bundle_uuid_missing_reverting_hashes() {
+        // raw json string
+        let bundle_json = r#"
+        {
+            "blockNumber": "0xA136F1F",
+            "txs": ["0x02f9037b018203cd8405f5e1008503692da370830388ba943fc91a3afd70395cd496c647d5a6cc9d4b2b7fad8780e531581b77c4b903043593564c000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000064f390d300000000000000000000000000000000000000000000000000000000000000030b090c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000080e531581b77c400000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000009184e72a0000000000000000000000000000000000000000000000000000080e531581b77c400000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000b5ea574dd8f2b735424dfc8c4e16760fc44a931b000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000c001a0a9ea84ad107d335afd5e5d2ddcc576f183be37386a9ac6c9d4469d0329c22e87a06a51ea5a0809f43bf72d0156f1db956da3a9f3da24b590b7eed01128ff84a2c1"]
+        }"#;
+
+        let bundle_request: RawBundle =
+            serde_json::from_str(bundle_json).expect("failed to decode bundle");
+
+        let bundle = bundle_request
+            .try_into(TxEncoding::WithBlobData)
+            .expect("failed to convert bundle request to bundle");
+
+        assert_eq!(
+            bundle.hash,
+            fixed_bytes!("cf3c567aede099e5455207ed81c4884f72a4c0c24ddca331163a335525cd22cc")
+        );
+        assert_eq!(bundle.uuid, uuid!("5d5bf52c-ac3f-57eb-a3e9-fc01b18ca516"));
+    }
+
+    ///Real life case
+    #[test]
+    fn test_correct_bundle_uuid_null_reverting_hashes() {
+        // raw json string
+        let bundle_json ="{\"txs\":[\"0x02f901c00182123184cd0a3c00850d8c3ac83483186a00949f51040aec194a89cb6a7e852e79ea07cc0bf6488203abb9014e524f05aadf99a0839818b3f120ebac9b73f82b617dc6a5550000000000000004aa7fdb4059a9fc0400000000000000000000000000000000000000000000000000000000000000000000000000540101d99034942c4a883ff3ed6cda6c91fe505a58eb2e0000000000000001270250af8569d4ff712aaebc2f5971a824249fa7000000000000030015153da0e9e13cfc167b3d417d3721bf545479bb000bb800003c00540101d99034942c4a883ff3ed6cda6c91fe505a58eb2e00000000000000015533b61d314f7faf87df530de362f457a342ec1e00000000000003008107fca5494375fc743a9fc4d4844353a1af3d94000bb800003c00540101d99034942c4a883ff3ed6cda6c91fe505a58eb2e0000000000000001b81ab4b74522a25525e583f94dba73521cc4d56b0000000000000100308c6fbd6a14881af333649f17f2fde9cd75e2a6000000000000c080a061a306a26e0a66973364614912553f32c7915e899b188164bf2e99b97e08d0e8a00c76b844dc4b72c2040f14e69f0f9c3fa290a2db7c4a245d045155090ec7d746\"],\"replacementUuid\":null,\"signingAddress\":\"0x564d55a3a73f6efb907afe92b1706602b2d54018\",\"blockNumber\":\"0x142dd19\",\"minTimestamp\":null,\"maxTimestamp\":null,\"revertingTxHashes\":null}";
+
+        let bundle_request: RawBundle =
+            serde_json::from_str(bundle_json).expect("failed to decode bundle");
+
+        let bundle = bundle_request
+            .clone()
+            .try_into(TxEncoding::WithBlobData)
+            .expect("failed to convert bundle request to bundle");
+
+        let bundle_roundtrip = RawBundle::encode_no_blobs(bundle.clone());
+        assert_eq!(bundle_request, bundle_roundtrip);
+
+        assert_eq!(
+            bundle.hash,
+            fixed_bytes!("08b57aa2df6e4729c55b809d1110f16aba30956cfc17f7ad771441d6d418f991")
+        );
+        assert_eq!(bundle.uuid, uuid!("0cc09d2b-6538-5d0e-a627-22c400845783"));
+
+        assert!(bundle.reverting_tx_hashes.is_empty());
+        assert_eq!(bundle.txs.len(), 1);
+
+        assert_eq!(bundle.min_timestamp, None);
+        assert_eq!(bundle.max_timestamp, None);
     }
 
     #[test]
@@ -681,7 +782,11 @@ mod tests {
             .tx;
 
         let raw_tx_roundtrip = RawTx {
-            tx: tx.envelope_encoded(),
+            tx: {
+                let mut buf = Vec::new();
+                tx.as_signed().encode_2718(&mut buf);
+                buf.into()
+            },
         };
         assert_eq!(raw_tx_request, raw_tx_roundtrip);
 
@@ -881,5 +986,18 @@ mod tests {
         let raw_order: RawOrder =
             serde_json::from_str(raw_tx_json).expect("failed to decode raw order with tx");
         assert!(matches!(raw_order, RawOrder::Tx(_)));
+    }
+
+    /// We decode a 4484 Tx in canonical format using WithBlobData which is for network format.
+    /// We expect the specific error FailedToDecodeTransactionProbablyIs4484Canonical.
+    #[test]
+    fn test_correct_mixed_blob_mode_decoding() {
+        let raw_tx =  bytes!("03f9021b01829f1084db518e44850efef5c902830249f09406a9ab27c7e2255df1815e6cc0168d7755feb19a80b90184648885fb000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001600000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000066cc9a0eb519e9e1de68f6cf0aa1aa1efe3723d50000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001efcf00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0843b9aca00e1a00154404fdaef0e93e6a4df6aa099f66fc4f90267b3ef5bb6ac4d3f77a456ae5180a01367ff3e4598620be9424d5be0deafe5b3d3b7221c5f5c3d9fade0f545b19890a0026cd9941cd2aa4df41d5d36aa2e82a671c3226f2924cb206363a9458f38b8f6");
+        let raw_tx_order = RawTx { tx: raw_tx };
+        let tx_res = raw_tx_order.decode(TxEncoding::WithBlobData);
+        assert!(matches!(
+            tx_res,
+            Err(TxWithBlobsCreateError::FailedToDecodeTransactionProbablyIs4484Canonical(_))
+        ));
     }
 }

@@ -24,7 +24,10 @@ pub async fn subscribe_to_txpool_with_blobs(
     results: mpsc::Sender<ReplaceableOrderPoolCommand>,
     global_cancel: CancellationToken,
 ) -> eyre::Result<JoinHandle<()>> {
-    let ipc = IpcConnect::new(config.ipc_path.clone());
+    let ipc_path = config
+        .ipc_path
+        .ok_or_else(|| eyre::eyre!("No IPC path configured"))?;
+    let ipc = IpcConnect::new(ipc_path);
     let provider = ProviderBuilder::new().on_ipc(ipc).await?;
 
     let handle = tokio::spawn(async move {
@@ -135,6 +138,7 @@ async fn get_tx_with_blobs(
 
 #[cfg(test)]
 mod test {
+
     use super::*;
     use alloy_consensus::{SidecarBuilder, SimpleCoder};
     use alloy_network::{EthereumWallet, TransactionBuilder};
@@ -143,6 +147,7 @@ mod test {
     use alloy_provider::{Provider, ProviderBuilder};
     use alloy_rpc_types::TransactionRequest;
     use alloy_signer_local::PrivateKeySigner;
+    use std::path::PathBuf;
 
     #[tokio::test]
     /// Test that the fetcher can retrieve transactions (both normal and blob) from the txpool
@@ -154,7 +159,10 @@ mod test {
 
         let (sender, mut receiver) = mpsc::channel(10);
         subscribe_to_txpool_with_blobs(
-            OrderInputConfig::default_e2e(),
+            OrderInputConfig {
+                ipc_path: Some(PathBuf::from("/tmp/anvil.ipc")),
+                ..OrderInputConfig::default_e2e()
+            },
             sender,
             CancellationToken::new(),
         )
@@ -178,13 +186,15 @@ mod test {
         let gas_price = provider.get_gas_price().await.unwrap();
         let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
 
-        let tx = TransactionRequest::default()
-            .with_to(alice)
-            .with_nonce(0)
-            .with_max_fee_per_blob_gas(gas_price)
-            .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
-            .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
-            .with_blob_sidecar(sidecar);
+        let tx = TransactionRequest {
+            max_fee_per_blob_gas: Some(gas_price),
+            sidecar: Some(sidecar),
+            ..TransactionRequest::default()
+                .with_to(alice)
+                .with_nonce(0)
+                .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+                .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        };
 
         let pending_tx = provider.send_transaction(tx).await.unwrap();
         let recv_tx = receiver.recv().await.unwrap();

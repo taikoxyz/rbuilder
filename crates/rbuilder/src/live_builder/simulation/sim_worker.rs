@@ -4,17 +4,18 @@ use crate::{
         simulate_order, BlockState,
     },
     live_builder::simulation::CurrentSimulationContexts,
+    provider::StateProviderFactory,
     telemetry,
     telemetry::add_sim_thread_utilisation_timings,
-    utils::ProviderFactoryReopener,
 };
 use ahash::HashMap;
 use reth_db::database::Database;
-use reth_payload_builder::database::SyncCachedReads as CachedReads;
+use parking_lot::Mutex;
+use reth::revm::cached::SyncCachedReads as CachedReads;
 use reth_provider::StateProvider;
 use revm_primitives::ChainAddress;
 use std::{
-    sync::{Arc, Mutex},
+    sync::Arc,
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -24,19 +25,21 @@ use tracing::error;
 /// Function that continuously looks for a SimulationContext on ctx and when it finds one it polls its "request for simulation" channel (SimulationContext::requests).
 /// When the channel closes it goes back to waiting for a new SimulationContext.
 /// It's blocking so it's expected to run in its own thread.
-pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
+pub fn run_sim_worker<P>(
     worker_id: usize,
     ctx: Arc<Mutex<CurrentSimulationContexts>>,
-    provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
+    provider: HashMap<u64, P>,
     global_cancellation: CancellationToken,
-) {
+) where
+    P: StateProviderFactory,
+{
     loop {
         if global_cancellation.is_cancelled() {
             return;
         }
         let current_sim_context = loop {
             let next_ctx = {
-                let ctxs = ctx.lock().unwrap();
+                let ctxs = ctx.lock();
                 ctxs.contexts.iter().next().map(|(_, c)| c.clone())
             };
             // @Perf chose random context so its more fair when we have 2 instead of 1
@@ -51,21 +54,22 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
 
         println!("Brecht: simming 3");
 
-        let mut provider_factories = HashMap::default();
-        for (chain_id, provider_factory) in provider_factory.iter() {
-            match provider_factory.check_consistency_and_reopen_if_needed(
-                current_sim_context.block_ctx.chains[chain_id].block_env.number.to(),
-            ) {
-                Ok(provider_factory) => {
-                    provider_factories.insert(*chain_id, provider_factory);
-                },
-                Err(err) => {
-                    error!(?err, "Error while reopening provider factory");
-                    // Decide whether to continue or break
-                    continue;
-                }
-            }
-        }
+        // let mut provider_factories = HashMap::default();
+        // for (chain_id, provider_factory) in provider_factory.iter() {
+        //     provider_factories.insert(*chain_id, provider_factory);
+        //     // match provider_factory.check_consistency_and_reopen_if_needed(
+        //     //     current_sim_context.block_ctx.chains[chain_id].block_env.number.to(),
+        //     // ) {
+        //     //     Ok(provider_factory) => {
+        //     //         provider_factories.insert(*chain_id, provider_factory);
+        //     //     },
+        //     //     Err(err) => {
+        //     //         error!(?err, "Error while reopening provider factory");
+        //     //         // Decide whether to continue or break
+        //     //         continue;
+        //     //     }
+        //     // }
+        // }
 
         let mut cached_reads = CachedReads::default();
         let mut last_sim_finished = Instant::now();
@@ -75,9 +79,15 @@ pub fn run_sim_worker<DB: Database + Clone + Send + 'static>(
 
             let state_for_sim = provider_factories.iter().map(|(chain_id, provider_factory)| {
                 (*chain_id, Arc::<dyn StateProvider>::from(
-                    provider_factory.history_by_block_hash(
-                        current_sim_context.block_ctx.chains[chain_id].attributes.parent
-                    ).expect("failed to open state provider")
+                    match provider_factory.history_by_block_hash(current_sim_context.block_ctx.chains[chain_id].attributes.parent) {
+                        Ok(state_provider) => state_provider,
+                        Err(err) => {
+                            error!(?err, "Error while getting state for block");
+                            // break here so we can try to get new context
+                            // @Metric
+                            break;
+                        }
+                    }
                 ))
             }).collect();
 

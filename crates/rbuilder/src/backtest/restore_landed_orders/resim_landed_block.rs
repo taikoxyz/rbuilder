@@ -1,15 +1,18 @@
-use crate::building::evm_inspector::SlotKey;
-use crate::building::tracers::AccumulatorSimulationTracer;
-use crate::building::{BlockBuildingContext, BlockState, PartialBlock, PartialBlockFork};
-use crate::utils::signed_uint_delta;
-use crate::utils::{extract_onchain_block_txs, find_suggested_fee_recipient};
+use crate::{
+    building::{
+        evm_inspector::SlotKey, tracers::AccumulatorSimulationTracer, BlockBuildingContext,
+        BlockState, PartialBlock, PartialBlockFork,
+    },
+    provider::StateProviderFactory,
+    utils::{extract_onchain_block_txs, find_suggested_fee_recipient, signed_uint_delta},
+};
 use ahash::{HashMap, HashSet};
-use alloy_primitives::{B256, I256};
+use alloy_primitives::{TxHash, B256, I256};
 use eyre::Context;
 use reth::blockchain_tree::chain;
 use reth_chainspec::ChainSpec;
 use reth_db::DatabaseEnv;
-use reth_primitives::{Receipt, TransactionSignedEcRecovered, TxHash};
+use reth_primitives::{Receipt, TransactionSignedEcRecovered};
 use reth_provider::ProviderFactory;
 use revm_primitives::ChainAddress;
 use std::sync::Arc;
@@ -28,17 +31,22 @@ impl ExecutedTxs {
     }
 }
 
-pub fn sim_historical_block(
-    provider_factory: ProviderFactory<Arc<DatabaseEnv>>,
+pub fn sim_historical_block<P>(
+    provider: P,
     chain_spec: Arc<ChainSpec>,
     onchain_block: alloy_rpc_types::Block,
-) -> eyre::Result<Vec<ExecutedTxs>> {
+) -> eyre::Result<Vec<ExecutedTxs>>
+where
+    P: StateProviderFactory,
+{
     let mut results = Vec::new();
 
     let txs = extract_onchain_block_txs(&onchain_block)?;
 
     let suggested_fee_recipient = find_suggested_fee_recipient(&onchain_block, &txs);
-    let coinbase = ChainAddress(chain_spec.chain.id(), onchain_block.header.miner);
+
+    let coinbase = ChainAddress(chain_spec.chain.id(), onchain_block.header.beneficiary);
+    let parent_hash = onchain_block.header.parent_hash;
 
     let ctx = BlockBuildingContext::from_onchain_block(
         onchain_block,
@@ -48,9 +56,10 @@ pub fn sim_historical_block(
         coinbase,
         suggested_fee_recipient,
         None,
+        Arc::from(provider.root_hasher(parent_hash)),
     );
 
-    let state_provider = provider_factory.history_by_block_hash(ctx.chains[&chain_spec.chain().id()].attributes.parent)?;
+    let state_provider = provider.history_by_block_hash(ctx.chains[&chain_spec.chain().id()].attributes.parent)?;
     let mut partial_block = PartialBlock::new(true, None);
     let mut state = BlockState::new(state_provider, chain_spec.chain().id());
 

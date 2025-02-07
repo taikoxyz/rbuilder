@@ -37,10 +37,12 @@ docker-image: ## Build a rbuilder Docker image
 lint: ## Run the linters
 	cargo fmt -- --check
 	cargo clippy --features "$(FEATURES)" -- -D warnings
+	cargo clippy -p op-rbuilder --features "$(FEATURES),optimism" -- -D warnings
 
 .PHONY: test
-test: ## Run the tests
+test: ## Run the tests for rbuilder and op-rbuilder
 	cargo test --verbose --features "$(FEATURES)"
+	cargo test -p op-rbuilder --verbose --features "$(FEATURES),optimism"
 
 .PHONY: lt
 lt: lint test ## Run "lint" and "test"
@@ -50,11 +52,11 @@ fmt: ## Format the code
 	cargo fmt
 	cargo fix --allow-staged
 	cargo clippy --features "$(FEATURES)" --fix --allow-staged
+	cargo clippy -p op-rbuilder --features "$(FEATURES),optimism" --fix --allow-staged
 
 .PHONY: bench
 bench: ## Run benchmarks
-	cargo bench --features "$(FEATURES)" --bench bench_main
-#	 cargo bench --bench bench_main -- --verbose
+	cargo bench --features "$(FEATURES)" --workspace
 
 .PHONY: bench-report-open
 bench-report-open: ## Open last benchmark report in the browser
@@ -76,3 +78,8 @@ bench-prettify: ## Prettifies the latest Criterion report
 	./scripts/ci/criterion-prettify-report.sh target/criterion target/benchmark-html-dev
 	@echo "\nopen target/benchmark-html-dev/report/index.html"
 
+.PHONY: validate-config
+validate-config: ## Validate the correctness of the configuration files
+	@for CONFIG in $(shell ls config-*.toml); do \
+		cargo run --bin validate-config -- --config $$CONFIG; \
+	done

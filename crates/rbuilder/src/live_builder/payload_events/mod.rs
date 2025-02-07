@@ -17,12 +17,11 @@ use crate::{
     primitives::mev_boost::{MevBoostRelay, MevBoostRelayID},
 };
 use ahash::HashSet;
+use alloy_eips::merge::SLOT_DURATION;
 use alloy_primitives::{utils::format_ether, Address, B256, U256};
-use primitive_types::H384;
-use reth::{
-    primitives::constants::SLOT_DURATION, rpc::types::beacon::events::PayloadAttributesEvent,
-};
 use revm_primitives::address;
+use primitive_types::H384;
+use alloy_rpc_types_beacon::events::PayloadAttributesEvent;
 use std::{collections::VecDeque, time::Duration};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;

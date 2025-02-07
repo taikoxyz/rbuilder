@@ -1,9 +1,18 @@
 [workspace]
 members = [
     "crates/rbuilder",
+    "crates/op-rbuilder",
+    "crates/op-rbuilder/payload_builder",
+    "crates/op-rbuilder/node",
+    "crates/reth-rbuilder",
     "crates/rbuilder/src/test_utils",
-    "crates/rbuilder/src/telemetry/metrics_macros"
+    "crates/rbuilder/src/telemetry/metrics_macros",
+    "crates/transaction-pool-bundle-ext",
+    "crates/transaction-pool-bundle-ext/bundle_pool_ops/rbuilder",
+    "crates/eth-sparse-mpt",
+    "crates/sysperf"
 ]
+default-members = ["crates/rbuilder", "crates/reth-rbuilder"]
 resolver = "2"
 
 # Like release, but with full debug symbols. Useful for e.g. `perf`.
@@ -22,112 +31,182 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-libmdbx = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6", features = ["test-utils", "serde"] }
-reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
-reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.0.6" }
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-beacon-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-libmdbx = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2", features = [
+    "test-utils",
+    "serde",
+] }
+reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-execution-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-trie-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-optimism-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-optimism-forks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+#reth-auto-seal-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-execution-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-revm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+#reth-rpc-api-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-discv4 = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-discv5 = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-network = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-storage-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
+reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.2" }
 
-# version is copied from reth  "v1.0.6" dependencies
-revm = { version = "14.0.0", features = [
+# version is copied from reth  "v1.1.2" dependencies
+revm = { version = "18.0.0", features = [
     "std",
     "secp256k1",
     "optional_balance_check",
 ], default-features = false }
-revm-inspectors = "0.6"
-revm-primitives = { version = "9.0.0", features = [
+revm-inspectors = "0.11.0"
+revm-primitives = { version = "14.0.0", features = [
     "std",
 ], default-features = false }
 
-ethereum_ssz_derive = "0.7"
-ethereum_ssz = "0.7"
+ethereum_ssz_derive = "0.8"
+ethereum_ssz = "0.8"
 
-alloy-primitives = { version = "0.8.0", default-features = false }
+alloy-primitives = { version = "0.8.11", default-features = false }
 alloy-rlp = "0.3.4"
-alloy-chains = "0.1.23"
-alloy-provider = { version = "0.3.0", features = ["ipc", "pubsub"] }
-alloy-pubsub = { version = "0.3.0" }
-alloy-eips = { version = "0.3.0" }
-alloy-rpc-types = { version = "0.3.0" }
-alloy-json-rpc = { version = "0.3.0" }
-alloy-transport-http = { version = "0.3.0" }
-alloy-network = { version = "0.3.0" }
-alloy-transport = { version = "0.3.0" }
-alloy-node-bindings = { version = "0.3.0" }
-alloy-consensus = { version = "0.3.0", features = ["kzg"] }
-alloy-serde = { version = "0.3.0" }
-alloy-rpc-types-beacon = { version = "0.3.0", features = [
-    "ssz",
-] }
-alloy-rpc-types-engine = { version = "0.3.0", features = [
-    "ssz",
-] }
-alloy-rpc-types-eth = { version = "0.3.0" }
-alloy-signer-local = { version = "0.3.0" }
-alloy-sol-types = { version = "0.8.2", default-features = false }
+alloy-chains = "0.1.33"
+alloy-provider = { version = "0.6.4", features = ["ipc", "pubsub"] }
+alloy-pubsub = { version = "0.6.4" }
+alloy-eips = { version = "0.6.4" }
+alloy-rpc-types = { version = "0.6.4" }
+alloy-json-rpc = { version = "0.6.4" }
+alloy-transport-http = { version = "0.6.4" }
+alloy-network = { version = "0.6.4" }
+alloy-network-primitives = { version = "0.6.4" }
+alloy-transport = { version = "0.6.4" }
+alloy-node-bindings = { version = "0.6.4" }
+alloy-consensus = { version = "0.6.4", features = ["kzg"] }
+op-alloy-consensus = { version = "0.6.8", features = ["kzg"] }
+alloy-serde = { version = "0.6.4" }
+alloy-rpc-types-beacon = { version = "0.6.4", features = ["ssz"] }
+alloy-rpc-types-engine = { version = "0.6.4", features = ["ssz"] }
+alloy-rpc-types-eth = { version = "0.6.4" }
+alloy-signer-local = { version = "0.6.4" }
+alloy-genesis = { version = "0.6.4" }
+alloy-trie = { version = "0.7" }
+alloy-sol-types = { version = "0.7" }
 
-# misc
+async-trait = { version = "0.1.83" }
+clap = { version = "4.4.3" }
+thiserror = { version = "1.0.64" }
+eyre = { version = "0.6.12" }
+jsonrpsee = { version = "0.24.4" }
+jsonrpsee-types = { version = "0.24.4" }
+parking_lot = { version = "0.12.3" }
+tokio = { version = "1.40.0" }
+auto_impl = { version = "1.2.0" }
+reqwest = { version = "0.12.8" }
+serde = { version = "1.0.210" }
+serde_json = { version = "1.0.128" }
+clap_builder = { version = "4.5.19" }
+derive_more = { version = "1" }
+tokio-stream = "0.1.16"
+tokio-util = "0.7.12"
+url = "2.5.2"
 bincode = "1.3"
 
+libc = { version = "0.2.161" }
+tikv-jemallocator = { version = "0.6" }
+tracing = "0.1.37"
+
+
+eth-sparse-mpt = { path = "crates/eth-sparse-mpt" }
+sysperf = { path = "crates/sysperf" }
+
+
 [patch.crates-io]
-# revm = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
-# revm-primitives = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
-# revm-interpreter = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
-# revm-precompile = { git = "https://github.com/taikoxyz/revm.git", branch = "v43-gwyneth" }
-revm = { git = "https://github.com/taikoxyz/revm.git", branch = "gwyneth-debug-shit" }
-revm-primitives = { git = "https://github.com/taikoxyz/revm.git", branch = "gwyneth-debug-shit" }
-revm-interpreter = { git = "https://github.com/taikoxyz/revm.git", branch = "gwyneth-debug-shit" }
-revm-precompile = { git = "https://github.com/taikoxyz/revm.git", branch = "gwyneth-debug-shit" }
-revm-inspectors = { git = "https://github.com/taikoxyz/revm-inspectors.git", branch = "main-rbuilder" }
+revm = { git = "https://github.com/taikoxyz/revm.git", branch = "v50-gwyneth" }
+revm-primitives = { git = "https://github.com/taikoxyz/revm.git", branch = "v50-gwyneth" }
+revm-interpreter = { git = "https://github.com/taikoxyz/revm.git", branch = "v50-gwyneth" }
+revm-precompile = { git = "https://github.com/taikoxyz/revm.git", branch = "v50-gwyneth" }
+revm-inspectors = { git = "https://github.com/taikoxyz/revm-inspectors.git", branch = "v0.11.0-gwyneth" }
 
 [patch."https://github.com/paradigmxyz/reth"]
-reth = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-db = {git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-db-common = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-libmdbx = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-node-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-trie = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-trie-parallel = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-basic-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-node-core = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-primitives = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-provider = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-chainspec = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-evm = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-evm-ethereum = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-db-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-execution-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-reth-trie-db = { git = "https://github.com/taikoxyz/gwyneth", branch = "gwyneth_with_debug_shit_revm_and_inspector" }
-
-#reth = { path = "../../revm-dani/gwyneth/bin/reth" }
-#reth-db = { path = "../../revm-dani/gwyneth/crates/storage/db" }
-#reth-db-common = { path = "../../revm-dani/gwyneth/crates/storage/db-common" }
-#reth-errors = { path = "../../revm-dani/gwyneth/crates/errors" }
-#reth-libmdbx = { path = "../../revm-dani/gwyneth/crates/storage/libmdbx-rs" }
-#reth-payload-builder = { path = "../../revm-dani/gwyneth/crates/payload/builder" }
-#reth-node-api = { path = "../../revm-dani/gwyneth/crates/node/api" }
-#reth-trie = { path = "../../revm-dani/gwyneth/crates/trie/trie" }
-#reth-trie-parallel = { path = "../../revm-dani/gwyneth/crates/trie/parallel" }
-#reth-basic-payload-builder = { path = "../../revm-dani/gwyneth/crates/payload/basic" }
-#reth-node-core = { path = "../../revm-dani/gwyneth/crates/node/core" }
-#reth-primitives = { path = "../../revm-dani/gwyneth/crates/primitives" }
-#reth-provider = { path = "../../revm-dani/gwyneth/crates/storage/provider" }
-#reth-chainspec = { path = "../../revm-dani/gwyneth/crates/chainspec" }
-#reth-evm = { path = "../../revm-dani/gwyneth/crates/evm" }
-#reth-evm-ethereum = { path = "../../revm-dani/gwyneth/crates/ethereum/evm" }
-#reth-db-api = { path = "../../revm-dani/gwyneth/crates/storage/db-api" }
-#reth-execution-errors = { path = "../../revm-dani/gwyneth/crates/evm/execution-errors" }
-#reth-trie-db = { path = "../../revm-dani/gwyneth/crates/trie/db" }
+reth = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-chain-state = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-beacon-consensus = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-cli-util = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-db = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-db-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-db-common = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-libmdbx = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-node-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-node-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-node-ethereum = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-trie = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-trie-parallel = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-basic-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-node-core = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-primitives = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-provider = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth", features = [
+    "test-utils",
+    "serde",
+] }
+reth-chainspec = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-evm = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-evm-ethereum = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-execution-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-trie-db = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-payload-primitives = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-transaction-pool = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-consensus = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-optimism-consensus = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-optimism-cli = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-optimism-forks = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+#reth-auto-seal-consensus = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-execution-types = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-revm = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-optimism-evm = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-rpc = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-tracing = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-rpc-types-compat = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-rpc-eth-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-rpc-eth-types = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+#reth-rpc-api-types = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-discv4 = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-discv5 = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-network = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-optimism-node = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-eth-wire-types = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-storage-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-optimism-rpc = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-optimism-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth-optimism-chainspec = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }

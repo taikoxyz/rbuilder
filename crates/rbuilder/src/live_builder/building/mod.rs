@@ -1,18 +1,21 @@
-use std::{sync::Arc, time::Duration};
+use std::{cell::RefCell, rc::Rc, sync::Arc, thread, time::Duration};
 
 use crate::{
     building::{
         builders::{
             BlockBuildingAlgorithm, BlockBuildingAlgorithmInput, UnfinishedBlockBuildingSinkFactory,
         },
-        BlockBuildingContext,
+        multi_share_bundle_merger::MultiShareBundleMerger,
+        simulated_order_command_to_sink, BlockBuildingContext, SimulatedOrderSink,
     },
     live_builder::{payload_events::MevBoostSlotData, simulation::SlotOrderSimResults},
-    utils::ProviderFactoryReopener,
+    primitives::{OrderId, SimulatedOrder},
+    provider::StateProviderFactory,
 };
 use ahash::HashMap;
 use reth_db::database::Database;
 use reth_provider::ProviderFactory;
+use revm_primitives::Address;
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace};
@@ -22,32 +25,41 @@ use super::{
         self, order_replacement_manager::OrderReplacementManager, orderpool::OrdersForBlock,
     },
     payload_events,
-    simulation::OrderSimulationPool,
+    simulation::{OrderSimulationPool, SimulatedOrderCommand},
 };
 
 #[derive(Debug)]
-pub struct BlockBuildingPool<DB> {
-    provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
-    builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>,
+pub struct BlockBuildingPool<P> {
+    providers: HashMap<u64, P>,
+    builders: Vec<Arc<dyn BlockBuildingAlgorithm<P>>>,
     sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
     orderpool_subscribers: HashMap<u64, order_input::OrderPoolSubscriber>,
-    order_simulation_pool: OrderSimulationPool<DB>,
+    order_simulation_pool: OrderSimulationPool<P>,
+    run_sparse_trie_prefetcher: bool,
+    sbundle_merger_selected_signers: Arc<Vec<Address>>,
 }
 
-impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
+impl<P> BlockBuildingPool<P>
+where
+    P: StateProviderFactory + Clone + 'static,
+{
     pub fn new(
-        provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
-        builders: Vec<Arc<dyn BlockBuildingAlgorithm<DB>>>,
+        provider: HashMap<u64, P>,
+        builders: Vec<Arc<dyn BlockBuildingAlgorithm<P>>>,
         sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
         orderpool_subscribers: HashMap<u64, order_input::OrderPoolSubscriber>,
-        order_simulation_pool: OrderSimulationPool<DB>,
+        order_simulation_pool: OrderSimulationPool<P>,
+        run_sparse_trie_prefetcher: bool,
+        sbundle_merger_selected_signers: Arc<Vec<Address>>,
     ) -> Self {
         BlockBuildingPool {
-            provider_factory,
+            provider,
             builders,
             sink_factory,
             orderpool_subscribers,
             order_simulation_pool,
+            run_sparse_trie_prefetcher,
+            sbundle_merger_selected_signers,
         }
     }
 
@@ -105,22 +117,24 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
         let (broadcast_input, _) = broadcast::channel(10_000);
 
         let provider_factories: HashMap<u64, ProviderFactory<DB>> = self
-            .provider_factory.iter().map(|(chain_id, provider_factory)| {
+            .providers.iter().map(|(chain_id, provider_factory)| {
                 let block_number = ctx.chains[chain_id].block_env.number.to::<u64>();
-                match provider_factory.check_consistency_and_reopen_if_needed(block_number)
-                {
-                    Ok(provider_factory) => (*chain_id, provider_factory),
-                    Err(err) => {
-                        panic!("Error while reopening provider factory");
-                    }
-                }
+                // match provider_factory.check_consistency_and_reopen_if_needed(block_number)
+                // {
+                //     Ok(provider_factory) => (*chain_id, provider_factory),
+                //     Err(err) => {
+                //         panic!("Error while reopening provider factory");
+                //     }
+                // }
             }).collect();
 
+        let block_number = ctx.block_env.number.to::<u64>();
+
         for builder in self.builders.iter() {
-            //let builder_name = builder.name();
-            //debug!(block = block_number, builder_name, "Spawning builder job");
-            let input = BlockBuildingAlgorithmInput::<DB> {
-                provider_factory: provider_factories.clone(),
+            let builder_name = builder.name();
+            debug!(block = block_number, builder_name, "Spawning builder job");
+            let input = BlockBuildingAlgorithmInput::<P> {
+                provider: provider_factories.clone(),
                 ctx: ctx.clone(),
                 input: broadcast_input.subscribe(),
                 sink: builder_sink.clone(),
@@ -133,17 +147,79 @@ impl<DB: Database + Clone + 'static> BlockBuildingPool<DB> {
             });
         }
 
-        tokio::spawn(multiplex_job(input.orders, broadcast_input));
+        if self.run_sparse_trie_prefetcher {
+            let input = broadcast_input.subscribe();
+
+            tokio::task::spawn_blocking(move || {
+                ctx.root_hasher.run_prefetcher(input, cancel);
+            });
+        }
+
+        let sbundle_merger_selected_signers = self.sbundle_merger_selected_signers.clone();
+        thread::spawn(move || {
+            merge_and_send(
+                input.orders,
+                broadcast_input,
+                &sbundle_merger_selected_signers,
+            )
+        });
+
+        //        tokio::spawn();
     }
 }
 
-async fn multiplex_job<T>(mut input: mpsc::Receiver<T>, sender: broadcast::Sender<T>) {
+/// Implements SimulatedOrderSink and sends everything to a broadcast::Sender as SimulatedOrderCommand.
+struct SimulatedOrderSinkToChannel {
+    sender: broadcast::Sender<SimulatedOrderCommand>,
+    sender_returned_error: bool,
+}
+
+impl SimulatedOrderSinkToChannel {
+    pub fn new(sender: broadcast::Sender<SimulatedOrderCommand>) -> Self {
+        Self {
+            sender,
+            sender_returned_error: false,
+        }
+    }
+
+    pub fn sender_returned_error(&self) -> bool {
+        self.sender_returned_error
+    }
+}
+
+impl SimulatedOrderSink for SimulatedOrderSinkToChannel {
+    fn insert_order(&mut self, order: SimulatedOrder) {
+        self.sender_returned_error |= self
+            .sender
+            .send(SimulatedOrderCommand::Simulation(order))
+            .is_err()
+    }
+
+    fn remove_order(&mut self, id: OrderId) -> Option<SimulatedOrder> {
+        self.sender_returned_error |= self
+            .sender
+            .send(SimulatedOrderCommand::Cancellation(id))
+            .is_err();
+        None
+    }
+}
+
+/// Merges (see [`MultiShareBundleMerger`]) simulated orders from input and forwards the result to sender.
+fn merge_and_send(
+    mut input: mpsc::Receiver<SimulatedOrderCommand>,
+    sender: broadcast::Sender<SimulatedOrderCommand>,
+    sbundle_merger_selected_signers: &[Address],
+) {
+    let sender = Rc::new(RefCell::new(SimulatedOrderSinkToChannel::new(sender)));
+    let mut merger = MultiShareBundleMerger::new(sbundle_merger_selected_signers, sender.clone());
     // we don't worry about waiting for input forever because it will be closed by producer job
-    while let Some(input) = input.recv().await {
+    while let Some(input) = input.blocking_recv() {
+        simulated_order_command_to_sink(input, &mut merger);
         // we don't create new subscribers to the broadcast so here we can be sure that err means end of receivers
-        if sender.send(input).is_err() {
+        if sender.borrow().sender_returned_error() {
+            trace!("Cancelling merge_and_send job, destination stopped");
             return;
         }
     }
-    trace!("Cancelling multiplex job");
+    trace!("Cancelling merge_and_send job, source stopped");
 }

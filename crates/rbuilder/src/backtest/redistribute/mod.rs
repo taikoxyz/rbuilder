@@ -1,21 +1,26 @@
 mod cli;
 mod redistribution_algo;
 
-use crate::backtest::execute::backtest_simulate_block;
-use crate::backtest::redistribute::redistribution_algo::{
-    IncludedOrderData, RedistributionCalculator, RedistributionIdentityData, RedistributionResult,
+use crate::{
+    backtest::{
+        execute::backtest_simulate_block,
+        redistribute::redistribution_algo::{
+            IncludedOrderData, RedistributionCalculator, RedistributionIdentityData,
+            RedistributionResult,
+        },
+        restore_landed_orders::{
+            restore_landed_orders, sim_historical_block, ExecutedBlockTx, LandedOrderData,
+            SimplifiedOrder,
+        },
+        BlockData, BuiltBlockData, OrdersWithTimestamp,
+    },
+    live_builder::cli::LiveBuilderConfig,
+    primitives::{Order, OrderId},
+    provider::StateProviderFactory,
+    utils::{signed_uint_delta, u256decimal_serde_helper},
 };
-use crate::backtest::restore_landed_orders::{
-    restore_landed_orders, sim_historical_block, ExecutedBlockTx, LandedOrderData, SimplifiedOrder,
-};
-use crate::backtest::{BlockData, BuiltBlockData, OrdersWithTimestamp};
-use crate::live_builder::cli::LiveBuilderConfig;
-use crate::primitives::{Order, OrderId};
-use crate::utils::signed_uint_delta;
-use crate::utils::u256decimal_serde_helper;
 use ahash::{HashMap, HashSet};
-use alloy_primitives::utils::format_ether;
-use alloy_primitives::{Address, B256, I256, U256};
+use alloy_primitives::{utils::format_ether, Address, B256, I256, U256};
 pub use cli::run_backtest_redistribute;
 use rayon::prelude::*;
 use reth_chainspec::ChainSpec;
@@ -23,8 +28,10 @@ use reth_db::DatabaseEnv;
 use reth_provider::ProviderFactory;
 use revm_primitives::ChainAddress;
 use serde::{Deserialize, Serialize};
-use std::cmp::{max, min};
-use std::sync::Arc;
+use std::{
+    cmp::{max, min},
+    sync::Arc,
+};
 use tracing::{debug, info, info_span, trace, warn};
 use uuid::Uuid;
 
@@ -112,12 +119,16 @@ pub struct RedistributionBlockOutput {
     pub joint_contribution: Vec<JointContributionData>,
 }
 
-pub fn calc_redistributions<ConfigType: LiveBuilderConfig + Send + Sync>(
-    provider_factory: ProviderFactory<Arc<DatabaseEnv>>,
+pub fn calc_redistributions<P, ConfigType>(
+    provider: P,
     config: &ConfigType,
     block_data: BlockData,
     distribute_to_mempool_txs: bool,
-) -> eyre::Result<RedistributionBlockOutput> {
+) -> eyre::Result<RedistributionBlockOutput>
+where
+    P: StateProviderFactory + Clone + 'static,
+    ConfigType: LiveBuilderConfig,
+{
     let _block_span = info_span!("block", block = block_data.block_number).entered();
     let protect_signers = config.base_config().backtest_protect_bundle_signers.clone();
 
@@ -127,7 +138,7 @@ pub fn calc_redistributions<ConfigType: LiveBuilderConfig + Send + Sync>(
         get_available_orders(&block_data, &built_block_data, distribute_to_mempool_txs);
 
     let restored_landed_orders = restore_available_landed_orders(
-        provider_factory.clone(),
+        provider.clone(),
         config.base_config().chain_spec()?,
         &block_data,
         &included_orders_available,
@@ -141,10 +152,10 @@ pub fn calc_redistributions<ConfigType: LiveBuilderConfig + Send + Sync>(
     );
 
     let results_without_exclusion =
-        calculate_backtest_without_exclusion(provider_factory.clone(), config, block_data.clone())?;
+        calculate_backtest_without_exclusion(provider.clone(), config, block_data.clone())?;
 
     let exclusion_results = calculate_backtest_identity_and_order_exclusion(
-        provider_factory.clone(),
+        provider.clone(),
         config,
         block_data.clone(),
         &available_orders,
@@ -152,12 +163,13 @@ pub fn calc_redistributions<ConfigType: LiveBuilderConfig + Send + Sync>(
     )?;
 
     let exclusion_results = calc_joint_exclusion_results(
-        provider_factory.clone(),
+        provider.clone(),
         config,
         block_data.clone(),
         &available_orders,
         &results_without_exclusion,
         exclusion_results,
+        distribute_to_mempool_txs,
     )?;
 
     let calculated_redistribution_result = apply_redistribution_formula(
@@ -258,14 +270,17 @@ fn get_available_orders(
     included_orders_available
 }
 
-fn restore_available_landed_orders(
-    provider_factory: ProviderFactory<Arc<DatabaseEnv>>,
+fn restore_available_landed_orders<P>(
+    provider: P,
     chain_spec: Arc<ChainSpec>,
     block_data: &BlockData,
     included_orders_available: &[OrdersWithTimestamp],
-) -> eyre::Result<HashMap<OrderId, LandedOrderData>> {
+) -> eyre::Result<HashMap<OrderId, LandedOrderData>>
+where
+    P: StateProviderFactory + Clone + 'static,
+{
     let block_txs = sim_historical_block(
-        provider_factory.clone(),
+        provider.clone(),
         chain_spec,
         block_data.onchain_block.clone(),
     )?
@@ -462,18 +477,22 @@ impl ResultsWithoutExclusion {
     }
 }
 
-fn calculate_backtest_without_exclusion<ConfigType: LiveBuilderConfig>(
-    provider_factory: ProviderFactory<Arc<DatabaseEnv>>,
+fn calculate_backtest_without_exclusion<P, ConfigType>(
+    provider: P,
     config: &ConfigType,
     block_data: BlockData,
-) -> eyre::Result<ResultsWithoutExclusion> {
+) -> eyre::Result<ResultsWithoutExclusion>
+where
+    P: StateProviderFactory + Clone + 'static,
+    ConfigType: LiveBuilderConfig,
+{
     let ExclusionResult {
         profit,
         new_orders_failed: orders_failed,
         new_orders_included: orders_included,
         ..
     } = calc_profit_after_exclusion(
-        provider_factory.clone(),
+        provider.clone(),
         config,
         &block_data,
         ExclusionInput {
@@ -521,13 +540,17 @@ impl ExclusionResults {
     }
 }
 
-fn calculate_backtest_identity_and_order_exclusion<ConfigType: LiveBuilderConfig + Sync>(
-    provider_factory: ProviderFactory<Arc<DatabaseEnv>>,
+fn calculate_backtest_identity_and_order_exclusion<P, ConfigType>(
+    provider: P,
     config: &ConfigType,
     block_data: BlockData,
     available_orders: &AvailableOrders,
     results_without_exclusion: &ResultsWithoutExclusion,
-) -> eyre::Result<ExclusionResults> {
+) -> eyre::Result<ExclusionResults>
+where
+    P: StateProviderFactory + Clone + 'static,
+    ConfigType: LiveBuilderConfig,
+{
     let included_orders_exclusion = {
         let mut result = Vec::new();
         let mut included_orders_exclusions =
@@ -548,7 +571,7 @@ fn calculate_backtest_identity_and_order_exclusion<ConfigType: LiveBuilderConfig
             .map(|(id, exclusions)| {
                 trace!(order = ?id, excluding = ?exclusions, "Excluding orders for landed order");
                 calc_profit_after_exclusion(
-                    provider_factory.clone(),
+                    provider.clone(),
                     config,
                     &block_data,
                     results_without_exclusion.exclusion_input(exclusions),
@@ -569,7 +592,7 @@ fn calculate_backtest_identity_and_order_exclusion<ConfigType: LiveBuilderConfig
                 .clone();
             trace!(identity = ?address, excluding = ?orders, "Excluding orders for identity");
             calc_profit_after_exclusion(
-                provider_factory.clone(),
+                provider.clone(),
                 config,
                 &block_data,
                 results_without_exclusion.exclusion_input(orders),
@@ -585,14 +608,19 @@ fn calculate_backtest_identity_and_order_exclusion<ConfigType: LiveBuilderConfig
     })
 }
 
-fn calc_joint_exclusion_results<ConfigType: LiveBuilderConfig + Sync>(
-    provider_factory: ProviderFactory<Arc<DatabaseEnv>>,
+fn calc_joint_exclusion_results<P, ConfigType>(
+    provider: P,
     config: &ConfigType,
     block_data: BlockData,
     available_orders: &AvailableOrders,
     results_without_exclusion: &ResultsWithoutExclusion,
     mut exclusion_results: ExclusionResults,
-) -> eyre::Result<ExclusionResults> {
+    distribute_to_mempool_txs: bool,
+) -> eyre::Result<ExclusionResults>
+where
+    P: StateProviderFactory + Clone + 'static,
+    ConfigType: LiveBuilderConfig,
+{
     // calculate identities that are possibly connected
     let mut joint_contribution_todo: Vec<(Address, Address)> = Vec::new();
     // here we link identities if excluding order by one identity
@@ -611,7 +639,7 @@ fn calc_joint_exclusion_results<ConfigType: LiveBuilderConfig + Sync>(
                     .iter()
                     .map(|(o, _)| o),
             )
-            .filter(|o| !matches!(o, OrderId::Tx(_)));
+            .filter(|o| distribute_to_mempool_txs || !matches!(o, OrderId::Tx(_)));
         for new_failed_order in candidate_conflicting_bundles {
             // we only consider landed <-> landed order conflicts
             if !available_orders
@@ -650,7 +678,7 @@ fn calc_joint_exclusion_results<ConfigType: LiveBuilderConfig + Sync>(
             let orders = orders1.iter().chain(orders2.iter()).cloned().collect();
             trace!(?address1, ?address2, excluding = ?orders, "Calculating joint contribution");
             calc_profit_after_exclusion(
-                provider_factory.clone(),
+                provider.clone(),
                 config,
                 &block_data,
                 results_without_exclusion.exclusion_input(orders),
@@ -671,7 +699,7 @@ fn calc_joint_exclusion_results<ConfigType: LiveBuilderConfig + Sync>(
             .identity_exclusion(address2)
             .block_value_delta;
         if bvd1 + bvd2 > block_value_delta {
-            warn!(address1 = ?address1, address2 = ?address2, "Joint block value delta is smaller than sum of individual block value deltas");
+            warn!(address1 = ?address1, address2 = ?address2, sum = format_ether(bvd1 + bvd2), joint=format_ether(block_value_delta), "Joint block value delta is smaller than sum of individual block value deltas");
         }
     }
 
@@ -916,12 +944,16 @@ struct ExclusionResult {
 }
 
 /// calculate block profit excluding some orders
-fn calc_profit_after_exclusion<ConfigType: LiveBuilderConfig>(
-    provider_factory: ProviderFactory<Arc<DatabaseEnv>>,
+fn calc_profit_after_exclusion<P, ConfigType>(
+    provider: P,
     config: &ConfigType,
     block_data: &BlockData,
     exclusion_input: ExclusionInput,
-) -> eyre::Result<ExclusionResult> {
+) -> eyre::Result<ExclusionResult>
+where
+    P: StateProviderFactory + Clone + 'static,
+    ConfigType: LiveBuilderConfig,
+{
     let block_data_with_excluded = {
         let mut block_data = block_data.clone();
         block_data
@@ -949,13 +981,13 @@ fn calc_profit_after_exclusion<ConfigType: LiveBuilderConfig>(
 
     let result = backtest_simulate_block(
         block_data_with_excluded,
-        provider_factory.clone(),
+        provider.clone(),
         base_config.chain_spec()?,
         built_block_lag_ms,
         base_config.backtest_builders.clone(),
         config,
         base_config.blocklist()?,
-        &base_config.sbundle_mergeabe_signers(),
+        &base_config.sbundle_mergeable_signers(),
     )?
     .builder_outputs
     .into_iter()

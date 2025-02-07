@@ -2,8 +2,7 @@ use super::{BundleErr, ExecutionError, ExecutionResult, OrderErr};
 use crate::primitives::{Order, OrderId, OrderReplacementKey};
 use ahash::{HashMap, HashSet};
 use alloy_primitives::{Address, TxHash, U256};
-use std::collections::hash_map;
-use std::time::Duration;
+use std::{collections::hash_map, time::Duration};
 use time::OffsetDateTime;
 
 /// Structs for recording data about a built block, such as what bundles were included, and where txs came from.
@@ -22,6 +21,7 @@ pub struct BuiltBlockTrace {
     pub orders_sealed_at: OffsetDateTime,
     pub fill_time: Duration,
     pub finalize_time: Duration,
+    pub root_hash_time: Duration,
 }
 
 impl Default for BuiltBlockTrace {
@@ -55,13 +55,13 @@ impl BuiltBlockTrace {
             orders_sealed_at: OffsetDateTime::now_utc(),
             fill_time: Duration::from_secs(0),
             finalize_time: Duration::from_secs(0),
+            root_hash_time: Duration::from_secs(0),
         }
     }
 
     /// Should be called after block is sealed
     /// Sets:
     /// orders_sealed_at to the current time
-    /// orders_closed_at to the given time
     pub fn update_orders_sealed_at(&mut self) {
         self.orders_sealed_at = OffsetDateTime::now_utc();
     }

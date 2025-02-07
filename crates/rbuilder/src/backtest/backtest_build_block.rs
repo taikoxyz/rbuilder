@@ -8,14 +8,14 @@
 use ahash::HashMap;
 use alloy_primitives::utils::format_ether;
 
-use crate::backtest::restore_landed_orders::{
-    restore_landed_orders, sim_historical_block, ExecutedBlockTx, ExecutedTxs, SimplifiedOrder,
-};
-use crate::backtest::OrdersWithTimestamp;
 use crate::{
     backtest::{
         execute::{backtest_prepare_ctx_for_block, BacktestBlockInput},
-        BlockData, HistoricalDataStorage,
+        restore_landed_orders::{
+            restore_landed_orders, sim_historical_block, ExecutedBlockTx, ExecutedTxs,
+            SimplifiedOrder,
+        },
+        BlockData, HistoricalDataStorage, OrdersWithTimestamp,
     },
     building::builders::BacktestSimulateBlockInput,
     live_builder::{base_config::load_config_toml_and_env, cli::LiveBuilderConfig},
@@ -58,11 +58,14 @@ struct Cli {
     block: u64,
 }
 
-pub async fn run_backtest_build_block<ConfigType: LiveBuilderConfig>() -> eyre::Result<()> {
+pub async fn run_backtest_build_block<ConfigType>() -> eyre::Result<()>
+where
+    ConfigType: LiveBuilderConfig,
+{
     let cli = Cli::parse();
 
     let config: ConfigType = load_config_toml_and_env(cli.config)?;
-    config.base_config().setup_tracing_subsriber()?;
+    config.base_config().setup_tracing_subscriber()?;
 
     let block_data = read_block_data(
         &config.base_config().backtest_fetch_output_file,
@@ -85,12 +88,8 @@ pub async fn run_backtest_build_block<ConfigType: LiveBuilderConfig>() -> eyre::
         print_order_and_timestamp(&block_data.available_orders, &block_data);
     }
 
-    let provider_factory = config
-        .base_config()
-        .provider_factory()?
-        .provider_factory_unchecked();
+    let provider_factory = config.base_config().create_provider_factory()?;
     let chain_spec = config.base_config().chain_spec()?;
-    let sbundle_mergeabe_signers = config.base_config().sbundle_mergeabe_signers();
 
     if cli.sim_landed_block {
         let tx_sim_results = sim_historical_block(
@@ -109,6 +108,7 @@ pub async fn run_backtest_build_block<ConfigType: LiveBuilderConfig>() -> eyre::
         chain_spec.clone(),
         cli.block_building_time_ms,
         config.base_config().blocklist()?,
+        &config.base_config().sbundle_mergeable_signers(),
         config.base_config().coinbase_signer()?,
     )?;
 
@@ -124,9 +124,8 @@ pub async fn run_backtest_build_block<ConfigType: LiveBuilderConfig>() -> eyre::
                 let input = BacktestSimulateBlockInput {
                     ctx: ctx.clone(),
                     builder_name: builder_name.clone(),
-                    sbundle_mergeabe_signers: sbundle_mergeabe_signers.clone(),
                     sim_orders: &sim_orders,
-                    provider_factory: provider_factory.clone(),
+                    provider: provider_factory.clone(),
                     cached_reads: None,
                 };
                 let build_res = config.build_backtest_block(builder_name, input);
@@ -300,15 +299,11 @@ fn print_simulated_orders(
             timestamp_ms_to_slot_time(order_timestamp, timestamp_as_u64(&block_data.onchain_block));
 
         println!(
-            "{:>74} slot_time_ms: {:>8}, gas: {:>8} profit: {}, parent: {}",
+            "{:>74} slot_time_ms: {:>8}, gas: {:>8} profit: {}",
             order.order.id().to_string(),
             slot_time_ms,
             order.sim_value.gas_used,
             format_ether(order.sim_value.coinbase_profit),
-            order
-                .prev_order
-                .map(|prev_order| prev_order.to_string())
-                .unwrap_or_else(String::new)
         );
     }
     println!();

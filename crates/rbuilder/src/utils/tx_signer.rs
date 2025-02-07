@@ -1,13 +1,13 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, PrimitiveSignature as Signature, B256, U256};
 use reth_primitives::{
-    public_key_to_address, Signature, Transaction, TransactionSigned, TransactionSignedEcRecovered,
+    public_key_to_address, Transaction, TransactionSigned, TransactionSignedEcRecovered,
 };
 use revm_primitives::ChainAddress;
 use secp256k1::{Message, SecretKey, SECP256K1};
 
 /// Simple struct to sign txs/messages.
 /// Mainly used to sign payout txs from the builder and to create test data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signer {
     pub address: ChainAddress,
     pub secret: SecretKey,
@@ -27,11 +27,11 @@ impl Signer {
             .sign_ecdsa_recoverable(&Message::from_digest_slice(&message[..])?, &self.secret);
         let (rec_id, data) = s.serialize_compact();
 
-        let signature = Signature {
-            r: U256::try_from_be_slice(&data[..32]).expect("The slice has at most 32 bytes"),
-            s: U256::try_from_be_slice(&data[32..64]).expect("The slice has at most 32 bytes"),
-            odd_y_parity: rec_id.to_i32() != 0,
-        };
+        let signature = Signature::new(
+            U256::try_from_be_slice(&data[..32]).expect("The slice has at most 32 bytes"),
+            U256::try_from_be_slice(&data[32..64]).expect("The slice has at most 32 bytes"),
+            rec_id.to_i32() != 0,
+        );
         Ok(signature)
     }
 
@@ -55,9 +55,8 @@ impl Signer {
 #[cfg(test)]
 mod test {
     use super::*;
-    use alloy_primitives::{address, fixed_bytes};
-    use reth_primitives::{TxEip1559, TxKind as TransactionKind};
-
+    use alloy_consensus::TxEip1559;
+    use alloy_primitives::{address, fixed_bytes, TxKind as TransactionKind};
     #[test]
     fn test_sign_transaction() {
         let secret =

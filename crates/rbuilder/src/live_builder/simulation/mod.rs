@@ -8,12 +8,13 @@ use crate::{
     },
     live_builder::order_input::orderpool::OrdersForBlock,
     primitives::{OrderId, SimulatedOrder},
-    utils::{gen_uid, ProviderFactoryReopener},
+    provider::StateProviderFactory,
+    utils::{gen_uid, Signer},
 };
 use ahash::HashMap;
-use reth_db::database::Database;
+use parking_lot::Mutex;
 use simulation_job::SimulationJob;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, Instrument};
@@ -49,8 +50,8 @@ pub struct CurrentSimulationContexts {
 /// 4 IMPORTANT: When done with the simulations signal the provided block_cancellation.
 
 #[derive(Debug)]
-pub struct OrderSimulationPool<DB> {
-    provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
+pub struct OrderSimulationPool<P> {
+    provider: HashMap<u64, P>,
     running_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
     current_contexts: Arc<Mutex<CurrentSimulationContexts>>,
     worker_threads: Vec<std::thread::JoinHandle<()>>,
@@ -65,14 +66,13 @@ pub enum SimulatedOrderCommand {
     Cancellation(OrderId),
 }
 
-impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
-    pub fn new(
-        provider_factory: HashMap<u64, ProviderFactoryReopener<DB>>,
-        num_workers: usize,
-        global_cancellation: CancellationToken,
-    ) -> Self {
+impl<P> OrderSimulationPool<P>
+where
+    P: StateProviderFactory + Clone + 'static,
+{
+    pub fn new(provider: HashMap<u64, P>, num_workers: usize, global_cancellation: CancellationToken) -> Self {
         let mut result = Self {
-            provider_factory,
+            provider,
             running_tasks: Arc::new(Mutex::new(Vec::new())),
             current_contexts: Arc::new(Mutex::new(CurrentSimulationContexts {
                 contexts: HashMap::default(),
@@ -81,7 +81,7 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
         };
         for i in 0..num_workers {
             let ctx = Arc::clone(&result.current_contexts);
-            let provider = result.provider_factory.clone();
+            let provider = result.provider.clone();
             let cancel = global_cancellation.clone();
             let handle = std::thread::Builder::new()
                 .name(format!("sim_thread:{}", i))
@@ -95,7 +95,7 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
     }
 
     /// Prepares the context to run a SimulationJob and spawns a task with it.
-    /// The returned SlotOrderSimResults can be polled to the the simulation stream.
+    /// The returned SlotOrderSimResults can be polled to the simulation stream.
     /// IMPORTANT: By calling spawn_simulation_job we lock some worker threads on the given block.
     ///     When we are done we MUST call block_cancellation so the threads can be freed for the next block.
     /// @Pending: Not properly working to be used with several blocks at the same time (forks!).
@@ -109,6 +109,16 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
 
         let providers: HashMap<u64, _> = self.provider_factory.iter().map(|(chain_id, factory)| (*chain_id, factory.provider_factory_unchecked())).collect();
 
+        let ctx = {
+            // use random coinbase for simulations to make top of the block simulation bypass harder
+            let mut ctx = ctx;
+            let signer = Signer::random();
+            ctx.block_env.coinbase = signer.address;
+            ctx.builder_signer = Some(signer);
+            ctx
+        };
+
+        let provider = self.provider.clone();
         let current_contexts = Arc::clone(&self.current_contexts);
         let block_context: BlockContextId = gen_uid();
         //let span = info_span!("sim_ctx", block = ctx.block_env.number.to::<u64>(), parent = ?ctx.attributes.parent);
@@ -117,11 +127,12 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
             async move {
                 for (_chain_id, new_order_sub) in input {
                     let sim_tree = SimTree::new(providers.clone(), ctx.chains.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect());
-                    let new_order_sub = new_order_sub.new_order_sub;
+                    let sim_tree = SimTree::new(provider, ctx.attributes.parent);
+                    let new_order_sub = input.new_order_sub;
                     let (sim_req_sender, sim_req_receiver) = flume::unbounded();
                     let (sim_results_sender, sim_results_receiver) = mpsc::channel(1024);
                     {
-                        let mut contexts = current_contexts.lock().unwrap();
+                        let mut contexts = current_contexts.lock();
                         let sim_context = SimulationContext {
                             block_ctx: ctx.clone(),
                             requests: sim_req_receiver,
@@ -140,19 +151,18 @@ impl<DB: Database + Clone + Send + 'static> OrderSimulationPool<DB> {
 
                     simulation_job.run().await;
 
-                    // clean up
-                    {
-                        let mut contexts = current_contexts.lock().unwrap();
-                        contexts.contexts.remove(&block_context);
-                    }
+                // clean up
+                {
+                    let mut contexts = current_contexts.lock();
+                    contexts.contexts.remove(&block_context);
                 }
             }
+        }
             //.instrument(span)
-            ,
-        );
+            ,);
 
         {
-            let mut tasks = self.running_tasks.lock().unwrap();
+            let mut tasks = self.running_tasks.lock();
             tasks.retain(|handle| !handle.is_finished());
             tasks.push(handle);
         }
@@ -170,9 +180,10 @@ mod tests {
         building::testing::test_chain_state::{BlockArgs, NamedAddr, TestChainState, TxArgs},
         live_builder::order_input::order_sink::OrderPoolCommand,
         primitives::{MempoolTx, Order, TransactionSignedEcRecoveredWithBlobs},
+        utils::ProviderFactoryReopener,
     };
     use reth_evm::provider;
-    use reth_primitives::U256;
+    use alloy_primitives::U256;
 
     #[tokio::test]
     async fn test_simulate_order_to_coinbase() {
@@ -180,8 +191,9 @@ mod tests {
 
         // Create simulation core
         let cancel = CancellationToken::new();
-        let provider_factory_reopener = ProviderFactoryReopener::new_from_existing_for_testing(
+        let provider_factory_reopener = ProviderFactoryReopener::new_from_existing(
             test_context.provider_factory().clone(),
+            None,
         )
         .unwrap();
 

@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use reth_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 
 use crate::{
     primitives::{
@@ -173,7 +173,6 @@ impl<TestedSinkType: SimulatedOrderSink> TestContext<TestedSinkType> {
         SimulatedOrder {
             order,
             sim_value,
-            prev_order: None,
             used_state_trace: None,
         }
     }
