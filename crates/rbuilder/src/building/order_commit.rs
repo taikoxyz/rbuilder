@@ -24,6 +24,7 @@ use revm::{
     db::{states::bundle_state::BundleRetention, BundleState},
     inspector_handle_register,
     primitives::{db::WrapDatabaseRef, EVMError, Env, ExecutionResult, InvalidTransaction, TxEnv}, DatabaseCommit, State, SyncDatabase as Database,
+    interpreter::primitives::StateChanges,
 };
 use revm_primitives::ChainAddress;
 
@@ -201,6 +202,7 @@ pub struct TransactionOk {
     /// account nonce was 0, tx was included, nonce is 1. => nonce_updated.1 == 1
     pub nonce_updated: (Address, u64),
     pub receipt: Receipt,
+    pub state_changes: StateChanges,
 }
 
 #[derive(Error, Debug, Eq, PartialEq)]
@@ -228,6 +230,7 @@ pub struct BundleOk {
     /// nonces_updates has a set of deduplicated final nonces of the txs in the order
     pub nonces_updated: Vec<(Address, u64)>,
     pub receipts: Vec<Receipt>,
+    pub state_changes: Vec<StateChanges>,
     pub paid_kickbacks: Vec<(Address, U256)>,
     /// Only for sbundles we accumulate ShareBundleInner::original_order_id that executed ok.
     /// Its original use is for only one level or orders with original_order_id but if nesting happens the parent order original_order_id goes before its children (pre-order DFS)
@@ -293,6 +296,7 @@ pub struct OrderOk {
     /// nonces_updates has a set of deduplicated final nonces of the txs in the order
     pub nonces_updated: Vec<(Address, u64)>,
     pub receipts: Vec<Receipt>,
+    pub state_changes: Vec<StateChanges>,
     pub paid_kickbacks: Vec<(Address, U256)>,
     pub used_state_trace: Option<UsedStateTrace>,
 }
@@ -458,6 +462,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
 
             let mut env = env.clone();
             env.cfg.chain_id = tx.chain_id().unwrap();
+            env.cfg.xchain = true;
             //println!("active remv chain_id: {}", env.cfg.chain_id);
 
             let mut evm = revm::Evm::builder()
@@ -572,6 +577,8 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             logs: res.result.logs().to_vec(),
         };
 
+        let state_changes = res.result.state_changes();
+
         // if !res.result.is_success() {
         //     println!("tx reverted with reason: {:?}", res.result);
         // }
@@ -586,6 +593,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             tx: tx_with_blobs.clone(),
             nonce_updated: (tx.signer(), tx.nonce() + 1),
             receipt,
+            state_changes,
         }))
     }
 
@@ -656,6 +664,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             txs: Vec::new(),
             nonces_updated: Vec::new(),
             receipts: Vec::new(),
+            state_changes: Vec::new(),
             paid_kickbacks: Vec::new(),
             original_order_ids: Vec::new(),
         };
@@ -684,6 +693,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                     insert.txs.push(res.tx);
                     update_nonce_list(&mut insert.nonces_updated, res.nonce_updated);
                     insert.receipts.push(res.receipt);
+                    insert.state_changes.push(res.state_changes);
                 }
                 Err(err) => {
                     // if optional transaction, skip
@@ -829,6 +839,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                     insert.txs.push(res.tx);
                     update_nonce_list(&mut insert.nonces_updated, res.nonce_updated);
                     insert.receipts.push(res.receipt);
+                    insert.state_changes.push(res.state_changes);
                     insert.paid_kickbacks.push((to, value));
                 }
                 Err(err) => {
@@ -892,6 +903,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
             txs: Vec::new(),
             nonces_updated: Vec::new(),
             receipts: Vec::new(),
+            state_changes: Vec::new(),
             paid_kickbacks: Vec::new(),
             original_order_ids: Vec::new(),
         };
@@ -951,6 +963,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                             insert.txs.push(res.tx);
                             update_nonce_list(&mut insert.nonces_updated, res.nonce_updated);
                             insert.receipts.push(res.receipt);
+                            insert.state_changes.push(res.state_changes);
                         }
                         Err(err) => {
                             // if optional transaction, skip
@@ -1002,6 +1015,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                                 res.bundle_ok.nonces_updated,
                             );
                             insert.receipts.extend(res.bundle_ok.receipts);
+                            insert.state_changes.extend(res.bundle_ok.state_changes);
 
                             for (addr, reserve) in res.payouts_promissed {
                                 inner_payouts
@@ -1168,6 +1182,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                             txs: vec![ok.tx],
                             nonces_updated: vec![ok.nonce_updated],
                             receipts: vec![ok.receipt],
+                            state_changes: vec![ok.state_changes],
                             paid_kickbacks: Vec::new(),
                             used_state_trace: self.get_used_state_trace(),
                             original_order_ids: Vec::new(),
@@ -1208,6 +1223,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                             txs: ok.txs,
                             nonces_updated: ok.nonces_updated,
                             receipts: ok.receipts,
+                            state_changes: ok.state_changes,
                             paid_kickbacks: ok.paid_kickbacks,
                             used_state_trace: self.get_used_state_trace(),
                             original_order_ids: ok.original_order_ids,
@@ -1248,6 +1264,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                             txs: ok.txs,
                             nonces_updated: ok.nonces_updated,
                             receipts: ok.receipts,
+                            state_changes: ok.state_changes,
                             paid_kickbacks: ok.paid_kickbacks,
                             used_state_trace: self.get_used_state_trace(),
                             original_order_ids: ok.original_order_ids,

@@ -14,7 +14,7 @@ pub use block_orders::BlockOrders;
 use eth_sparse_mpt::SparseTrieSharedCache;
 use reth_primitives::{proofs::calculate_requests_root, Requests};
 use reth_provider::execution_outcome_to_state_diff;
-use revm_primitives::{Bytes, ChainAddress, B256};
+use revm_primitives::{create_state_diff, Bytes, ChainAddress, B256};
 
 use crate::{
     primitives::{Order, OrderId, SimValue, SimulatedOrder, TransactionSignedEcRecoveredWithBlobs},
@@ -47,6 +47,7 @@ use reth_payload_builder::{database::SyncCachedReads as CachedReads, EthPayloadB
 use revm::{
     db::states::{bundle_state::BundleRetention::{self, PlainState}, reverts::Reverts},
     primitives::{BlobExcessGasAndPrice, BlockEnv, CfgEnvWithHandlerCfg, SpecId}, TransitionState,
+    interpreter::primitives::StateChanges,
 };
 use serde::Deserialize;
 use std::{hash::Hash, str::FromStr, sync::Arc, thread::sleep, time::Duration};
@@ -63,7 +64,7 @@ pub use order_commit::*;
 pub use payout_tx::*;
 pub use sim::simulate_order;
 
-pub const MAX_CALLDATA_LEN: u64 = 128000;
+pub const MAX_CALLDATA_LEN: u64 = 256000;
 
 #[derive(Debug, Clone)]
 pub struct BlockBuildingContext {
@@ -429,6 +430,7 @@ pub struct PartialBlock<Tracer: SimulationTracer> {
     pub executed_tx: Vec<TransactionSignedEcRecoveredWithBlobs>,
     /// Receipts belonging to successfully executed orders.
     pub receipts: Vec<Receipt>,
+    pub state_changes: Vec<StateChanges>,
     pub tracer: Tracer,
 }
 
@@ -443,6 +445,7 @@ pub struct ExecutionResult {
     /// Fully dropped orders (TxRevertBehavior::AllowedExcluded allows it!) are not included.
     pub original_order_ids: Vec<OrderId>,
     pub receipts: Vec<Receipt>,
+    pub state_changes: Vec<StateChanges>,
     pub nonces_updated: Vec<(Address, u64)>,
     pub paid_kickbacks: Vec<(Address, U256)>,
 }
@@ -541,6 +544,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             coinbase_profit: self.coinbase_profit,
             executed_tx: self.executed_tx,
             receipts: self.receipts,
+            state_changes: self.state_changes,
             tracer,
         }
     }
@@ -607,6 +611,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         self.coinbase_profit += ok_result.coinbase_profit;
         self.executed_tx.extend(ok_result.txs.clone());
         self.receipts.extend(ok_result.receipts.clone());
+        self.state_changes.extend(ok_result.state_changes.clone());
 
         //println!("self.executed_tx num: {:?}", self.executed_tx.len());
         //println!("self.executed_tx: {:?}", self.executed_tx);
@@ -619,6 +624,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             txs: ok_result.txs,
             original_order_ids: ok_result.original_order_ids,
             receipts: ok_result.receipts,
+            state_changes: ok_result.state_changes,
             nonces_updated: ok_result.nonces_updated,
             paid_kickbacks: ok_result.paid_kickbacks,
         }))
@@ -680,6 +686,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         self.blob_gas_used += ok_result.blob_gas_used;
         self.executed_tx.push(ok_result.tx);
         self.receipts.push(ok_result.receipt);
+        self.state_changes.push(ok_result.state_changes);
 
         //println!("self.executed_tx num: {:?}", self.executed_tx.len());
         //println!("self.executed_tx: {:?}", self.executed_tx);
@@ -828,6 +835,15 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             }
         }
 
+        let state_changes = StateChanges {
+            entries: self.state_changes.iter().cloned().map(|s| s.entries).collect::<Vec<_>>().into_iter().flatten().collect(),
+        };
+
+        let l1_state_diff = create_state_diff(state_changes, super_ctx.parent_chain_id);
+
+        //println!("state_changes [{:?}] ({:?}): {:?}", self.executed_tx.len(), self.state_changes.len(), self.state_changes);
+        //println!("l1_state_diff: {:?}", l1_state_diff);
+
         let mut blocks = HashMap::default();
         for chain_id in chain_ids {
             let mut execution_outcome = execution_outcome.filter_chain(chain_id);
@@ -906,7 +922,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
                 let sealed_block = block.seal_slow();
 
-                sleep(Duration::from_millis(10));
+                sleep(Duration::from_millis(100));
 
                 println!("[{}] chain {} calculated block hash: {:?}", super_ctx.block(), chain_id, sealed_block.hash());
 
@@ -914,7 +930,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             }
         }
 
-        let extra_data = Bytes::from(bincode::serialize(&(execution_outcome, blocks)).unwrap());
+        let extra_data = Bytes::from(bincode::serialize(&(execution_outcome, l1_state_diff, blocks)).unwrap());
 
         let header = Header {
             parent_hash: ctx.attributes.parent,
@@ -1003,6 +1019,7 @@ impl PartialBlock<()> {
             coinbase_profit: U256::ZERO,
             executed_tx: Vec::new(),
             receipts: Vec::new(),
+            state_changes: Vec::new(),
             tracer: (),
         }
     }
