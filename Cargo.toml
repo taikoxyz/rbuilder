@@ -50,6 +50,9 @@ revm-inspectors = "0.6"
 revm-primitives = { version = "9.0.0", features = [
     "std",
 ], default-features = false }
+revm-interpreter = { version = "9.0.0", features = [
+    "std",
+], default-features = false }
 
 ethereum_ssz_derive = "0.7"
 ethereum_ssz = "0.7"

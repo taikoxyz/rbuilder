@@ -7,6 +7,7 @@ use alloy_primitives::{hex, Bytes, FixedBytes};
 use alloy_provider::{IpcConnect, Provider, ProviderBuilder, RootProvider};
 use alloy_pubsub::PubSubFrontend;
 use futures::StreamExt;
+use revm_primitives::{address, ChainAddress};
 use std::{pin::pin, time::Instant};
 use tokio::{
     sync::{mpsc, mpsc::error::SendTimeoutError},
@@ -44,11 +45,6 @@ pub async fn subscribe_to_txpool_with_blobs(
         while let Some(tx_hash) = stream.next().await {
             println!("New tx arrived on {:?}!", config.ipc_path);
 
-            // TODO: Skip L1 transactions for now because circular
-            if config.ipc_path.to_str().unwrap() == "/tmp/reth.ipc" {
-                println!("skipping!");
-                continue;
-            }
             let start = Instant::now();
 
             let tx_with_blobs = match get_tx_with_blobs(tx_hash, &provider).await {
@@ -67,6 +63,14 @@ pub async fn subscribe_to_txpool_with_blobs(
                     continue;
                 }
             };
+
+            // TODO: Skip propose transactions from the proposer
+            if config.ipc_path.to_str().unwrap() == "/tmp/reth.ipc" &&
+                tx_with_blobs.signer() == address!("E25583099BA105D9ec0A67f5Ae86D90e50036425") &&
+                tx_with_blobs.to().unwrap_or_default() == address!("9fCF7D13d10dEdF17d0f24C62f0cf4ED462f65b7") {
+                println!("skipping! {:?} from {:?}", tx_hash, tx_with_blobs.signer());
+                continue;
+            }
 
             let tx = MempoolTx::new(tx_with_blobs);
 

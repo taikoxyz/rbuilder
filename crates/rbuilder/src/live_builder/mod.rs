@@ -271,7 +271,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
             inc_active_slots();
 
             println!("Dani debug: build block context");
-            let block_ctx = ChainBlockBuildingContext::from_attributes(
+            let parent_block_ctx = ChainBlockBuildingContext::from_attributes(
                 payload.payload_attributes_event.clone(),
                 &parent_header,
                 self.coinbase_signer.clone(),
@@ -310,7 +310,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                 }
 
                 println!("setting up {}", chain_id);
-                let mut block_ctx = block_ctx.clone();
+                let mut block_ctx = parent_block_ctx.clone();
                 let mut chain_spec = (*block_ctx.chain_spec).clone();
                 println!("chain spec chain id: {}", chain_spec.chain.id());
                 if chain_spec.chain.id() != chain_id {
@@ -338,6 +338,7 @@ impl<DB: Database + Clone + 'static, BuilderSourceType: SlotSource>
                         //block_ctx.block_env.difficulty = U256::ZERO;
                         //block_ctx.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(0));
                         block_ctx.block_env.coinbase = ChainAddress(chain_id, block_ctx.block_env.coinbase.1);
+                        block_ctx.initialized_cfg.parent_chain_id = Some(parent_block_ctx.chain_spec.chain().id());
                     } else {
                         println!("failed to get latest block for {}", chain_id);
                     }
