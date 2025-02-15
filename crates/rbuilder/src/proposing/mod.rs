@@ -7,11 +7,12 @@ use alloy_signer_local::PrivateKeySigner;
 //use alloy_sol_types::{sol, SolCall};
 use eyre::Result;
 //use revm_primitives::{Address, B256, U256};
-use alloy_primitives::{B256, U256, Address};
+use alloy_primitives::{B256, U256, I256, Address};
 use reth_primitives::{SealedBlock, TransactionSigned};
 use reth_provider::{execution_outcome_to_state_diff, ExecutionOutcome};
 use revm::precompile::xcalloptions;
-use revm_primitives::{address, Bytes, StateDiff};
+use revm_primitives::{address, AccessList, Bytes, StateDiff};
+use sha2::digest::typenum::UInt;
 //use revm_primitives::address;
 use url::Url;
 //use crate::mev_boost::{SubmitBlockRequest};
@@ -64,6 +65,12 @@ sol! {
     }
 
     #[derive(Debug)]
+    struct StateDiffAccount {
+        StateDiffStorageSlot[] storageSlots;
+        uint balanceChange;
+    }
+
+    #[derive(Debug)]
     struct StateDiffStorageSlot {
         bytes32 key;
         bytes32 value;
@@ -96,7 +103,7 @@ sol! {
     }
 
     contract GwynethContract {
-        function applyStateDelta(StateDiffStorageSlot[] calldata slots) external;
+        function applyStateDelta(StateDiffAccount calldata accountChanges) external payable;
     }
 }
 
@@ -130,16 +137,10 @@ impl BlockProposer {
         println!("propose_block in L1 block {} (block gas used: {})", block_idx, request.bid_trace().gas_used);
 
         // Create the transaction data
-        let (meta, num_txs) = self.create_propose_block_tx_data(&execution_payload)?;
+        let (meta, num_txs, EOAs) = self.create_propose_block_tx_data(&execution_payload)?;
 
         let propose_data = Rollup::proposeBlockCall { data: vec![meta.clone()] };
         let propose_data = propose_data.abi_encode();
-
-        // if num_txs == 1 {
-        //     println!("skip propose");
-        //     // If there's only the payout tx, don't propose
-        //     return Ok(());
-        // }
 
         let decoded_transactions: Vec<TransactionSigned> = decode_transactions(&meta.txList);
         //println!("decoded_transactions: {:?}", decoded_transactions);
@@ -178,6 +179,12 @@ impl BlockProposer {
 
         println!("multiplier: {}", multiplier);
 
+        // All the EOA addresses we're gonna create account abstraction accounts for
+        let mut access_list = AccessList::default();
+        for address in EOAs.into_iter() {
+            access_list.add_address(address);
+        }
+
         // Build a transaction to send 100 wei from Alice to Bob.
         // The `from` field is automatically filled to the first signer's address (Alice).
         let tx = TransactionRequest::default()
@@ -188,26 +195,8 @@ impl BlockProposer {
             .with_value(U256::from(0))
             .with_gas_limit(15_000_000)
             .with_max_priority_fee_per_gas(1_000_000_000 * multiplier)
-            .with_max_fee_per_gas(200_000_000_000 * multiplier);
-
-
-        // let mut hasher = DefaultHasher::new();
-        // tx.hash(&mut hasher);
-        // let tx_hash = hasher.finish();
-        // println!("Hash is {:x}!", tx_hash);
-
-        // {
-        //     let mut history = HISTORY.lock().unwrap();
-        //     let slot_history = history.get_mut(&execution_payload.block_number()).unwrap();
-        //     println!("history: {:?}", slot_history);
-        //     if slot_history.contains(&tx_hash) {
-        //         println!("Skipping tx proposal: {:?}", tx_hash);
-        //         return Ok(())
-        //     } else {
-        //         println!("Proposing tx: {:?}", tx_hash);
-        //         slot_history.push(tx_hash);
-        //     }
-        // }
+            .with_max_fee_per_gas(200_000_000_000 * multiplier)
+            .with_access_list(access_list);
 
         // Build the transaction with the provided wallet. Flashbots Protect requires the transaction to
         // be signed locally and send using `eth_sendRawTransaction`.
@@ -230,7 +219,6 @@ impl BlockProposer {
 
         // Wait for the transaction to be included and get the receipt.
         // let receipt = pending_tx.get_receipt().await?;
-
         // println!(
         //     "Transaction included in block {}",
         //     receipt.block_number.expect("Failed to get block number")
@@ -240,7 +228,7 @@ impl BlockProposer {
     }
 
     // The logic to create the transaction (call)data for proposing the block
-    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<(BlockMetadata, usize)> {
+    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<(BlockMetadata, usize, Vec<Address>)> {
         let execution_payload = match execution_payload {
             ExecutionPayload::V2(payload) => {
                 &payload.payload_inner
@@ -272,6 +260,8 @@ impl BlockProposer {
         transactions.encode(&mut tx_list);
         let tx_list_hash = B256::from(alloy_primitives::keccak256(&tx_list));
 
+        let mut EOAs = Vec::new();
+
         //println!("proposing for block: {}", execution_payload.block_number);
         //println!("number of transactions: {}", execution_payload.transactions.len());
         //println!("transactions: {:?}", execution_payload.transactions);
@@ -280,7 +270,7 @@ impl BlockProposer {
         //println!("Block extra data: {:?}", execution_payload.extra_data);
         let (da, l1_block) = if execution_payload.extra_data.len() > 32 {
             //println!("Decoding extra data...");
-            let (execution_outcome, l1_state_diff, blocks): (ExecutionOutcome, StateDiff, HashMap<u64, SealedBlock>) = bincode::deserialize(&execution_payload.extra_data.to_vec()).unwrap();
+            let (_, l1_state_diff, blocks): (ExecutionOutcome, StateDiff, HashMap<u64, SealedBlock>) = bincode::deserialize(&execution_payload.extra_data.to_vec()).unwrap();
 
             println!("l1 state diff: {:?}", l1_state_diff);
 
@@ -330,25 +320,50 @@ impl BlockProposer {
             }
             for entry in l1_state_diff.entries.iter() {
                 match entry {
-                    revm_primitives::StateDiffEntry::Diff { state } => {
-                        for (address, slots) in state.iter() {
+                    revm_primitives::StateDiffEntry::Diff { accounts } => {
+                        for (address, account) in accounts.iter() {
                             let mut onchain_slots = Vec::new();
-                            for slot in slots.iter() {
+                            for slot in account.storage.iter() {
                                 onchain_slots.push(StateDiffStorageSlot {
                                     key: slot.0.clone().into(),
                                     value: slot.1.clone().into(),
                                 });
                             }
 
-                            let apply_state_delta_call = GwynethContract::applyStateDeltaCall {
-                                slots: onchain_slots,
+                            // let (value_to_send, value_to_receive)  = if account.balance_delta > I256::ZERO {
+                            //     (account.balance_delta.unsigned_abs(), U256::ZERO)
+                            // } else {
+                            //     (U256::ZERO, account.balance_delta.unsigned_abs())
+                            // };
+                            // let value_to_send = U256::ZERO;
+                            // let value_to_receive = U256::ZERO;
+                            let (value_to_send, value_to_receive)  = if account.balance_negative {
+                                (U256::ZERO, account.balance_delta)
+                            } else {
+                                (account.balance_delta, U256::ZERO)
                             };
 
-                            l1_block.transactions.push(Transaction {
-                                addr: address.1,
-                                data: Bytes::from(apply_state_delta_call.abi_encode()),
-                                value: U256::ZERO,
-                            });
+                            // If we just have to send ETH, then don't even call the applyStateDelta function
+                            if onchain_slots.len() == 0 && value_to_receive == U256::ZERO && value_to_send > U256::ZERO {
+                                l1_block.transactions.push(Transaction {
+                                    addr: address.1,
+                                    data: Bytes::new(),
+                                    value: value_to_send,
+                                });
+                            } else if onchain_slots.len() > 0 || value_to_receive != U256::ZERO || value_to_send != U256::ZERO {
+                                let apply_state_delta_call = GwynethContract::applyStateDeltaCall {
+                                    accountChanges: StateDiffAccount {
+                                        storageSlots: onchain_slots,
+                                        balanceChange: value_to_receive,
+                                    },
+                                };
+
+                                l1_block.transactions.push(Transaction {
+                                    addr: address.1,
+                                    data: Bytes::from(apply_state_delta_call.abi_encode()),
+                                    value: value_to_send,
+                                });
+                            }
                         }
                     }
                     revm_primitives::StateDiffEntry::XCall { call } => {
@@ -367,6 +382,8 @@ impl BlockProposer {
                             data: Bytes::from(execute_call.abi_encode()),
                             value: U256::ZERO,
                         });
+
+                        EOAs.push(call.input.caller.1);
                     }
                 }
             }
@@ -382,89 +399,6 @@ impl BlockProposer {
         } else {
             (GwynethDA::default(), L1Block { transactions: Vec::new() })
         };
-
-        // L1 changes to apply
-        // let l1_block = if da.chain_das.contains_key(&l1_chain_id) {
-
-        //     let mut buckets = Vec::new();
-        //     let mut bucket_chain_id = 0;
-        //     for tx in transactions.iter() {
-        //         if tx.chain_id().unwrap() != bucket_chain_id {
-        //             buckets.push(Vec::new());
-        //             bucket_chain_id = tx.chain_id().unwrap();
-        //         }
-        //         buckets.last_mut().unwrap().push(tx);
-        //     }
-        //     println!("buckets: {:?}", buckets);
-
-        //     let mut has_l1_tx = false;
-        //     for tx in transactions.iter() {
-        //         if tx.chain_id().unwrap() == l1_chain_id {
-        //             has_l1_tx = true;
-        //         }
-        //     }
-
-        //     let mut transactions = Vec::new();
-
-        //     if has_l1_tx {
-        //         println!("has L1 tx");
-        //         for bucket in buckets.iter() {
-        //             let chain_id = bucket.first().unwrap().chain_id().unwrap();
-        //             if chain_id == l1_chain_id {
-        //                 for tx in bucket.iter() {
-        //                     println!("L1 meta tx: {:?}", tx);
-
-        //                     let delegate_call = DelegateContract::SubCall {
-        //                         data: tx.input().clone(),
-        //                         to: tx.to().unwrap(),
-        //                         value: U256::ZERO,
-        //                     };
-
-        //                     let execute_call = DelegateContract::executeCall {
-        //                         calls: vec![delegate_call],
-        //                     };
-
-        //                     let propose_data = Call {
-        //                         data: Bytes::from(execute_call.abi_encode()),
-        //                         value: U256::ZERO,
-        //                         returnData: Vec::new(),
-        //                     };
-
-        //                     transactions.push(Transaction {
-        //                         addr: address!("e7f1725E7734CE288F8367e1Bb143E90bb3F0512"),
-        //                         slots: Vec::new(),
-        //                         calls: vec![propose_data],
-        //                     });
-        //                 }
-        //             }
-        //         }
-        //     } else {
-        //         println!("no L1 tx");
-        //         let state_diff = da.chain_das.get(&l1_chain_id).clone().unwrap().state_diff.clone().unwrap();
-        //         for account in state_diff.accounts.iter() {
-        //             let mut slots = Vec::new();
-        //             for slot in account.storage.iter() {
-        //                 slots.push(StateDiffStorageSlot {
-        //                     key: slot.key.into(),
-        //                     value: slot.value.into(),
-        //                 });
-        //             }
-        //             transactions.push(Transaction {
-        //                 addr: account.address,
-        //                 slots,
-        //                 calls: Vec::new(),
-        //             });
-        //         }
-        //     }
-
-        //     L1Block {
-        //         transactions
-        //     }
-        // } else {
-        //     L1Block {
-        //         transactions: Vec::new()
-        //     }
-        // };
 
         println!("L1 block: {:?}", l1_block);
 
@@ -499,7 +433,7 @@ impl BlockProposer {
 
         //println!("meta: {:?}", meta);
 
-        Ok((meta, execution_payload.transactions.len()))
+        Ok((meta, execution_payload.transactions.len(), EOAs))
     }
 }
 

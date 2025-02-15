@@ -838,6 +838,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         let state_changes = StateChanges {
             entries: self.state_changes.iter().cloned().map(|s| s.entries).collect::<Vec<_>>().into_iter().flatten().collect(),
         };
+        //println!("L1 state changes: {:?}", state_changes);
 
         let l1_state_diff = create_state_diff(state_changes, super_ctx.parent_chain_id);
 
@@ -846,19 +847,12 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
         let mut blocks = HashMap::default();
         for chain_id in chain_ids {
-            let mut execution_outcome = execution_outcome.filter_chain(chain_id);
+            if chain_id == super_ctx.parent_chain_id {
+                continue;
+            }
 
+            let execution_outcome = execution_outcome.filter_chain(chain_id);
             let mut state_diff = execution_outcome_to_state_diff(&execution_outcome, B256::ZERO, self.gas_used);
-            // Filter out accounts
-            state_diff.accounts = state_diff.clone().accounts.into_iter().filter(|account| account.address != alloy_eips::eip4788::BEACON_ROOTS_ADDRESS && account.address != alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS).collect::<Vec<_>>();
-            if chain_id == super_ctx.parent_chain_id {
-                state_diff.accounts = state_diff.clone().accounts.into_iter().filter(|account| account.address != ctx.block_env.coinbase.1).collect::<Vec<_>>();
-            }
-
-            if chain_id == super_ctx.parent_chain_id {
-                // The reverts will still contain the address but that's fine, we're never going to use that on L1 anyway
-                execution_outcome.bundle.state = execution_outcome.bundle.state.into_iter().filter(|account| account.0.1 != ctx.block_env.coinbase.1).collect();
-            }
 
             // Only make a block for chains that have changes
             if !state_diff.accounts.is_empty() {
@@ -877,6 +871,8 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
                 state_diff.state_root = state_root;
                 state_diff.transactions_root = transactions_root;
                 state_diff.bundle.reverts = reth_provider::merge_reverts(&state_diff.bundle.reverts);
+
+                //println!("state diff {}: {:?}", chain_id, state_diff.bundle.state);
 
                 let extra_data = Bytes::from(bincode::serialize(&state_diff).unwrap());
                 // println!("extra_data: {}", extra_data);
