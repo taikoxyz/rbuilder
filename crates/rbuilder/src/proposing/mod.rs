@@ -1,4 +1,5 @@
 
+use alloy_consensus::{BlobTransactionSidecar, SidecarBuilder, SimpleCoder};
 use alloy_eips::BlockId;
 use alloy_network::{EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
@@ -23,7 +24,8 @@ use alloy_network::eip2718::Encodable2718;
 use std::{collections::HashMap, hash::{DefaultHasher, Hash, Hasher}, str::FromStr};
 use reth_primitives::{GwynethDA, ChainDA};
 use alloy_sol_types::SolValue;
-
+use alloy_primitives::keccak256;
+use alloy_signer::{Signature, Signer, SignerSync};
 use alloy_rpc_types::{TransactionInput, TransactionRequest};
 
 use crate::mev_boost::SubmitBlockRequest;
@@ -31,25 +33,26 @@ use crate::mev_boost::SubmitBlockRequest;
 // Using sol macro to use solidity code here.
 sol! {
     #[derive(Debug)]
-    struct BlockMetadata {
-        bytes32 blockHash;
-        bytes32 parentBlockHash;
-        bytes32 parentMetaHash;
-        bytes32 l1Hash;
-        uint256 difficulty;
-        bytes32 blobHash;
+    struct UltraBlock {
+        bytes32 ultraHash;
+        bytes32 parentUltraHash;
+        bytes32 parentL1BlockHash;
+
+        bytes32[] blobHashes;
+        bytes da;
+
+        Block[] blocks;
+    }
+
+    #[derive(Debug)]
+    struct Block {
+        L1Block l1Block;
+
         bytes32 extraData;
         address coinbase;
-        uint64 l2BlockNumber;
-        uint32 gasLimit;
-        uint32 l1StateBlockNumber;
-        uint64 timestamp;
-        uint24 txListByteOffset;
-        uint24 txListByteSize;
-        bool blobUsed;
-        bytes txList;
-        bytes stateDiffs;
-        L1Block l1Block;
+
+        uint24 daByteOffset;
+        uint24 daByteSize;
     }
 
     #[derive(Debug)]
@@ -62,6 +65,8 @@ sol! {
         address addr;
         bytes data;
         uint256 value;
+        uint64 gas;
+        bool reverts;
     }
 
     #[derive(Debug)]
@@ -77,6 +82,11 @@ sol! {
     }
 
     #[derive(Debug)]
+    struct Proof {
+        bytes proof;
+    }
+
+    #[derive(Debug)]
     struct ReturnData {
         bytes data;
         bool isRevert;
@@ -85,7 +95,7 @@ sol! {
     //#[sol(rpc)]
     #[allow(dead_code)]
     contract Rollup {
-        function proposeBlock(BlockMetadata[] calldata data) external payable;
+        function propose(UltraBlock calldata _block, Proof calldata proof) external payable;
     }
 
     contract DelegateContract {
@@ -137,19 +147,26 @@ impl BlockProposer {
         println!("propose_block in L1 block {} (block gas used: {})", block_idx, request.bid_trace().gas_used);
 
         // Create the transaction data
-        let (meta, num_txs, EOAs) = self.create_propose_block_tx_data(&execution_payload)?;
-
-        let propose_data = Rollup::proposeBlockCall { data: vec![meta.clone()] };
-        let propose_data = propose_data.abi_encode();
-
-        let decoded_transactions: Vec<TransactionSigned> = decode_transactions(&meta.txList);
-        //println!("decoded_transactions: {:?}", decoded_transactions);
-
-        let provider = ProviderBuilder::new().on_http(Url::parse(&self.rpc_url.clone()).unwrap());
+        let (ultra_block, sidecar, num_txs, EOAs) = self.create_propose_block_tx_data(&execution_payload)?;
 
         // Create a signer from a random private key.
         let signer = PrivateKeySigner::from_str(&self.private_key).unwrap();
         let wallet = EthereumWallet::from(signer.clone());
+
+        let input_hash = keccak256(ultra_block.abi_encode());
+        let signature: Signature = signer.sign_hash_sync(&input_hash).expect("failed to sign input");
+
+        let proof = Proof {
+            proof: signature.as_bytes().into(),
+        };
+
+        let propose_data = Rollup::proposeCall { _block: ultra_block, proof };
+        let propose_data = propose_data.abi_encode();
+
+        //let decoded_transactions: Vec<TransactionSigned> = decode_transactions(&ultra_block.da);
+        //println!("decoded_transactions: {:?}", decoded_transactions);
+
+        let provider = ProviderBuilder::new().on_http(Url::parse(&self.rpc_url.clone()).unwrap());
 
         // Sign the transaction
         let chain_id = provider.get_chain_id().await?;
@@ -195,6 +212,7 @@ impl BlockProposer {
             .with_value(U256::from(0))
             .with_gas_limit(15_000_000)
             .with_max_priority_fee_per_gas(1_000_000_000 * multiplier)
+            //.with_blob_sidecar(sidecar)
             .with_max_fee_per_gas(200_000_000_000 * multiplier)
             .with_access_list(access_list);
 
@@ -228,7 +246,7 @@ impl BlockProposer {
     }
 
     // The logic to create the transaction (call)data for proposing the block
-    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<(BlockMetadata, usize, Vec<Address>)> {
+    fn create_propose_block_tx_data(&self, execution_payload: &ExecutionPayload) -> Result<(UltraBlock, BlobTransactionSidecar, usize, Vec<Address>)> {
         let execution_payload = match execution_payload {
             ExecutionPayload::V2(payload) => {
                 &payload.payload_inner
@@ -245,6 +263,7 @@ impl BlockProposer {
         //println!("Proposed payload: {:?}", execution_payload);
         let l1_chain_id = 160010;
         let extension_oracle = address!("1ADB9959EB142bE128E6dfEcc8D571f07cd66DeE");
+        let all_gas = 30_000_000u64;
 
         let mut transactions = Vec::new();
         for tx_data in execution_payload.transactions.iter() {
@@ -315,7 +334,8 @@ impl BlockProposer {
                     addr: extension_oracle,
                     data: Bytes::from(onchain_outputs.abi_encode()),
                     value: U256::ZERO,
-
+                    gas: all_gas,
+                    reverts: false,
                 });
             }
             for entry in l1_state_diff.entries.iter() {
@@ -349,6 +369,8 @@ impl BlockProposer {
                                     addr: address.1,
                                     data: Bytes::new(),
                                     value: value_to_send,
+                                    gas: all_gas,
+                                    reverts: false,
                                 });
                             } else if onchain_slots.len() > 0 || value_to_receive != U256::ZERO || value_to_send != U256::ZERO {
                                 let apply_state_delta_call = GwynethContract::applyStateDeltaCall {
@@ -362,6 +384,8 @@ impl BlockProposer {
                                     addr: address.1,
                                     data: Bytes::from(apply_state_delta_call.abi_encode()),
                                     value: value_to_send,
+                                    gas: all_gas,
+                                    reverts: false,
                                 });
                             }
                         }
@@ -381,6 +405,8 @@ impl BlockProposer {
                             addr: call.input.caller.1,
                             data: Bytes::from(execute_call.abi_encode()),
                             value: U256::ZERO,
+                            gas: call.input.gas_limit,
+                            reverts: false,
                         });
 
                         EOAs.push(call.input.caller.1);
@@ -404,36 +430,39 @@ impl BlockProposer {
 
         //println!("da: {:?}", da);
 
-        let serialized_bytes = bincode::serialize(&da).unwrap();
-        //println!("state_diffs: {:?}", serialized_bytes);
-        let state_diffs = Bytes::from(serialized_bytes);
+        //let state_diffs = Bytes::from(bincode::serialize(&da).unwrap());
+
+        let txs_and_diffs = Bytes::from(bincode::serialize(&(da, tx_list)).unwrap());
 
         //println!("l1 state diff: {:?}", l1_state_diff);
 
-        let meta = BlockMetadata {
-            blockHash: execution_payload.block_hash,
-            parentBlockHash: execution_payload.parent_hash,
-            parentMetaHash: B256::ZERO, // Either we get rid of this or have a getter ?
-            l1Hash: B256::ZERO, // Preconfer/builder has to set this. It needs to represent the l1StateBlockNumber's hash
-            difficulty: U256::ZERO, // ??
-            blobHash: tx_list_hash,
+        // Create a sidecar with some data.
+        let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(&txs_and_diffs);
+        let sidecar = sidecar.build()?;
+
+        let blob_hashes = sidecar.versioned_hashes().collect::<Vec<_>>();
+        //let blob_hashes = vec![tx_list_hash];
+
+        let block = Block {
             extraData: /*execution_payload.extra_data.try_into().unwrap()*/ B256::default(),
             coinbase: execution_payload.fee_recipient,
-            l2BlockNumber: execution_payload.block_number,
-            gasLimit: execution_payload.gas_limit.try_into().map_err(|_| eyre::eyre!("Gas limit overflow"))?,
-            l1StateBlockNumber: 0, // Preconfer/builder has to set this.
-            timestamp: execution_payload.timestamp,
-            txListByteOffset: 0u32.try_into().map_err(|_| eyre::eyre!("txListByteOffset conversion error"))?,
-            txListByteSize: (tx_list.len() as u32).try_into().map_err(|_| eyre::eyre!("txListByteSize conversion error"))?,
-            blobUsed: false,
-            txList: tx_list.into(),
-            stateDiffs: state_diffs,
+            daByteOffset: 0u32.try_into().map_err(|_| eyre::eyre!("txListByteOffset conversion error"))?,
+            daByteSize: (txs_and_diffs.len() as u32).try_into().map_err(|_| eyre::eyre!("txListByteSize conversion error"))?,
             l1Block: l1_block,
+        };
+
+        let ultra_block = UltraBlock {
+            ultraHash: execution_payload.block_hash,
+            parentUltraHash: execution_payload.parent_hash,
+            parentL1BlockHash: execution_payload.parent_hash,
+            blobHashes: blob_hashes,
+            da: txs_and_diffs,
+            blocks: vec![block],
         };
 
         //println!("meta: {:?}", meta);
 
-        Ok((meta, execution_payload.transactions.len(), EOAs))
+        Ok((ultra_block, sidecar, execution_payload.transactions.len(), EOAs))
     }
 }
 
