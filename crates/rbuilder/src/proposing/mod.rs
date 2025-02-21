@@ -212,8 +212,9 @@ impl BlockProposer {
             .with_value(U256::from(0))
             .with_gas_limit(15_000_000)
             .with_max_priority_fee_per_gas(1_000_000_000 * multiplier)
-            //.with_blob_sidecar(sidecar)
             .with_max_fee_per_gas(200_000_000_000 * multiplier)
+            .with_blob_sidecar(sidecar)
+            .with_max_fee_per_blob_gas(1_000_000_000 * multiplier)
             .with_access_list(access_list);
 
         // Build the transaction with the provided wallet. Flashbots Protect requires the transaction to
@@ -263,7 +264,11 @@ impl BlockProposer {
         //println!("Proposed payload: {:?}", execution_payload);
         let l1_chain_id = 160010;
         let extension_oracle = address!("1ADB9959EB142bE128E6dfEcc8D571f07cd66DeE");
-        let all_gas = 30_000_000u64;
+        let l1_tx_overhead_gas = 25_000u64;
+        //let all_gas = 30_000_000u64;
+        let max_gas_delta = 2_000_000u64;
+        let max_gas_send_eth = 100_000u64;
+        let max_gas_extension_oracle = 1_000_000u64;
 
         let mut transactions = Vec::new();
         for tx_data in execution_payload.transactions.iter() {
@@ -287,9 +292,9 @@ impl BlockProposer {
         //println!("tx list: {:?}", tx_list);
 
         //println!("Block extra data: {:?}", execution_payload.extra_data);
-        let (da, l1_block) = if execution_payload.extra_data.len() > 32 {
+        let (da, l1_block, ultra_hash) = if execution_payload.extra_data.len() > 32 {
             //println!("Decoding extra data...");
-            let (_, l1_state_diff, blocks): (ExecutionOutcome, StateDiff, HashMap<u64, SealedBlock>) = bincode::deserialize(&execution_payload.extra_data.to_vec()).unwrap();
+            let (_, l1_state_diff, blocks, block_hashes): (ExecutionOutcome, StateDiff, HashMap<u64, SealedBlock>, HashMap::<u64, (B256, B256)>) = bincode::deserialize(&execution_payload.extra_data.to_vec()).unwrap();
 
             println!("l1 state diff: {:?}", l1_state_diff);
 
@@ -322,22 +327,7 @@ impl BlockProposer {
             }
 
             let mut l1_block = L1Block { transactions: Vec::new() };
-            let mut onchain_outputs = Vec::new();
-            for call in l1_state_diff.outputs.iter() {
-                onchain_outputs.push(ReturnData {
-                    data: call.output.output.clone().into(),
-                    isRevert: call.output.revert,
-                })
-            }
-            if onchain_outputs.len() > 0 {
-                l1_block.transactions.push(Transaction {
-                    addr: extension_oracle,
-                    data: Bytes::from(onchain_outputs.abi_encode()),
-                    value: U256::ZERO,
-                    gas: all_gas,
-                    reverts: false,
-                });
-            }
+            let mut l1_call_idx = 0usize;
             for entry in l1_state_diff.entries.iter() {
                 match entry {
                     revm_primitives::StateDiffEntry::Diff { accounts } => {
@@ -369,8 +359,8 @@ impl BlockProposer {
                                     addr: address.1,
                                     data: Bytes::new(),
                                     value: value_to_send,
-                                    gas: all_gas,
-                                    reverts: false,
+                                    gas: max_gas_send_eth,
+                                    reverts: true,
                                 });
                             } else if onchain_slots.len() > 0 || value_to_receive != U256::ZERO || value_to_send != U256::ZERO {
                                 let apply_state_delta_call = GwynethContract::applyStateDeltaCall {
@@ -384,13 +374,33 @@ impl BlockProposer {
                                     addr: address.1,
                                     data: Bytes::from(apply_state_delta_call.abi_encode()),
                                     value: value_to_send,
-                                    gas: all_gas,
-                                    reverts: false,
+                                    gas: max_gas_delta,
+                                    reverts: true,
                                 });
                             }
                         }
                     }
                     revm_primitives::StateDiffEntry::XCall { call } => {
+                        let mut onchain_outputs = Vec::new();
+                        for (call_idx, call) in l1_state_diff.outputs.iter() {
+                            if *call_idx == l1_call_idx {
+                                onchain_outputs.push(ReturnData {
+                                    data: call.output.output.clone().into(),
+                                    isRevert: call.output.revert,
+                                })
+                            }
+                        }
+                        if onchain_outputs.len() > 0 {
+                            l1_block.transactions.push(Transaction {
+                                addr: extension_oracle,
+                                data: Bytes::from(onchain_outputs.abi_encode()),
+                                value: U256::ZERO,
+                                gas: max_gas_extension_oracle,
+                                reverts: true,
+                            });
+                        }
+
+
                         let delegate_call = DelegateContract::SubCall {
                             data: call.input.input.clone(),
                             to: call.input.target_address.1,
@@ -405,14 +415,32 @@ impl BlockProposer {
                             addr: call.input.caller.1,
                             data: Bytes::from(execute_call.abi_encode()),
                             value: U256::ZERO,
-                            gas: call.input.gas_limit,
-                            reverts: false,
+                            gas: l1_tx_overhead_gas + call.input.gas_limit,
+                            reverts: true,
                         });
+
+                        l1_call_idx += 1;
 
                         EOAs.push(call.input.caller.1);
                     }
                 }
             }
+
+            // Calculate ULTRA hashes
+
+            let mut block_hashes = block_hashes.iter().map(|(key, value)| (key, value)).collect::<Vec<_>>();
+            block_hashes.sort_by_key(|(chain_id, _)| **chain_id);
+
+            let mut previous_ultra_hashes = Vec::<u8>::new();
+            let mut current_ultra_hashes = Vec::<u8>::new();
+
+            for (_, (previous_hash, current_hash)) in block_hashes.iter() {
+                previous_ultra_hashes.append(&mut previous_hash.0.to_vec());
+                current_ultra_hashes.append(&mut current_hash.0.to_vec());
+            }
+
+            let parent_ultra_hash = alloy_primitives::keccak256(&previous_ultra_hashes);
+            let current_ultra_hash = alloy_primitives::keccak256(&current_ultra_hashes);
 
             (
                 GwynethDA {
@@ -421,12 +449,14 @@ impl BlockProposer {
                     extra_data: Bytes::new(),
                 },
                 l1_block,
+                (parent_ultra_hash, current_ultra_hash)
             )
         } else {
-            (GwynethDA::default(), L1Block { transactions: Vec::new() })
+            (GwynethDA::default(), L1Block { transactions: Vec::new() }, (B256::default(), B256::default()))
         };
 
         println!("L1 block: {:?}", l1_block);
+        println!("ultra_hash: {:?}", ultra_hash);
 
         //println!("da: {:?}", da);
 
@@ -452,15 +482,13 @@ impl BlockProposer {
         };
 
         let ultra_block = UltraBlock {
-            ultraHash: execution_payload.block_hash,
-            parentUltraHash: execution_payload.parent_hash,
+            ultraHash: ultra_hash.1,
+            parentUltraHash: ultra_hash.0,
             parentL1BlockHash: execution_payload.parent_hash,
             blobHashes: blob_hashes,
             da: txs_and_diffs,
             blocks: vec![block],
         };
-
-        //println!("meta: {:?}", meta);
 
         Ok((ultra_block, sidecar, execution_payload.transactions.len(), EOAs))
     }

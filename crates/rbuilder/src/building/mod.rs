@@ -828,13 +828,6 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             (Some(0), Some(0))
         };
 
-        let mut chain_ids = Vec::new();
-        for account in execution_outcome.bundle.state.keys() {
-            if !chain_ids.contains(&account.0) {
-                chain_ids.push(account.0);
-            }
-        }
-
         let state_changes = StateChanges {
             entries: self.state_changes.iter().cloned().map(|s| s.entries).collect::<Vec<_>>().into_iter().flatten().collect(),
         };
@@ -845,19 +838,24 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         //println!("state_changes [{:?}] ({:?}): {:?}", self.executed_tx.len(), self.state_changes.len(), self.state_changes);
         //println!("l1_state_diff: {:?}", l1_state_diff);
 
+        // Collect latest block hashes to calculate the previous and current ULTRA hash
+        let mut latest_block_hashes = HashMap::<u64, (B256, B256)>::default();
+
         let mut blocks = HashMap::default();
-        for chain_id in chain_ids {
+        for &chain_id in super_ctx.chains.keys() {
             if chain_id == super_ctx.parent_chain_id {
                 continue;
             }
+
+            let ctx = &super_ctx.chains[&chain_id];
+
+            latest_block_hashes.insert(chain_id, (ctx.attributes.parent, ctx.attributes.parent));
 
             let execution_outcome = execution_outcome.filter_chain(chain_id);
             let mut state_diff = execution_outcome_to_state_diff(&execution_outcome, B256::ZERO, self.gas_used);
 
             // Only make a block for chains that have changes
             if !state_diff.accounts.is_empty() {
-                let ctx = &super_ctx.chains[&chain_id];
-
                 let state_root = calculate_state_root(
                     provider_factories.get(&chain_id).unwrap().clone(),
                     ctx.attributes.parent,
@@ -922,11 +920,13 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
 
                 println!("[{}] chain {} calculated block hash: {:?}", super_ctx.block(), chain_id, sealed_block.hash());
 
+                latest_block_hashes.get_mut(&chain_id).unwrap().1 = sealed_block.hash();
+
                 blocks.insert(chain_id, sealed_block);
             }
         }
 
-        let extra_data = Bytes::from(bincode::serialize(&(execution_outcome, l1_state_diff, blocks)).unwrap());
+        let extra_data = Bytes::from(bincode::serialize(&(execution_outcome, l1_state_diff, blocks, latest_block_hashes)).unwrap());
 
         let header = Header {
             parent_hash: ctx.attributes.parent,
