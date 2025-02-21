@@ -78,6 +78,7 @@ alloy-rpc-types-engine = { version = "0.3.0", features = [
     "ssz",
 ] }
 alloy-rpc-types-eth = { version = "0.3.0" }
+alloy-signer = { version = "0.3.0" }
 alloy-signer-local = { version = "0.3.0" }
 alloy-sol-types = { version = "0.8.2", default-features = false }
 
