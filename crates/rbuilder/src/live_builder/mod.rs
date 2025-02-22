@@ -23,8 +23,8 @@ use crate::{
     utils::{error_storage::spawn_error_storage_writer, ProviderFactoryReopener, Signer},
 };
 use ahash::{HashMap, HashSet};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use alloy_chains::{Chain, ChainKind};
-use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, U256};
 use building::BlockBuildingPool;
 use eyre::Context;
