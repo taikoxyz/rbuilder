@@ -1,6 +1,6 @@
 
-use alloy_consensus::{BlobTransactionSidecar, SidecarBuilder, SimpleCoder};
-use alloy_eips::BlockId;
+//use alloy_consensus::{Blob, BlobTransactionSidecar, SidecarBuilder, SidecarCoder};
+use alloy_eips::{eip4844::{builder::{SidecarBuilder, SidecarCoder, SimpleCoder}, kzg_to_versioned_hash, BlobTransactionSidecar}, BlockId};
 use alloy_network::{EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rlp::{Decodable, Encodable};
@@ -213,8 +213,8 @@ impl BlockProposer {
             .with_gas_limit(15_000_000)
             .with_max_priority_fee_per_gas(1_000_000_000 * multiplier)
             .with_max_fee_per_gas(200_000_000_000 * multiplier)
-            .with_blob_sidecar(sidecar)
-            .with_max_fee_per_blob_gas(1_000_000_000 * multiplier)
+            //.with_blob_sidecar(sidecar)
+            //.with_max_fee_per_blob_gas(1_000_000_000 * multiplier)
             .with_access_list(access_list);
 
         // Build the transaction with the provided wallet. Flashbots Protect requires the transaction to
@@ -464,14 +464,44 @@ impl BlockProposer {
 
         let txs_and_diffs = Bytes::from(bincode::serialize(&(da, tx_list)).unwrap());
 
+        println!("txs_and_diffs size: {}", txs_and_diffs.len());
+
         //println!("l1 state diff: {:?}", l1_state_diff);
 
         // Create a sidecar with some data.
         let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(&txs_and_diffs);
         let sidecar = sidecar.build()?;
 
+        //println!("sidecar: {:?}", sidecar);
+
+        //let sidecar = sidecar.unwrap();
+
         let blob_hashes = sidecar.versioned_hashes().collect::<Vec<_>>();
         //let blob_hashes = vec![tx_list_hash];
+
+        //println!("blob_hashes: {:?}", blob_hashes);
+
+        //let blobs: Vec<_> = sidecar.blobs.clone().into_iter().zip(sidecar.commitments.clone()).collect();
+        //let blobs = sidecar.blobs.into_iter().map(|(blob, _)| Blob::from(*blob)).collect::<Vec<_>>();
+
+        // let blobs = blobs
+        //     .into_iter()
+        //     // Convert blob KZG commitments to versioned hashes
+        //     .map(|(blob, commitment)| (blob, kzg_to_versioned_hash(commitment.as_slice())))
+        //     // Filter only blobs that are present in the block data
+        //     .filter(|(_, hash)| blob_hashes.contains(hash))
+        //     .map(|(blob, _)| Blob::from(*blob))
+        //     .collect::<Vec<_>>();
+        // if blobs.len() != blob_hashes.len() {
+        //     eyre::bail!("some blobs not found")
+        // }
+
+        let data = SimpleCoder::default()
+            .decode_all(&sidecar.blobs)
+            .ok_or(eyre::eyre!("failed to decode blobs"))?
+            .concat();
+
+        assert_eq!(data, txs_and_diffs.to_vec(), "blob data does not match calldata");
 
         let block = Block {
             extraData: /*execution_payload.extra_data.try_into().unwrap()*/ B256::default(),

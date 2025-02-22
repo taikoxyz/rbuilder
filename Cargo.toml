@@ -62,7 +62,7 @@ alloy-rlp = "0.3.4"
 alloy-chains = "0.1.23"
 alloy-provider = { version = "0.3.0", features = ["ipc", "pubsub"] }
 alloy-pubsub = { version = "0.3.0" }
-alloy-eips = { version = "0.3.0" }
+alloy-eips = { version = "0.11.1", features = ["kzg"] }
 alloy-rpc-types = { version = "0.3.0" }
 alloy-json-rpc = { version = "0.3.0" }
 alloy-transport-http = { version = "0.3.0" }
