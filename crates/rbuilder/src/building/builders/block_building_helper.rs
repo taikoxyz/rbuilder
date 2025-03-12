@@ -100,7 +100,7 @@ where
     building_ctx: BlockBuildingContext,
     built_block_trace: BuiltBlockTrace,
     /// Needed to get the initial state and the final root hash calculation.
-    provider: HashMap<u64, P>,
+    providers: HashMap<u64, P>,
     /// Token to cancel in case of fatal error (if we believe that it's impossible to build for this block).
     cancel_on_fatal_error: CancellationToken,
     origin_chain_id: u64,
@@ -158,8 +158,7 @@ where
     /// - Estimate payout tx cost.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        provider: HashMap<u64, P>,
-        root_hash_task_pool: BlockingTaskPool,
+        providers: HashMap<u64, P>,
         building_ctx: BlockBuildingContext,
         cached_reads: Option<CachedReads>,
         builder_name: String,
@@ -172,7 +171,7 @@ where
 
         // @Maybe an issue - we have 2 db txs here (one for hash and one for finalize)
         let mut state_providers: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
-        for (chain_id, provider_factory) in provider.iter() {
+        for (chain_id, provider_factory) in providers.iter() {
             let chain_ctx = &building_ctx.chains[chain_id];
             let state_provider: Arc<dyn StateProvider> = provider_factory.history_by_block_hash(chain_ctx.attributes.parent)?.into();
             let last_committed_block = chain_ctx.block() - 1;
@@ -223,7 +222,7 @@ where
             builder_name,
             building_ctx,
             built_block_trace: BuiltBlockTrace::new(),
-            provider,
+            providers,
             cancel_on_fatal_error,
             origin_chain_id,
         })
@@ -384,7 +383,7 @@ where
         self.built_block_trace
             .verify_bundle_consistency(&self.building_ctx.chains[&self.origin_chain_id].blocklist)?;
 
-        let provider_factory = &self.provider_factory[&self.building_ctx.parent_chain_id];
+        let provider_factory = &self.providers[&self.building_ctx.parent_chain_id];
 
         let sim_gas_used = self.partial_block.tracer.used_gas;
         let block_number = self.building_context().block();
@@ -393,9 +392,6 @@ where
             .finalize(
                 &mut self.block_state,
                 &self.building_ctx,
-                self.provider_factory.clone(),
-                self.root_hash_config,
-                self.root_hash_task_pool,
             )
         {
             Ok(finalized_block) => finalized_block,

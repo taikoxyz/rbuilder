@@ -2,7 +2,7 @@
 pub mod block_building_helper;
 pub mod mock_block_building_helper;
 pub mod ordering_builder;
-pub mod parallel_builder;
+// pub mod parallel_builder;
 
 use crate::{
     building::{BlockBuildingContext, BuiltBlockTrace, SimulatedOrderSink, Sorting},
@@ -15,10 +15,11 @@ use ahash::{HashMap, HashSet};
 use alloy_eips::eip4844::BlobTransactionSidecar;
 use alloy_primitives::{Address, Bytes, B256};
 use block_building_helper::BlockBuildingHelper;
+use ethers::abi::Hash;
 use reth::{primitives::SealedBlock, revm::cached::SyncCachedReads as CachedReads, providers::ProviderFactory};
 use reth_errors::ProviderError;
 use std::{fmt::Debug, sync::Arc};
-use revm_primitives::ChainAddress;
+use revm_primitives::{ChainAddress};
 use tokio::sync::{broadcast, broadcast::error::TryRecvError};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -39,7 +40,7 @@ pub struct Block {
 
 #[derive(Debug)]
 pub struct LiveBuilderInput<P> {
-    pub provider: HashMap<u64, P>,
+    pub providers: HashMap<u64, P>,
     // pub root_hash_config: RootHashConfig,
     // pub root_hash_task_pool: BlockingTaskPool,
     pub ctx: BlockBuildingContext,
@@ -126,7 +127,7 @@ where
 
         Self {
             nonce_cache,
-            block_orders: PrioritizedOrderStore::new(sorting, vec![]),
+            block_orders: PrioritizedOrderStore::new(sorting, HashMap::<ChainAddress, Vec<AccountNonce>>::default()),
             onchain_nonces_updated: HashSet::default(),
             order_consumer: OrderConsumer::new(orders),
         }
@@ -202,7 +203,7 @@ pub trait UnfinishedBlockBuildingSink: std::fmt::Debug + Send + Sync {
 
 #[derive(Debug)]
 pub struct BlockBuildingAlgorithmInput<P> {
-    pub provider: HashMap<u64, P>,
+    pub providers: HashMap<u64, P>,
     pub ctx: BlockBuildingContext,
     pub input: broadcast::Receiver<SimulatedOrderCommand>,
     /// output for the blocks
@@ -237,7 +238,7 @@ pub struct BacktestSimulateBlockInput<'a, P> {
     pub ctx: BlockBuildingContext,
     pub builder_name: String,
     pub sim_orders: &'a Vec<SimulatedOrder>,
-    pub provider: P,
+    pub providers: HashMap<u64, P>,
     pub cached_reads: Option<CachedReads>,
 }
 

@@ -1,12 +1,7 @@
 //! Config should always be deserializable, default values should be used
 //!
 use crate::{
-    building::builders::UnfinishedBlockBuildingSinkFactory,
-    live_builder::{order_input::OrderInputConfig, LiveBuilder},
-    provider::StateProviderFactory,
-    roothash::RootHashConfig,
-    telemetry::{setup_reloadable_tracing_subscriber, LoggerConfig},
-    utils::{http_provider, BoxedProvider, ProviderFactoryReopener, Signer},
+    building::builders::UnfinishedBlockBuildingSinkFactory, live_builder::{order_input::OrderInputConfig, LiveBuilder}, provider::StateProviderFactory, roothash::RootHashConfig, telemetry::{setup_reloadable_tracing_subscriber, LoggerConfig}, utils::{http_provider, BoxedProvider, ProviderFactoryReopener, Signer}
 };
 use ahash::HashSet;
 use alloy_primitives::{Address, B256};
@@ -22,13 +17,7 @@ use reth_provider::StaticFileProviderFactory;
 use serde::{Deserialize, Deserializer};
 use serde_with::{serde_as, DeserializeAs};
 use std::{
-    env::var,
-    fs::read_to_string,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
+    collections::HashMap, env::var, fs::read_to_string, net::{Ipv4Addr, SocketAddr, SocketAddrV4}, path::{Path, PathBuf}, str::FromStr, sync::Arc, time::Duration
 };
 use tokio::sync::mpsc;
 use tracing::{error, warn};
@@ -185,10 +174,11 @@ impl BaseConfig {
         sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
         slot_source: SlotSourceType,
         provider: P,
+        l2_providers: HashMap<u64, P>,
         gwyneth_chain_ids: Vec<u64>,
     ) -> eyre::Result<super::LiveBuilder<P, SlotSourceType>>
     where
-        P: StateProviderFactory,
+        P: StateProviderFactory + Clone + 'static,
         SlotSourceType: SlotSource,
     {
         let order_input_config = OrderInputConfig::from_config(self)?;
@@ -200,7 +190,7 @@ impl BaseConfig {
             simulation_threads: self.simulation_threads,
             order_input_config,
             blocks_source: slot_source,
-            chain_chain_spec: self.chain_spec()?,
+            chain_spec: self.chain_spec()?,
             provider,
 
             coinbase_signer: self.coinbase_signer()?,
@@ -212,7 +202,7 @@ impl BaseConfig {
             extra_rpc: RpcModule::new(()),
             sink_factory,
             builders: Vec::new(),
-            layer2_info: Layer2Info::<Arc<DatabaseEnv>>::new(gwyneth_chain_ids.clone(), create_gwyneth_providers(gwyneth_chain_ids)?).await?,
+            layer2_info: Layer2Info::new(gwyneth_chain_ids.clone(), l2_providers).await?,
 
             run_sparse_trie_prefetcher: self.root_hash_use_sparse_trie,
 

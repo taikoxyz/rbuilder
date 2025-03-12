@@ -2,7 +2,7 @@ use crate::primitives::OrderId;
 use ahash::HashMap;
 use alloy_primitives::U256;
 use parking_lot::RwLock as PLRwLock;
-use reth::revm::cached::CachedReads;
+use reth::revm::cached::SyncCachedReads as CachedReads;
 use revm::db::BundleState;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},

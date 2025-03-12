@@ -35,7 +35,7 @@ use crate::{
     },
     provider::StateProviderFactory,
 };
-use reth::revm::cached::CachedReads;
+use reth::revm::cached::SyncCachedReads as CachedReads;
 
 use self::{
     block_building_result_assembler::BlockBuildingResultAssembler,

@@ -44,7 +44,7 @@ where
     P: StateProviderFactory + Clone + 'static,
 {
     pub fn new(
-        provider: HashMap<u64, P>,
+        providers: HashMap<u64, P>,
         builders: Vec<Arc<dyn BlockBuildingAlgorithm<P>>>,
         sink_factory: Box<dyn UnfinishedBlockBuildingSinkFactory>,
         orderpool_subscribers: HashMap<u64, order_input::OrderPoolSubscriber>,
@@ -53,7 +53,7 @@ where
         sbundle_merger_selected_signers: Arc<Vec<Address>>,
     ) -> Self {
         BlockBuildingPool {
-            provider,
+            providers,
             builders,
             sink_factory,
             orderpool_subscribers,
@@ -116,25 +116,16 @@ where
         let builder_sink = self.sink_factory.create_sink(slot_data, cancel.clone());
         let (broadcast_input, _) = broadcast::channel(10_000);
 
-        let provider_factories: HashMap<u64, ProviderFactory<DB>> = self
-            .providers.iter().map(|(chain_id, provider_factory)| {
-                let block_number = ctx.chains[chain_id].block_env.number.to::<u64>();
-                // match provider_factory.check_consistency_and_reopen_if_needed(block_number)
-                // {
-                //     Ok(provider_factory) => (*chain_id, provider_factory),
-                //     Err(err) => {
-                //         panic!("Error while reopening provider factory");
-                //     }
-                // }
-            }).collect();
-
-        let block_number = ctx.block_env.number.to::<u64>();
 
         for builder in self.builders.iter() {
             let builder_name = builder.name();
-            debug!(block = block_number, builder_name, "Spawning builder job");
+
+            debug!(
+                /* block = block_number,  */ builder_name,
+                "Spawning builder job"
+            );
             let input = BlockBuildingAlgorithmInput::<P> {
-                provider: provider_factories.clone(),
+                providers: self.providers.clone(),
                 ctx: ctx.clone(),
                 input: broadcast_input.subscribe(),
                 sink: builder_sink.clone(),
@@ -143,15 +134,19 @@ where
             let builder = builder.clone();
             tokio::task::spawn_blocking(move || {
                 builder.build_blocks(input);
-                //debug!(block = block_number, builder_name, "Stopped builder job");
+                // debug!(block = block_number, builder_name, "Stopped builder job");
             });
         }
 
         if self.run_sparse_trie_prefetcher {
-            let input = broadcast_input.subscribe();
-
-            tokio::task::spawn_blocking(move || {
-                ctx.root_hasher.run_prefetcher(input, cancel);
+            self.providers.iter().for_each(|(chain_id, provider)| {
+                let chain_parent = ctx.chains[chain_id].attributes.parent;
+                let root_hasher = provider.root_hasher(chain_parent);
+                let input = broadcast_input.subscribe();
+                let cancel = cancel.clone();
+                tokio::task::spawn_blocking(move || {
+                    root_hasher.run_prefetcher(input, cancel);
+                });
             });
         }
 
@@ -163,8 +158,6 @@ where
                 &sbundle_merger_selected_signers,
             )
         });
-
-        //        tokio::spawn();
     }
 }
 

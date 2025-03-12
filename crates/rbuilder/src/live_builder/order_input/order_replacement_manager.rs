@@ -161,7 +161,7 @@ mod test {
             Self {
                 dont_care_nonce: AccountNonce {
                     nonce: 0,
-                    account: base.base.create_address(),
+                    account: base.base.create_chain_address(),
                 },
                 base,
             }

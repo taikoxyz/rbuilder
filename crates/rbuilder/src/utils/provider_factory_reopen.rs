@@ -9,9 +9,10 @@ use eth_sparse_mpt::reth_sparse_trie::SparseTrieSharedCache;
 use parking_lot::{Mutex, RwLock};
 use reth::providers::ExecutionOutcome;
 use reth::providers::{BlockHashReader, ChainSpecProvider, ProviderFactory};
+use reth_chainspec::EthereumHardforks;
 use reth_db::DatabaseError;
 use reth_errors::{ProviderError, ProviderResult, RethResult};
-use reth_node_api::NodeTypesWithDB;
+use reth_node_api::{NodeTypes, NodeTypesWithDB};
 use reth_provider::{
     providers::{ProviderNodeTypes, StaticFileProvider},
     BlockNumReader, HeaderProvider, StateProviderBox, StaticFileProviderFactory,
@@ -39,6 +40,18 @@ pub struct ProviderFactoryReopener<N: NodeTypesWithDB> {
     testing_mode: bool,
     /// None ->No root hash (MockRootHasher)
     root_hash_config: Option<RootHashConfig>,
+}
+
+impl<P, N> From<ProviderFactoryReopener<N>> for P 
+where
+    P: StateProviderFactory + Clone + 'static,
+    N: NodeTypesWithDB + Clone,
+    <N as NodeTypes>::ChainSpec: EthereumHardforks,
+{
+    fn from(value: ProviderFactoryReopener<N>) -> Self {
+        let v: Box<dyn StateProviderFactory> = Box::new(value);
+        v.to_owned()
+    }
 }
 
 /// root_hash_config None -> MockRootHasher used

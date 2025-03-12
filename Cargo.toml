@@ -100,7 +100,7 @@ ethereum_ssz = "0.8"
 
 alloy-primitives = { version = "0.8.11", default-features = false }
 alloy-rlp = "0.3.4"
-alloy-chains = "0.1.33"
+alloy-chains = "0.1.32"
 alloy-provider = { version = "0.6.4", features = ["ipc", "pubsub"] }
 alloy-pubsub = { version = "0.6.4" }
 alloy-eips = { version = "0.6.4" }
@@ -119,8 +119,8 @@ alloy-rpc-types-engine = { version = "0.6.4", features = ["ssz"] }
 alloy-rpc-types-eth = { version = "0.6.4" }
 alloy-signer-local = { version = "0.6.4" }
 alloy-genesis = { version = "0.6.4" }
-alloy-trie = { version = "0.7" }
-alloy-sol-types = { version = "0.7" }
+alloy-trie = { version = "0.7", default-features = false }
+alloy-sol-types = "0.8.11"
 
 async-trait = { version = "0.1.83" }
 clap = { version = "4.4.3" }
@@ -151,62 +151,62 @@ sysperf = { path = "crates/sysperf" }
 
 
 [patch.crates-io]
-revm = { git = "https://github.com/taikoxyz/revm.git", branch = "v50-gwyneth" }
-revm-primitives = { git = "https://github.com/taikoxyz/revm.git", branch = "v50-gwyneth" }
-revm-interpreter = { git = "https://github.com/taikoxyz/revm.git", branch = "v50-gwyneth" }
-revm-precompile = { git = "https://github.com/taikoxyz/revm.git", branch = "v50-gwyneth" }
-revm-inspectors = { git = "https://github.com/taikoxyz/revm-inspectors.git", branch = "v0.11.0-gwyneth" }
+revm = { path = "../revm/crates/revm" }
+revm-primitives = { path = "../revm/crates/primitives" }
+revm-interpreter = { path = "../revm/crates/interpreter" }
+revm-precompile = { path = "../revm/crates/precompile" }
+revm-inspectors = { path = "../revm-inspectors" }
 
 [patch."https://github.com/paradigmxyz/reth"]
-reth = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-chain-state = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-beacon-consensus = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-cli-util = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-db = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-db-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-db-common = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-libmdbx = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-node-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-node-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-node-ethereum = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-trie = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-trie-parallel = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-basic-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-node-core = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-primitives = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-provider = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth", features = [
-    "test-utils",
-    "serde",
-] }
-reth-chainspec = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-evm = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-evm-ethereum = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-execution-errors = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-trie-db = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-payload-primitives = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-transaction-pool = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-consensus = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-optimism-consensus = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-optimism-cli = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-optimism-forks = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-#reth-auto-seal-consensus = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-execution-types = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-revm = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-optimism-evm = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-rpc = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-tracing = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-rpc-types-compat = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-rpc-eth-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-rpc-eth-types = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-#reth-rpc-api-types = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-discv4 = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-discv5 = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-network = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-optimism-node = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-eth-wire-types = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-storage-api = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-optimism-rpc = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-optimism-payload-builder = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
-reth-optimism-chainspec = { git = "https://github.com/taikoxyz/gwyneth", branch = "v1.1.2-gwyneth" }
+reth = { path = "../reth/bin/reth" }
+reth-basic-payload-builder = { path = "../reth/crates/payload/basic" }
+reth-beacon-consensus = { path = "../reth/crates/consensus/beacon" }
+reth-blockchain-tree = { path = "../reth/crates/blockchain-tree" }
+reth-chain-state = { path = "../reth/crates/chain-state" }
+reth-chainspec = { path = "../reth/crates/chainspec" }
+reth-cli-commands = { path = "../reth/crates/cli/commands" }
+reth-cli-util = { path = "../reth/crates/cli/util" }
+reth-consensus = { path = "../reth/crates/consensus/consensus" }
+reth-consensus-common = { path = "../reth/crates/consensus/common" }
+reth-db = { path = "../reth/crates/storage/db" }
+reth-db-api = { path = "../reth/crates/storage/db-api" }
+reth-db-common = { path = "../reth/crates/storage/db-common" }
+reth-discv4 = { path = "../reth/crates/net/discv4" }
+reth-discv5 = { path = "../reth/crates/net/discv5" }
+reth-errors = { path = "../reth/crates/errors" }
+reth-eth-wire-types = { path = "../reth/crates/net/eth-wire-types" }
+reth-ethereum-payload-builder = { path = "../reth/crates/ethereum/payload" }
+reth-execution-errors = { path = "../reth/crates/evm/execution-errors" }
+reth-execution-types = { path = "../reth/crates/evm/execution-types" }
+reth-evm = { path = "../reth/crates/evm" }
+reth-evm-ethereum = { path = "../reth/crates/ethereum/evm" }
+reth-libmdbx = { path = "../reth/crates/storage/libmdbx-rs" }
+reth-network = { path = "../reth/crates/net/network" }
+reth-node-api = { path = "../reth/crates/node/api" }
+reth-node-builder = { path = "../reth/crates/node/builder" }
+reth-node-core = { path = "../reth/crates/node/core" }
+reth-node-ethereum = { path = "../reth/crates/ethereum/node" }
+reth-optimism-consensus = { path = "../reth/crates/optimism/consensus" }
+reth-optimism-payload-builder = { path = "../reth/crates/optimism/payload" }
+reth-optimism-node = { path = "../reth/crates/optimism/node" }
+reth-optimism-rpc = { path = "../reth/crates/optimism/rpc" }
+reth-payload-builder = { path = "../reth/crates/payload/builder" }
+reth-payload-builder-primitives = { path = "../reth/crates/payload/builder-primitives" }
+reth-payload-primitives = { path = "../reth/crates/payload/primitives" }
+reth-payload-util = { path = "../reth/crates/payload/util" }
+reth-primitives = { path = "../reth/crates/primitives" }
+reth-provider = { path = "../reth/crates/storage/provider" }
+reth-rpc = { path = "../reth/crates/rpc/rpc" }
+reth-rpc-api = { path = "../reth/crates/rpc/rpc-api" }
+reth-rpc-builder = { path = "../reth/crates/rpc/rpc-builder" }
+reth-rpc-eth-api = { path = "../reth/crates/rpc/rpc-eth-api" }
+reth-rpc-eth-types = { path = "../reth/crates/rpc/rpc-eth-types" }
+reth-rpc-layer = { path = "../reth/crates/rpc/rpc-layer" }
+reth-rpc-types-compat = { path = "../reth/crates/rpc/rpc-types-compat" }
+reth-storage-api = { path = "../reth/crates/storage/storage-api" }
+reth-tasks = { path = "../reth/crates/tasks" }
+reth-tracing = { path = "../reth/crates/tracing" }
+reth-transaction-pool = { path = "../reth/crates/transaction-pool" }
+reth-trie = { path = "../reth/crates/trie/trie" }
+reth-trie-db = { path = "../reth/crates/trie/db" }
+reth-trie-parallel = { path = "../reth/crates/trie/parallel" }

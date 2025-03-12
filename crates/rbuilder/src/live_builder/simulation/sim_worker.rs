@@ -28,7 +28,7 @@ use tracing::error;
 pub fn run_sim_worker<P>(
     worker_id: usize,
     ctx: Arc<Mutex<CurrentSimulationContexts>>,
-    provider: HashMap<u64, P>,
+    providers: HashMap<u64, P>,
     global_cancellation: CancellationToken,
 ) where
     P: StateProviderFactory,
@@ -52,48 +52,35 @@ pub fn run_sim_worker<P>(
             sleep(Duration::from_millis(500));
         };
 
-        println!("Brecht: simming 3");
-
-        // let mut provider_factories = HashMap::default();
-        // for (chain_id, provider_factory) in provider_factory.iter() {
-        //     provider_factories.insert(*chain_id, provider_factory);
-        //     // match provider_factory.check_consistency_and_reopen_if_needed(
-        //     //     current_sim_context.block_ctx.chains[chain_id].block_env.number.to(),
-        //     // ) {
-        //     //     Ok(provider_factory) => {
-        //     //         provider_factories.insert(*chain_id, provider_factory);
-        //     //     },
-        //     //     Err(err) => {
-        //     //         error!(?err, "Error while reopening provider factory");
-        //     //         // Decide whether to continue or break
-        //     //         continue;
-        //     //     }
-        //     // }
-        // }
+        let state_providers = providers
+            .iter()
+            .map(|(chain_id, provider)| {
+                let provider = provider
+                    .history_by_block_hash(
+                        current_sim_context
+                            .block_ctx
+                            .chains
+                            .get(chain_id)
+                            .unwrap()
+                            .attributes
+                            .parent,
+                    )
+                    .unwrap();
+                (*chain_id, Arc::from(provider))
+            })
+            .collect::<HashMap<_, _>>();
 
         let mut cached_reads = CachedReads::default();
         let mut last_sim_finished = Instant::now();
         while let Ok(task) = current_sim_context.requests.recv() {
+            println!("[rb] 🛼 sim worker got task: {:?}", task.id);
             let sim_thread_wait_time = last_sim_finished.elapsed();
             let sim_start = Instant::now();
 
-            let state_for_sim = provider_factories.iter().map(|(chain_id, provider_factory)| {
-                (*chain_id, Arc::<dyn StateProvider>::from(
-                    match provider_factory.history_by_block_hash(current_sim_context.block_ctx.chains[chain_id].attributes.parent) {
-                        Ok(state_provider) => state_provider,
-                        Err(err) => {
-                            error!(?err, "Error while getting state for block");
-                            // break here so we can try to get new context
-                            // @Metric
-                            break;
-                        }
-                    }
-                ))
-            }).collect();
 
             let start_time = Instant::now();
 
-            let mut block_state = BlockState::new_arc(state_for_sim).with_cached_reads(cached_reads);
+            let mut block_state = BlockState::new_arc(state_providers.clone()).with_cached_reads(cached_reads);
             let sim_result = simulate_order(
                 task.parents.clone(),
                 task.order.clone(),

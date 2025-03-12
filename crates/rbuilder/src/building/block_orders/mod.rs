@@ -99,18 +99,15 @@ impl SimulatedOrderSink for SimulatedOrderStore {
 pub fn block_orders_from_sim_orders(
     sim_orders: &[SimulatedOrder],
     sorting: Sorting,
-    state_provider: &HashMap<u64, &StateProviderBox>,
+    state_provider: &HashMap<u64, StateProviderBox>,
 ) -> ProviderResult<PrioritizedOrderStore> {
-    let mut onchain_nonces = vec![];
+    let mut onchain_nonces = HashMap::default();
     for order in sim_orders {
         for nonce in order.order.nonces() {
             let value = state_provider[&nonce.address.0]
                 .account_nonce(nonce.address.1)?
                 .unwrap_or_default();
-            onchain_nonces.push(AccountNonce {
-                account: nonce.address,
-                nonce: value,
-            });
+            onchain_nonces.insert(nonce.address, vec![AccountNonce { account: nonce.address, nonce: value}]);
         }
     }
     let mut block_orders = PrioritizedOrderStore::new(sorting, onchain_nonces);
@@ -139,11 +136,13 @@ mod test {
         pub fn new_1_account(nonce: u64) -> (AccountNonce, TestContext) {
             let mut data_gen = TestDataGenerator::default();
             let nonce = data_gen.create_account_nonce(nonce);
+            let mut onchain_nonces = HashMap::default();
+            onchain_nonces.insert(nonce.account, vec![nonce.clone()]);
             (
                 nonce.clone(),
                 TestContext {
                     data_gen,
-                    order_pool: PrioritizedOrderStore::new(Sorting::MaxProfit, vec![nonce]),
+                    order_pool: PrioritizedOrderStore::new(Sorting::MaxProfit, onchain_nonces),
                 },
             )
         }

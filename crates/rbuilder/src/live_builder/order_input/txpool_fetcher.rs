@@ -26,8 +26,9 @@ pub async fn subscribe_to_txpool_with_blobs(
 ) -> eyre::Result<JoinHandle<()>> {
     let ipc_path = config
         .ipc_path
+        .clone()
         .ok_or_else(|| eyre::eyre!("No IPC path configured"))?;
-    let ipc = IpcConnect::new(ipc_path);
+    let ipc = IpcConnect::new(ipc_path.clone());
     let provider = ProviderBuilder::new().on_ipc(ipc).await?;
 
     let handle = tokio::spawn(async move {
@@ -48,10 +49,11 @@ pub async fn subscribe_to_txpool_with_blobs(
             println!("Dani debug: Some txn arrived on {:?}", config.ipc_path);
 
             // TODO: Skip L1 transactions for now because circular
-            if config.ipc_path.to_str().unwrap() == "/tmp/reth.ipc" {
+            if ipc_path.to_str().unwrap() == "/tmp/reth.ipc" {
                 println!("skipping!");
                 continue;
             }
+
             let start = Instant::now();
 
             let tx_with_blobs = match get_tx_with_blobs(tx_hash, &provider).await {

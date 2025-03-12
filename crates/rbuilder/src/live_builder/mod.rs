@@ -111,7 +111,7 @@ where
     pub blocks_source: BlocksSourceType,
     pub run_sparse_trie_prefetcher: bool,
 
-    pub chain_chain_spec: Arc<ChainSpec>,
+    pub chain_spec: Arc<ChainSpec>,
     pub provider: P,
 
     pub coinbase_signer: Signer,
@@ -129,7 +129,7 @@ where
     pub orderpool_receiver: mpsc::Receiver<ReplaceableOrderPoolCommand>,
     pub sbundle_merger_selected_signers: Arc<Vec<Address>>,
 
-    pub layer2_info: Layer2Info<DB>,
+    pub layer2_info: Layer2Info<P>,
 }
 
 impl<P, BlocksSourceType: SlotSource> LiveBuilder<P, BlocksSourceType>
@@ -141,7 +141,7 @@ where
         Self { extra_rpc, ..self }
     }
 
-    pub fn with_builders_and_layer2_info(self, builders: Vec<Arc<dyn BlockBuildingAlgorithm<P>>>) -> Self {
+    pub fn with_builders(self, builders: Vec<Arc<dyn BlockBuildingAlgorithm<P>>>) -> Self {
         Self { builders, ..self }
     }
 
@@ -165,24 +165,8 @@ where
         let mut orderpool_subscribers = HashMap::default();
         let (header_sender, header_receiver) = mpsc::channel(CLEAN_TASKS_CHANNEL_SIZE);
 
-        let orderpool_subscriber = {
-            let (handle, sub) = start_orderpool_jobs(
-                self.order_input_config,
-                self.provider.clone(),
-                self.extra_rpc,
-                self.global_cancellation.clone(),
-                self.orderpool_sender,
-                self.orderpool_receiver,
-                header_receiver,
-            )
-            .await?;
-            inner_jobs_handles.push(handle);
-            sub
-        };
-        orderpool_subscribers.insert(self.chain_chain_spec.chain.id(), orderpool_subscriber);
-
-        let mut provider_factories: HashMap<u64, ProviderFactoryReopener<DB>> = HashMap::default();
-        provider_factories.insert(self.chain_chain_spec.chain.id(), self.provider.clone());
+        let mut providers= HashMap::default();
+        providers.insert(self.chain_spec.chain.id(), self.provider.clone());
 
         for (chain_id, node) in self.layer2_info.nodes.iter() {
             let orderpool_subscriber = {
@@ -191,25 +175,26 @@ where
                     node.provider_factory.clone(),
                     RpcModule::new(()),
                     self.global_cancellation.clone(),
+                    self.orderpool_sender.clone(),
+                    self.orderpool_receiver,
+                    header_receiver,
                 )
                 .await?;
                 inner_jobs_handles.push(handle);
                 sub
             };
             orderpool_subscribers.insert(*chain_id, orderpool_subscriber);
-            provider_factories.insert(*chain_id, node.provider_factory.clone());
+            providers.insert(*chain_id, node.provider_factory.clone());
         }
 
-        let order_simulation_pool = {
-            OrderSimulationPool::new(
-                provider_factories.clone(),
+        let order_simulation_pool = OrderSimulationPool::new(
+                providers.clone(),
                 self.simulation_threads,
                 self.global_cancellation.clone(),
-            )
-        };
+            );
 
         let mut builder_pool = BlockBuildingPool::new(
-            provider_factories.clone(),
+            providers.clone(),
             self.builders,
             self.sink_factory,
             orderpool_subscribers,
@@ -229,8 +214,8 @@ where
             }
         };
 
-        let mut all_chain_ids = vec![self.chain_chain_spec.chain.id()];
-        all_chain_ids.append(&mut provider_factories.keys().cloned().collect::<Vec<_>>());
+        let mut all_chain_ids = vec![self.chain_spec.chain.id()];
+        all_chain_ids.append(&mut providers.keys().cloned().collect::<Vec<_>>());
 
         while let Some(payload) = payload_events_channel.recv().await {
             println!("Payload_attributes event received: {:?}", payload);
@@ -300,92 +285,88 @@ where
 
             let root_hasher = Arc::from(self.provider.root_hasher(payload.parent_block_hash()));
 
-            if let Some(block_ctx) = ChainBlockBuildingContext::from_attributes(
+            let mut all_block_ctxs = HashMap::default();
+            let l1_block_ctx = ChainBlockBuildingContext::from_attributes(
                 payload.payload_attributes_event.clone(),
                 &parent_header,
                 self.coinbase_signer.clone(),
-                self.chain_chain_spec.clone(),
+                self.chain_spec.clone(),
                 self.blocklist.clone(),
                 Some(payload.suggested_gas_limit),
                 self.extra_data.clone(),
                 None,
                 root_hasher,
-            ) {
-                builder_pool.start_block_building(
-                    payload,
-                    block_ctx,
-                    self.global_cancellation.clone(),
-                    time_until_slot_end.try_into().unwrap_or_default(),
-                );
 
-                // TODO(Brecht): hack to wait until latest L2 block is also created, which is later then when we get the payload build event
-                sleep(Duration::from_millis(4000));
+            ).unwrap();
+            all_block_ctxs.insert(self.chain_spec.chain.id(), l1_block_ctx.clone());
 
-                println!("payload: {:?}", payload);
+            // TODO(Brecht): hack to wait until latest L2 block is also created, which is later then when we get the payload build event
+            sleep(Duration::from_millis(4000));
 
-                // TODO: Brecht
-                let mut chains = HashMap::default();
-                for (&chain_id, _) in provider_factories.iter() {
-                    println!("setting up {}", chain_id);
-                    let mut block_ctx = block_ctx.clone();
-                    let mut chain_spec = (*block_ctx.chain_spec).clone();
-                    println!("chain spec chain id: {}", chain_spec.chain.id());
-                    if chain_spec.chain.id() != chain_id {
-                        println!("updating ctx for {}", chain_id);
-                        let latest_block = self.layer2_info.get_latest_block(chain_id, BlockId::Number(BlockNumberOrTag::Latest)).await?;
-                        if let Some(latest_block) = latest_block {
-                            println!("[{}] Building on top of {:?}", chain_id, latest_block.header.hash);
-                            //let reth_block: Block = latest_block.try_into().unwrap();
-                            block_ctx = ChainBlockBuildingContext::from_attributes(
-                                payload.payload_attributes_event.clone(),
-                                &latest_block.header.clone().try_into().unwrap(),
-                                self.coinbase_signer.clone(),
-                                self.chain_chain_spec.clone(),
-                                self.blocklist.clone(),
-                                None,
-                                Vec::new(),
-                                None,
-                            );
-                            block_ctx.attributes.parent = latest_block.header.hash;
-                            //block_ctx.attributes.parent_beacon_block_root = Some(B256::ZERO);
-                            block_ctx.block_env.number = U256::from(latest_block.header.number + 1);
-                            //block_ctx.block_env.basefee = U256::from(latest_block.header.base_fee_per_gas.unwrap_or_default()); // TODO(Brecht): need to calculate the new one?
-                            //block_ctx.block_env.prevrandao = Some(B256::ZERO);
-                            //block_ctx.block_env.difficulty = U256::ZERO;
-                            //block_ctx.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(0));
-                            block_ctx.block_env.coinbase = ChainAddress(chain_id, block_ctx.block_env.coinbase.1);
-                        } else {
-                            println!("failed to get latest block for {}", chain_id);
-                        }
-                        chain_spec.chain = Chain::from(chain_id);
-                        chain_spec.genesis.config.chain_id = chain_id;
-                        block_ctx.chain_spec = chain_spec.into();
+            println!("payload: {:?}", payload);
+
+            // TODO: Brecht
+            for (&chain_id, provider) in providers.iter() {
+                println!("setting up {}", chain_id);
+                let mut block_ctx = l1_block_ctx.clone();
+                let mut chain_spec = (*block_ctx.chain_spec).clone();
+                println!("chain spec chain id: {}", chain_spec.chain.id());
+                if chain_spec.chain.id() != chain_id {
+                    println!("updating ctx for {}", chain_id);
+                    let root_hasher = Arc::from(provider.root_hasher(payload.parent_block_hash()));
+                    let latest_block = self.layer2_info.get_latest_block(chain_id, BlockId::Number(BlockNumberOrTag::Latest)).await?;
+                    if let Some(latest_block) = latest_block {
+                        println!("[{}] Building on top of {:?}", chain_id, latest_block.header.hash);
+                        block_ctx = ChainBlockBuildingContext::from_attributes(
+                            payload.payload_attributes_event.clone(),
+                            &latest_block.header.clone(),
+                            self.coinbase_signer.clone(),
+                            self.chain_spec.clone(),
+                            self.blocklist.clone(),
+                            None,
+                            Vec::new(),
+                            None,
+                            root_hasher,
+                        ).unwrap();
+                        block_ctx.attributes.parent = latest_block.header.hash;
+                        //block_ctx.attributes.parent_beacon_block_root = Some(B256::ZERO);
+                        block_ctx.block_env.number = U256::from(latest_block.header.number + 1);
+                        //block_ctx.block_env.basefee = U256::from(latest_block.header.base_fee_per_gas.unwrap_or_default()); // TODO(Brecht): need to calculate the new one?
+                        //block_ctx.block_env.prevrandao = Some(B256::ZERO);
+                        //block_ctx.block_env.difficulty = U256::ZERO;
+                        //block_ctx.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(0));
+                        block_ctx.block_env.coinbase = ChainAddress(chain_id, block_ctx.block_env.coinbase.1);
+                    } else {
+                        println!("failed to get latest block for {}", chain_id);
                     }
-                    println!("Latest block hash for {} is {}", chain_id, block_ctx.attributes.parent);
-                    println!("[{}] attributes: {:?}", chain_id, block_ctx.attributes);
-                    println!("[{}] block_env: {:?}", chain_id, block_ctx.block_env);
-                    //println!("[{}]  block_ctx.chain_spec: {:?}", chain_id, block_ctx.chain_spec);
-                    chains.insert(chain_id, block_ctx);
+                    chain_spec.chain = Chain::from(chain_id);
+                    chain_spec.genesis.config.chain_id = chain_id;
+                    block_ctx.chain_spec = chain_spec.into();
                 }
-
-                let super_block_ctx = BlockBuildingContext::from_attributes(
-                    self.chain_chain_spec.chain.id(),
-                    chains,
-                    Some(self.coinbase_signer.clone()),
-                );
-
-                println!("Start building");
-                builder_pool.start_block_building(
-                    payload,
-                    super_block_ctx,
-                    self.global_cancellation.clone(),
-                    time_until_slot_end.try_into().unwrap_or_default(),
-                );
-
-                if let Some(watchdog_sender) = watchdog_sender.as_ref() {
-                    watchdog_sender.try_send(()).unwrap_or_default();
-                };
+                println!("Latest block hash for {} is {}", chain_id, block_ctx.attributes.parent);
+                println!("[{}] attributes: {:?}", chain_id, block_ctx.attributes);
+                println!("[{}] block_env: {:?}", chain_id, block_ctx.block_env);
+                //println!("[{}]  block_ctx.chain_spec: {:?}", chain_id, block_ctx.chain_spec);
+                all_block_ctxs.insert(chain_id, block_ctx);
             }
+
+            let super_block_ctx = BlockBuildingContext::from_attributes(
+                self.chain_spec.chain.id(),
+                all_block_ctxs,
+                Some(self.coinbase_signer.clone()),
+            );
+
+            println!("Start building");
+            builder_pool.start_block_building(
+                payload,
+                super_block_ctx,
+                self.global_cancellation.clone(),
+                time_until_slot_end.try_into().unwrap_or_default(),
+            );
+
+            if let Some(watchdog_sender) = watchdog_sender.as_ref() {
+                watchdog_sender.try_send(()).unwrap_or_default();
+            };
         }
 
         info!("Builder shutting down");

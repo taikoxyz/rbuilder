@@ -636,7 +636,7 @@ impl SubmitBlockRequest {
         match self {
             SubmitBlockRequest::Capella(req) => ExecutionPayload::V2(req.0.execution_payload.clone()),
             SubmitBlockRequest::Deneb(req) => ExecutionPayload::V3(req.0.execution_payload.clone()),
-            SubmitBlockRequest::Electra(req) => ExecutionPayload::V4(req.0.execution_payload.clone()),
+            SubmitBlockRequest::Electra(req) => ExecutionPayload::V3(req.0.execution_payload.clone()),
         }
     }
 }

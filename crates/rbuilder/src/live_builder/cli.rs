@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use clap::Parser;
 use reth::revm::cached::SyncCachedReads as CachedReads;
@@ -55,6 +55,7 @@ pub trait LiveBuilderConfig: Debug + DeserializeOwned + Sync {
     fn new_builder<P>(
         &self,
         provider: P,
+        l2_provider: HashMap<u64, P>,
         cancellation_token: CancellationToken,
     ) -> impl std::future::Future<Output = eyre::Result<LiveBuilder<P, MevBoostSlotDataGenerator>>> + Send
     where
@@ -121,7 +122,7 @@ where
     )
     .await?;
     let provider = config.base_config().create_provider_factory()?;
-    let builder = config.new_builder(provider, cancel.clone()).await?;
+    let builder = config.new_builder(provider, HashMap::default(), cancel.clone()).await?;
 
     let ctrlc = tokio::spawn(async move {
         ctrl_c().await.unwrap_or_default();

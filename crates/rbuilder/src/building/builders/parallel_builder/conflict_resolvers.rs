@@ -3,14 +3,14 @@ use alloy_primitives::{Address, U256};
 use eyre::Result;
 use itertools::Itertools;
 use rand::{seq::SliceRandom, SeedableRng};
-use reth::{providers::StateProvider, revm::cached::CachedReads};
+use reth::{providers::StateProvider, revm::cached::SyncCachedReads as CachedReads};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::trace;
 
 use super::{
     simulation_cache::{CachedSimulationState, SharedSimulationCache},
-    Algorithm, ConflictTask, ResolutionResult,
+    Algorithm, ConflictTask, ResolutionResult, SyncResolutionResult,
 };
 
 use crate::{
@@ -22,7 +22,7 @@ use crate::{
 /// Context for resolving conflicts in merging tasks.
 #[derive(Debug)]
 pub struct ResolverContext<P> {
-    pub provider: P,
+    pub providers: HashMap<u64, P>,
     pub ctx: BlockBuildingContext,
     pub cancellation_token: CancellationToken,
     pub cache: Option<CachedReads>,
@@ -31,7 +31,7 @@ pub struct ResolverContext<P> {
 
 impl<P> ResolverContext<P>
 where
-    P: StateProviderFactory,
+    P: StateProviderFactory + Clone,
 {
     /// Creates a new `ResolverContext`.
     ///
@@ -43,14 +43,14 @@ where
     /// * `cache` - Optional cached reads for optimization.
     /// * `simulation_cache` - Shared cache for simulation results.
     pub fn new(
-        provider: P,
+        providers: HashMap<u64, P>,
         ctx: BlockBuildingContext,
         cancellation_token: CancellationToken,
         cache: Option<CachedReads>,
         simulation_cache: Arc<SharedSimulationCache>,
     ) -> Self {
         ResolverContext {
-            provider,
+            providers,
             ctx,
             cancellation_token,
             cache,
@@ -58,7 +58,7 @@ where
         }
     }
 
-    /// Runs a merging task and returns the best [ResolutionResult] found.
+        /// Runs a merging task and returns the best [ResolutionResult] found.
     ///
     /// # Arguments
     ///
@@ -67,16 +67,35 @@ where
     /// # Returns
     ///
     /// The best [ResolutionResult] and corresponding sequence of order indices found.
-    pub fn run_conflict_task(&mut self, task: ConflictTask) -> Result<ResolutionResult> {
+    pub fn run_conflict_task(&mut self, task: ConflictTask) -> Result<SyncResolutionResult> {
+        self
+            .providers
+            .clone()
+            .iter()
+            .map(|(chain_id, provider)| {
+                let state_provider = provider
+                    .history_by_block_hash(self.ctx.chains.get(chain_id).unwrap().attributes.parent)
+                    .map(Arc::new)
+                    .expect("Failed to create state provider");
+                if let Ok(result) = self.run_conflict_task_inner(state_provider, task.clone()) {
+                    Ok((*chain_id, result))
+                } else {
+                    Err(eyre::eyre!("Failed to run conflict task"))
+                }
+            })
+            .collect()
+    }
+
+    pub fn run_conflict_task_inner(
+        &mut self, 
+        state_provider: Arc<dyn StateProvider>, 
+        task: ConflictTask
+    ) -> Result<ResolutionResult> {
         trace!(
             "run_conflict_task: {:?} with algorithm {:?}",
             task.group.id,
             task.algorithm
         );
-        let state_provider = self
-            .provider
-            .history_by_block_hash(self.ctx.attributes.parent)?;
-        let state_provider: Arc<dyn StateProvider> = Arc::from(state_provider);
 
         let sequence_to_try = generate_sequences_of_orders_to_try(&task);
 
@@ -288,17 +307,19 @@ where
         cached_state_option: &Option<Arc<CachedSimulationState>>,
         state_provider: &Arc<dyn StateProvider>,
     ) -> BlockState {
+        let mut providers = HashMap::default();
+        providers.insert(0, state_provider.clone());
         if let Some(cached_state) = &cached_state_option {
             // Use cached state
-            BlockState::new_arc(state_provider.clone())
+            BlockState::new_arc(providers.clone())
                 .with_cached_reads(cached_state.cached_reads.clone())
                 .with_bundle_state(cached_state.bundle_state.clone())
         } else {
             // If we don't have a cached state from the simulation cache, we use the cached reads from the block state in some cases
             if let Some(cache) = &self.cache {
-                BlockState::new_arc(state_provider.clone()).with_cached_reads(cache.clone())
+                BlockState::new_arc(providers.clone()).with_cached_reads(cache.clone())
             } else {
-                BlockState::new_arc(state_provider.clone())
+                BlockState::new_arc(providers.clone())
             }
         }
     }
@@ -311,6 +332,7 @@ where
         total_profit: U256,
         per_order_profits: &[(OrderId, U256)],
     ) {
+        // TODO (Cecilia)
         let (cached_reads, bundle_state, _) = state.clone().into_parts();
         let cached_simulation_state = CachedSimulationState {
             cached_reads,

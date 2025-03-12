@@ -62,14 +62,14 @@ where
     P: StateProviderFactory + Clone + 'static,
 {
     let mut order_intake_consumer = OrderIntakeConsumer::new(
-        input.provider.clone(),
+        input.providers.clone(),
         input.input,
         input.ctx.chains.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect(),
         config.sorting,
     );
 
     let mut builder = OrderingBuilderContext::new(
-        input.provider.clone(),
+        input.providers.clone(),
         input.builder_name,
         input.ctx,
         config.clone(),
@@ -130,20 +130,19 @@ pub fn backtest_simulate_block<P>(
 where
     P: StateProviderFactory + Clone + 'static,
 {
-    let mut provider_factories = HashMap::default();
-    provider_factories.insert(input.ctx.parent_chain_id, input.provider.clone());
-
     let mut ctxs = HashMap::default();
     ctxs.insert(input.ctx.parent_chain_id, input.ctx.clone());
 
     let use_suggested_fee_recipient_as_coinbase = ordering_config.coinbase_payment;
-    let state_provider = input
-        .provider
-        .history_by_block_number(input.ctx.chains[&input.ctx.parent_chain_id].block_env.number.to::<u64>() - 1)?;
+    let state_providers = input
+        .providers
+        .iter()
+        .map(|(chain_id, provider)| (*chain_id, provider.history_by_block_number(input.ctx.chains[chain_id].block_env.number.to::<u64>() - 1).unwrap()))
+        .collect::<HashMap<_, _>>();
     let block_orders =
-        block_orders_from_sim_orders(input.sim_orders, ordering_config.sorting, &state_provider)?;
+        block_orders_from_sim_orders(input.sim_orders, ordering_config.sorting, &state_providers)?;
     let mut builder = OrderingBuilderContext::new(
-        input.provider.clone(),
+        input.providers.clone(),
         input.builder_name,
         input.ctx.clone(),
         ordering_config,
@@ -198,7 +197,7 @@ where
 
 #[derive(Debug)]
 pub struct OrderingBuilderContext<P> {
-    provider: HashMap<u64, P>,
+    providers: HashMap<u64, P>,
     builder_name: String,
     ctx: BlockBuildingContext,
     config: OrderingBuilderConfig,
@@ -216,13 +215,13 @@ where
     P: StateProviderFactory + Clone + 'static,
 {
     pub fn new(
-        provider: HashMap<u64, P>,
+        providers: HashMap<u64, P>,
         builder_name: String,
         ctx: BlockBuildingContext,
         config: OrderingBuilderConfig,
     ) -> Self {
         Self {
-            provider,
+            providers,
             builder_name,
             ctx,
             config,
@@ -260,8 +259,7 @@ where
 
         // Create a new ctx to remove builder_signer if necessary
         let new_ctx = self.ctx.clone();
-        for (chain_id, provider_factory) in self.provider_factory.iter() {
-            check_provider_factory_health(self.ctx.chains[chain_id].block(), provider_factory)?;
+        for (chain_id, provider) in self.providers.iter() {
             if use_suggested_fee_recipient_as_coinbase {
                 self.ctx.chains.get_mut(chain_id).unwrap().modify_use_suggested_fee_recipient_as_coinbase();
             }
@@ -271,7 +269,8 @@ where
         self.order_attempts.clear();
 
         let mut block_building_helper = BlockBuildingHelperFromProvider::new(
-            self.provider.clone(),
+            self.providers.clone(),
+            
             new_ctx,
             self.cached_reads.take(),
             self.builder_name.clone(),
@@ -378,7 +377,7 @@ where
 
     fn build_blocks(&self, input: BlockBuildingAlgorithmInput<P>) {
         let live_input = LiveBuilderInput {
-            provider: input.provider,
+            providers: input.providers,
             ctx: input.ctx.clone(),
             input: input.input,
             sink: input.sink,

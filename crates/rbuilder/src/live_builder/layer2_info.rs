@@ -1,9 +1,10 @@
 use std::marker::PhantomData;
 use std::net::Ipv4Addr;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
-use ahash::HashMap;
+use std::collections::HashMap;
 use alloy_primitives::U256;
 use alloy_provider::{IpcConnect, ProviderBuilder, Provider, RootProvider};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactionsKind};
@@ -12,20 +13,20 @@ use alloy_pubsub::PubSubFrontend;
 use eyre::Result;
 use reth::chainspec::chain_value_parser;
 use reth_db::{Database, DatabaseEnv};
-use reth_provider::{DatabaseProviderFactory, StateProviderFactory};
+use reth_node_api::{NodeTypesWithDB, NodeTypesWithDBAdapter};
+use reth_node_ethereum::EthereumNode;
 use tracing::warn;
 
+use crate::provider::StateProviderFactory;
 use crate::utils::ProviderFactoryReopener;
 
 use super::config::create_provider_factory;
 use super::order_input::OrderInputConfig;
 
 
-pub fn create_gwyneth_providers<P, DB>(chain_ids: Vec<u64>) -> eyre::Result<HashMap<u64, P>>
-where
-    DB: Database + Clone + 'static,
-    P: DatabaseProviderFactory<DB> + StateProviderFactory + Clone + 'static,
-    P: From<ProviderFactoryReopener<Arc<DatabaseEnv>>>,
+pub fn create_gwyneth_providers(
+    chain_ids: Vec<u64>
+) -> Result<HashMap<u64, ProviderFactoryReopener<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>>>
 {
     let datadir_base = "/data/reth/gwyneth";
     let chain = chain_value_parser("/network-configs/genesis.json").expect("failed to load gwyneth chain spec");
@@ -37,39 +38,41 @@ where
             Some(Path::new(&format!("{}-{}/db", datadir_base, chain_id).to_owned())),
             Some(Path::new(&format!("{}-{}/static_files", datadir_base, chain_id).to_owned())),
             chain.clone(),
+            None,
         )?;
-        nodes.insert(chain_id, provider_factory.into());
+        // let provider_factory = provider_factory.check_consistency_and_reopen_if_needed()?;
+        nodes.insert(chain_id, provider_factory);
     }
 
     Ok(nodes)
 }
 
+
+
 #[derive(Debug)]
-pub struct GwynethNode<P, DB> {
+pub struct GwynethNode<P> {
     pub provider_factory: P,
     pub order_input_config: OrderInputConfig,
-    _phantom: PhantomData<DB>,
 }
 
 #[derive(Debug)]
-pub struct Layer2Info<P, DB> {
+pub struct Layer2Info<P> {
     pub ipc_providers: Arc<RwLock<HashMap<u64, (RootProvider<PubSubFrontend>, String)>>>,  // Changed to RwLock
     pub data_dirs: HashMap<u64, PathBuf>,
-    pub nodes: HashMap<u64, GwynethNode<P, DB>>,
+    pub nodes: HashMap<u64, GwynethNode<P>>,
 }
 
-impl<P, DB> PartialEq for Layer2Info<P, DB> {
+impl<P> PartialEq for Layer2Info<P> {
     fn eq(&self, other: &Self) -> bool {
         self.data_dirs == other.data_dirs
     }
 }
 
-impl<P, DB> Eq for Layer2Info<P, DB> {}
+impl<P> Eq for Layer2Info<P> {}
 
-impl<P, DB> Layer2Info<P, DB>
+impl<P> Layer2Info<P>
 where
-    DB: Database + Clone + 'static,
-    P: DatabaseProviderFactory + StateProviderFactory + Clone + 'static,
+    P: StateProviderFactory + Clone + 'static,
 {
     pub async fn new(chain_ids: Vec<u64>, provider_factories: HashMap<u64, P>) -> Result<Self> {
         let mut providers = HashMap::default();
@@ -110,7 +113,6 @@ where
                     Duration::from_millis(50),
                     10_000,
                 ),
-                _phantom: PhantomData,
             });
         }
 
@@ -122,7 +124,7 @@ where
     }
 
     async fn ensure_connection(&self, chain_id: &u64) -> bool {
-        let mut providers = self.ipc_providers.lock().unwrap();
+        let mut providers = self.ipc_providers.try_write().unwrap();
         if let Some((provider, ipc_path)) = providers.get_mut(chain_id) {
             match provider.get_chain_id().await {
                 Ok(_) => true,
@@ -164,7 +166,7 @@ where
 
     pub async fn get_chain_id(&self, chain_id: &u64) -> Result<Option<U256>> {
         if self.ensure_connection(chain_id).await {
-            let providers = self.ipc_providers.lock().unwrap();
+            let providers = self.ipc_providers.try_read().unwrap();
             if let Some((provider, _)) = providers.get(chain_id) {
                 let chain_id = U256::from(provider.get_chain_id().await?);
                 Ok(Some(chain_id))

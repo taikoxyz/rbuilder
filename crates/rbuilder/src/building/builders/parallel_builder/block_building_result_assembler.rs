@@ -4,7 +4,7 @@ use super::{
 };
 use ahash::HashMap;
 use alloy_primitives::utils::format_ether;
-use reth::revm::cached::CachedReads;
+use reth::revm::cached::SyncCachedReads as CachedReads;
 use std::{sync::Arc, time::Instant};
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
@@ -23,7 +23,7 @@ use crate::{
 
 /// Assembles block building results from the best orderings of order groups.
 pub struct BlockBuildingResultAssembler<P> {
-    provider: P,
+    providers: HashMap<u64, P>,
     ctx: BlockBuildingContext,
     cancellation_token: CancellationToken,
     cached_reads: Option<CachedReads>,
@@ -53,7 +53,7 @@ where
     pub fn new(
         config: &ParallelBuilderConfig,
         best_results: Arc<BestResults>,
-        provider: P,
+        providers: HashMap<u64, P>,
         ctx: BlockBuildingContext,
         cancellation_token: CancellationToken,
         builder_name: String,
@@ -61,7 +61,7 @@ where
         sink: Option<Arc<dyn UnfinishedBlockBuildingSink>>,
     ) -> Self {
         Self {
-            provider,
+            providers,
             ctx,
             cancellation_token,
             cached_reads: None,
@@ -193,7 +193,7 @@ where
         }
 
         let mut block_building_helper = BlockBuildingHelperFromProvider::new(
-            self.provider.clone(),
+            self.providers.clone(),
             ctx,
             self.cached_reads.clone(),
             self.builder_name.clone(),
@@ -260,7 +260,7 @@ where
         orders_closed_at: OffsetDateTime,
     ) -> eyre::Result<Box<dyn BlockBuildingHelper>> {
         let mut block_building_helper = BlockBuildingHelperFromProvider::new(
-            self.provider.clone(),
+            self.providers.clone(),
             self.ctx.clone(),
             None, // No cached reads for backtest start
             String::from("backtest_builder"),

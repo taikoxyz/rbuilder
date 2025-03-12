@@ -91,7 +91,7 @@ async fn main() -> eyre::Result<()> {
         simulation_threads: 1,
         blocks_source: payload_event,
         order_input_config,
-        chain_chain_spec: chain_spec.clone(),
+        chain_spec: chain_spec.clone(),
         provider: create_provider_factory(
             Some(&RETH_DB_PATH.parse::<PathBuf>().unwrap()),
             None,

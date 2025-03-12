@@ -19,9 +19,9 @@ use crate::{
     building::{
         builders::{
             ordering_builder::{OrderingBuilderConfig, OrderingBuildingAlgorithm},
-            parallel_builder::{
-                parallel_build_backtest, ParallelBuilderConfig, ParallelBuildingAlgorithm,
-            },
+            // parallel_builder::{
+            //     parallel_build_backtest, ParallelBuilderConfig, ParallelBuildingAlgorithm,
+            // },
             BacktestSimulateBlockInput, Block, BlockBuildingAlgorithm,
         },
         Sorting,
@@ -48,7 +48,7 @@ use ethereum_consensus::{
 };
 use eyre::Context;
 use lazy_static::lazy_static;
-use reth::revm::cached::CachedReads;
+use reth::revm::cached::SyncCachedReads as CachedReads;
 use reth_chainspec::{Chain, ChainSpec, NamedChain};
 use reth_db::DatabaseEnv;
 use reth_node_api::NodeTypesWithDBAdapter;
@@ -80,6 +80,9 @@ pub enum SpecificBuilderConfig {
     ParallelBuilder(ParallelBuilderConfig),
     OrderingBuilder(OrderingBuilderConfig),
 }
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+struct ParallelBuilderConfig;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct BuilderConfig {
@@ -328,6 +331,7 @@ impl LiveBuilderConfig for Config {
     async fn new_builder<P>(
         &self,
         provider: P,
+        l2_providers: HashMap<u64, P>,
         cancellation_token: tokio_util::sync::CancellationToken,
     ) -> eyre::Result<super::LiveBuilder<P, MevBoostSlotDataGenerator>>
     where
@@ -367,6 +371,7 @@ impl LiveBuilderConfig for Config {
                 sink_factory,
                 payload_event,
                 provider,
+                l2_providers,
                 self.base_config.gwyneth_chain_ids.clone(),
             )
             .await?;
@@ -398,7 +403,8 @@ impl LiveBuilderConfig for Config {
                 crate::building::builders::ordering_builder::backtest_simulate_block(config, input)
             }
             SpecificBuilderConfig::ParallelBuilder(config) => {
-                parallel_build_backtest::<P>(input, config)
+                // parallel_build_backtest::<P>(input, config)
+                unimplemented!()
             }
         }
     }
@@ -483,13 +489,18 @@ impl Default for Config {
                         build_duration_deadline_ms: None,
                     }),
                 },
+                // BuilderConfig {
+                //     name: String::from("parallel"),
+                //     builder: SpecificBuilderConfig::ParallelBuilder(ParallelBuilderConfig {
+                //         discard_txs: true,
+                //         num_threads: 25,
+                //         coinbase_payment: false,
+                //     }),
+                // },
+
                 BuilderConfig {
                     name: String::from("parallel"),
-                    builder: SpecificBuilderConfig::ParallelBuilder(ParallelBuilderConfig {
-                        discard_txs: true,
-                        num_threads: 25,
-                        coinbase_payment: false,
-                    }),
+                    builder: SpecificBuilderConfig::ParallelBuilder(ParallelBuilderConfig {}),
                 },
             ],
         }
@@ -562,7 +573,8 @@ where
             Arc::new(OrderingBuildingAlgorithm::new(order_cfg, cfg.name))
         }
         SpecificBuilderConfig::ParallelBuilder(parallel_cfg) => {
-            Arc::new(ParallelBuildingAlgorithm::new(parallel_cfg, cfg.name))
+            // Arc::new(ParallelBuildingAlgorithm::new(parallel_cfg, cfg.name))
+            unimplemented!()
         }
     }
 }
@@ -629,6 +641,9 @@ lazy_static! {
                 authorization_header: None,
                 builder_id_header: None,
                 api_token_header: None,
+                l1_proposer_pk: None,
+                l1_rpc_url: None,
+                l1_smart_contract_address: None,
             },
         );
         map.insert(
@@ -644,6 +659,9 @@ lazy_static! {
                 authorization_header: None,
                 builder_id_header: None,
                 api_token_header: None,
+                l1_proposer_pk: None,
+                l1_rpc_url: None,
+                l1_smart_contract_address: None,
             },
         );
         map.insert(
@@ -659,6 +677,9 @@ lazy_static! {
                 authorization_header: None,
                 builder_id_header: None,
                 api_token_header: None,
+                l1_proposer_pk: None,
+                l1_rpc_url: None,
+                l1_smart_contract_address: None,
             },
         );
         map.insert(
@@ -674,6 +695,9 @@ lazy_static! {
                 authorization_header: None,
                 builder_id_header: None,
                 api_token_header: None,
+                l1_proposer_pk: None,
+                l1_rpc_url: None,
+                l1_smart_contract_address: None,
             },
         );
         map.insert(
@@ -689,6 +713,9 @@ lazy_static! {
                 authorization_header: None,
                 builder_id_header: None,
                 api_token_header: None,
+                l1_proposer_pk: None,
+                l1_rpc_url: None,
+                l1_smart_contract_address: None,
             },
         );
         map

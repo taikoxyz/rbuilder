@@ -1,7 +1,6 @@
 use std::{cmp::Ordering, collections::hash_map::Entry};
 
 use ahash::{HashMap, HashSet};
-use alloy_primitives::Address;
 use priority_queue::PriorityQueue;
 use revm_primitives::ChainAddress;
 
@@ -68,7 +67,7 @@ pub struct PrioritizedOrderStore {
 impl PrioritizedOrderStore {
     pub fn new(
         priority: Sorting,
-        initial_onchain_nonces: HashMap<ChainAddress, impl IntoIterator<Item = AccountNonce>>,
+        initial_onchain_nonces: impl IntoIterator<Item = AccountNonce>,
     ) -> Self {
         let mut onchain_nonces = HashMap::default();
         for onchain_nonce in initial_onchain_nonces {

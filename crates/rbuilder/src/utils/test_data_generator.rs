@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, BlockHash, TxHash, U256};
 use uuid::Uuid;
-
+use revm_primitives::{ChainAddress, OnChain};
 /// TestDataGenerator allows you to create unique test objects with unique content, it tries to use different numbers for every field it sets since it may help debugging.
 /// The idea is that each module creates its own TestDataGenerator that creates specific data needed in each context.
 /// Ideally all other TestDataGenerators will contain one instance of this one for the basic stuff, ideally if several TestDataGenerators are combined the should share this TestDataGenerator
@@ -36,6 +36,10 @@ impl TestDataGenerator {
 
     pub fn create_address(&mut self) -> Address {
         Address::repeat_byte(self.create_u8())
+    }
+
+    pub fn create_chain_address(&mut self) -> ChainAddress {
+        Address::repeat_byte(self.create_u8()).on_chain(self.create_u64())
     }
 
     pub fn create_block_hash(&mut self) -> BlockHash {

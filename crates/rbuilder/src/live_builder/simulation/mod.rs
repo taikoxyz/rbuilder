@@ -51,7 +51,7 @@ pub struct CurrentSimulationContexts {
 
 #[derive(Debug)]
 pub struct OrderSimulationPool<P> {
-    provider: HashMap<u64, P>,
+    providers: HashMap<u64, P>,
     running_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
     current_contexts: Arc<Mutex<CurrentSimulationContexts>>,
     worker_threads: Vec<std::thread::JoinHandle<()>>,
@@ -72,7 +72,7 @@ where
 {
     pub fn new(provider: HashMap<u64, P>, num_workers: usize, global_cancellation: CancellationToken) -> Self {
         let mut result = Self {
-            provider,
+            providers: provider,
             running_tasks: Arc::new(Mutex::new(Vec::new())),
             current_contexts: Arc::new(Mutex::new(CurrentSimulationContexts {
                 contexts: HashMap::default(),
@@ -81,7 +81,7 @@ where
         };
         for i in 0..num_workers {
             let ctx = Arc::clone(&result.current_contexts);
-            let provider = result.provider.clone();
+            let provider = result.providers.clone();
             let cancel = global_cancellation.clone();
             let handle = std::thread::Builder::new()
                 .name(format!("sim_thread:{}", i))
@@ -107,18 +107,15 @@ where
     ) -> SlotOrderSimResults {
         let (slot_sim_results_sender, slot_sim_results_receiver) = mpsc::channel(10_000);
 
-        let providers: HashMap<u64, _> = self.provider_factory.iter().map(|(chain_id, factory)| (*chain_id, factory.provider_factory_unchecked())).collect();
-
         let ctx = {
             // use random coinbase for simulations to make top of the block simulation bypass harder
             let mut ctx = ctx;
             let signer = Signer::random();
-            ctx.block_env.coinbase = signer.address;
             ctx.builder_signer = Some(signer);
             ctx
         };
 
-        let provider = self.provider.clone();
+        let providers = self.providers.clone();
         let current_contexts = Arc::clone(&self.current_contexts);
         let block_context: BlockContextId = gen_uid();
         //let span = info_span!("sim_ctx", block = ctx.block_env.number.to::<u64>(), parent = ?ctx.attributes.parent);
@@ -126,9 +123,14 @@ where
         let handle = tokio::spawn(
             async move {
                 for (_chain_id, new_order_sub) in input {
-                    let sim_tree = SimTree::new(providers.clone(), ctx.chains.iter().map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent)).collect());
-                    let sim_tree = SimTree::new(provider, ctx.attributes.parent);
-                    let new_order_sub = input.new_order_sub;
+                    let sim_tree = SimTree::new(
+                        providers.clone(),
+                        ctx.chains
+                            .iter()
+                            .map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent))
+                            .collect(),
+                    );
+                    let new_order_sub = new_order_sub.new_order_sub;
                     let (sim_req_sender, sim_req_receiver) = flume::unbounded();
                     let (sim_results_sender, sim_results_receiver) = mpsc::channel(1024);
                     {
@@ -216,7 +218,7 @@ mod tests {
         orders_for_blocks.insert(test_context.chain_spec.chain.id(), orders_for_block);
         orders_for_blocks.insert(test_context.chain_spec.chain.id() + 1, orders_for_block2);
         let mut sim_results = sim_pool.spawn_simulation_job(
-            test_context.block_building_context(),
+            test_context.block_building_context().clone(),
             orders_for_blocks,
             cancel.clone(),
         );
