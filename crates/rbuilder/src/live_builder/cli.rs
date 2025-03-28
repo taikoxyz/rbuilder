@@ -1,5 +1,6 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
+use ahash::HashMap;
 use clap::Parser;
 use reth::revm::cached::SyncCachedReads as CachedReads;
 use serde::de::DeserializeOwned;

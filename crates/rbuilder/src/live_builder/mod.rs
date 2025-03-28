@@ -163,20 +163,22 @@ where
         let mut payload_events_channel = self.blocks_source.recv_slot_channel();
 
         let mut orderpool_subscribers = HashMap::default();
-        let (header_sender, header_receiver) = mpsc::channel(CLEAN_TASKS_CHANNEL_SIZE);
 
         let mut providers= HashMap::default();
         providers.insert(self.chain_spec.chain.id(), self.provider.clone());
+        let mut header_senders = Vec::new();
 
         for (chain_id, node) in self.layer2_info.nodes.iter() {
+            let (header_sender, header_receiver) = mpsc::channel(CLEAN_TASKS_CHANNEL_SIZE);
+            let (orderpool_sender, orderpool_receiver) = mpsc::channel(self.order_input_config.input_channel_buffer_size);
             let orderpool_subscriber = {
                 let (handle, sub) = start_orderpool_jobs(
                     node.order_input_config.clone(),
                     node.provider_factory.clone(),
                     RpcModule::new(()),
                     self.global_cancellation.clone(),
-                    self.orderpool_sender.clone(),
-                    self.orderpool_receiver,
+                    orderpool_sender,
+                    orderpool_receiver,
                     header_receiver,
                 )
                 .await?;
@@ -185,6 +187,7 @@ where
             };
             orderpool_subscribers.insert(*chain_id, orderpool_subscriber);
             providers.insert(*chain_id, node.provider_factory.clone());
+            header_senders.push(header_sender);
         }
 
         let order_simulation_pool = OrderSimulationPool::new(
@@ -277,8 +280,10 @@ where
             );
 
             // notify the order pool that there is a new header
-            if let Err(err) = header_sender.send(parent_header.clone()).await {
-                warn!("Failed to send header to builder pool: {:?}", err);
+            for header_sender in header_senders.iter() {
+                if let Err(err) = header_sender.send(parent_header.clone()).await {
+                    warn!("Failed to send header to builder pool: {:?}", err);
+                }
             }
 
             inc_active_slots();

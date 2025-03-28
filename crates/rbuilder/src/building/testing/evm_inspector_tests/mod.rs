@@ -1,4 +1,5 @@
 use alloy_primitives::{B256, U256};
+use revm_primitives::OnChain;
 
 use crate::building::{
     evm_inspector::SlotKey,
@@ -23,18 +24,18 @@ fn test_transfer() -> eyre::Result<()> {
     let receiver_addr = test_setup.named_address(receiver)?;
     assert_eq!(used_state_trace.received_amount.len(), 1);
     assert_eq!(
-        used_state_trace.received_amount.get(&receiver_addr),
+        used_state_trace.received_amount.get(&receiver_addr.on_chain(1)),
         Some(&U256::from(transfer_value))
     );
     assert_eq!(used_state_trace.sent_amount.len(), 1);
     assert_eq!(
-        used_state_trace.sent_amount.get(&sender_addr),
+        used_state_trace.sent_amount.get(&sender_addr.on_chain(1)),
         Some(&U256::from(transfer_value))
     );
 
     // check read_slot_values/written_slot_values
     let sender_nonce_slot_key = SlotKey {
-        address: sender_addr,
+        address: sender_addr.on_chain(1),
         key: B256::ZERO,
     };
     assert_eq!(used_state_trace.read_slot_values.len(), 1);
@@ -70,7 +71,7 @@ fn test_call_contract() -> eyre::Result<()> {
 
     let test_contract_addr = test_setup.test_contract_address()?;
     let slot_key = SlotKey {
-        address: test_contract_addr,
+        address: test_contract_addr.on_chain(1),
         key: B256::from(U256::from(100)),
     };
     assert_eq!(
@@ -109,11 +110,11 @@ fn test_read_balance() -> eyre::Result<()> {
 
     assert_eq!(used_state_trace.read_balances.len(), 2);
     assert_eq!(
-        used_state_trace.read_balances.get(&dummy_addr),
+        used_state_trace.read_balances.get(&dummy_addr.on_chain(1)),
         Some(&U256::from(0))
     );
     assert_eq!(
-        used_state_trace.read_balances.get(&mev_test_contract_addr),
+        used_state_trace.read_balances.get(&mev_test_contract_addr.on_chain(1)),
         Some(&U256::from(100))
     );
 
@@ -147,7 +148,7 @@ fn test_ephemeral_contract_destruct() -> eyre::Result<()> {
         Some(&U256::from(100))
     );
     assert_eq!(
-        used_state_trace.received_amount.get(&refund_addr),
+        used_state_trace.received_amount.get(&refund_addr.on_chain(1)),
         Some(&U256::from(100))
     );
 

@@ -4,7 +4,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
-use std::collections::HashMap;
+use ahash::HashMap;
 use alloy_primitives::U256;
 use alloy_provider::{IpcConnect, ProviderBuilder, Provider, RootProvider};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactionsKind};
@@ -124,24 +124,25 @@ where
     }
 
     async fn ensure_connection(&self, chain_id: &u64) -> bool {
-        let mut providers = self.ipc_providers.try_write().unwrap();
-        if let Some((provider, ipc_path)) = providers.get_mut(chain_id) {
-            match provider.get_chain_id().await {
-                Ok(_) => true,
-                Err(_) => {
-                    warn!("Connection lost for chain_id: {}. Attempting to reconnect...", chain_id);
-                    match self.reconnect( provider, ipc_path).await {
-                        Ok(_) => true,
-                        Err(e) => {
-                            warn!("Failed to reconnect for chain_id: {}. Error: {:?}", chain_id, e);
-                            false
-                        }
-                    }
-                }
-            }
-        } else {
-            false
-        }
+        // let mut providers = self.ipc_providers.try_write().unwrap();
+        // if let Some((provider, ipc_path)) = providers.get_mut(chain_id) {
+        //     match provider.get_chain_id().await {
+        //         Ok(_) => true,
+        //         Err(_) => {
+        //             warn!("Connection lost for chain_id: {}. Attempting to reconnect...", chain_id);
+        //             match self.reconnect( provider, ipc_path).await {
+        //                 Ok(_) => true,
+        //                 Err(e) => {
+        //                     warn!("Failed to reconnect for chain_id: {}. Error: {:?}", chain_id, e);
+        //                     false
+        //                 }
+        //             }
+        //         }
+        //     }
+        // } else {
+        //     false
+        // }
+        true
     }
 
     pub async fn get_latest_block(&self, chain_id: u64, block_id: BlockId) -> Result<Option<Block>> {

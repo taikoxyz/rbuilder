@@ -122,43 +122,42 @@ where
 
         let handle = tokio::spawn(
             async move {
-                for (_chain_id, new_order_sub) in input {
-                    let sim_tree = SimTree::new(
-                        providers.clone(),
-                        ctx.chains
-                            .iter()
-                            .map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent))
-                            .collect(),
-                    );
-                    let new_order_sub = new_order_sub.new_order_sub;
-                    let (sim_req_sender, sim_req_receiver) = flume::unbounded();
-                    let (sim_results_sender, sim_results_receiver) = mpsc::channel(1024);
-                    {
-                        let mut contexts = current_contexts.lock();
-                        let sim_context = SimulationContext {
-                            block_ctx: ctx.clone(),
-                            requests: sim_req_receiver,
-                            results: sim_results_sender,
-                        };
-                        contexts.contexts.insert(block_context, sim_context);
-                    }
-                    let mut simulation_job = SimulationJob::new(
-                        block_cancellation.clone(),
-                        new_order_sub,
-                        sim_req_sender,
-                        sim_results_receiver,
-                        slot_sim_results_sender.clone(),
-                        sim_tree,
-                    );
+                let new_order_subs = input.into_iter().map(|(chain_id, new_order_sub)| (chain_id, new_order_sub.new_order_sub)).collect();
+                let sim_tree = SimTree::new(
+                    providers.clone(),
+                    ctx.chains
+                        .iter()
+                        .map(|(chain_id, ctx)| (*chain_id, ctx.attributes.parent))
+                        .collect(),
+                );
+                let (sim_req_sender, sim_req_receiver) = flume::unbounded();
+                let (sim_results_sender, sim_results_receiver) = mpsc::channel(1024);
+                {
+                    let mut contexts = current_contexts.lock();
+                    let sim_context = SimulationContext {
+                        block_ctx: ctx.clone(),
+                        requests: sim_req_receiver,
+                        results: sim_results_sender,
+                    };
+                    contexts.contexts.insert(block_context, sim_context);
+                }
+                let mut simulation_job = SimulationJob::new(
+                    block_cancellation.clone(),
+                    new_order_subs,
+                    sim_req_sender,
+                    sim_results_receiver,
+                    slot_sim_results_sender.clone(),
+                    sim_tree,
+                );
 
-                    simulation_job.run().await;
+                simulation_job.run().await;
 
                 // clean up
                 {
                     let mut contexts = current_contexts.lock();
                     contexts.contexts.remove(&block_context);
                 }
-            }
+                
         }
             //.instrument(span)
             ,);

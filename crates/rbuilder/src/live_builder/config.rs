@@ -37,6 +37,7 @@ use crate::{
     utils::{build_info::rbuilder_version, ProviderFactoryReopener, Signer},
     validation_api_client::ValidationAPIClient,
 };
+use ahash::{HashMap, HashMapExt};
 use alloy_chains::ChainKind;
 use alloy_primitives::{
     utils::{format_ether, parse_ether},
@@ -57,7 +58,6 @@ use reth_primitives::StaticFileSegment;
 use reth_provider::StaticFileProviderFactory;
 use serde::Deserialize;
 use serde_with::{serde_as, OneOrMany};
-use std::collections::HashMap;
 use std::{
     fmt::Debug,
     path::{Path, PathBuf},

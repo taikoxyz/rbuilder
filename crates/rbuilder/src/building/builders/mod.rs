@@ -127,7 +127,7 @@ where
 
         Self {
             nonce_cache,
-            block_orders: PrioritizedOrderStore::new(sorting, HashMap::<ChainAddress, Vec<AccountNonce>>::default()),
+            block_orders: PrioritizedOrderStore::new(sorting, Vec::<AccountNonce>::default()),
             onchain_nonces_updated: HashSet::default(),
             order_consumer: OrderConsumer::new(orders),
         }
@@ -238,7 +238,7 @@ pub struct BacktestSimulateBlockInput<'a, P> {
     pub ctx: BlockBuildingContext,
     pub builder_name: String,
     pub sim_orders: &'a Vec<SimulatedOrder>,
-    pub providers: HashMap<u64, P>,
+    pub provider: P,
     pub cached_reads: Option<CachedReads>,
 }
 

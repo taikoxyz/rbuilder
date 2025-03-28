@@ -89,15 +89,21 @@ impl TestSetup {
 
         // block state
         let state_provider = self.test_chain.provider_factory().latest()?;
-        let mut block_state = BlockState::new(state_provider);
+        let mut block_state = BlockState::new(state_provider, tx.chain_id().unwrap());
         let mut db_ref = block_state.new_db_ref();
 
         // execute transaction
         {
             let mut tx_env = TxEnv::default();
             tx.as_ref().fill_tx_env(&mut tx_env, tx.signer());
+            let build_ctx = self
+                .test_chain
+                .block_building_context()
+                .chains
+                .get(&tx.chain_id().unwrap())
+                .expect("BlockBuildingContext not found for chain id");
             let mut evm = revm::Evm::builder()
-                .with_spec_id(self.test_chain.block_building_context().spec_id)
+                .with_spec_id(build_ctx.spec_id)
                 .with_env(Box::new(Env {
                     cfg: self
                         .test_chain
@@ -105,7 +111,7 @@ impl TestSetup {
                         .initialized_cfg
                         .cfg_env
                         .clone(),
-                    block: self.test_chain.block_building_context().block_env.clone(),
+                    block: build_ctx.block_env.clone(),
                     tx: tx_env,
                 }))
                 .with_external_context(&mut inspector)

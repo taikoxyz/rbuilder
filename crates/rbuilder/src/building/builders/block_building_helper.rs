@@ -389,6 +389,7 @@ where
         let block_number = self.building_context().block();
         let finalized_block = match self
             .partial_block
+            .clone()
             .finalize(
                 &mut self.block_state,
                 &self.building_ctx,
@@ -428,7 +429,7 @@ where
             execution_requests: finalized_block.execution_requests,
         };
 
-        block.sealed_block.body = self.partial_block.executed_tx.into_iter().map(|t| t.tx.into()).collect();
+        block.sealed_block.body.transactions = self.partial_block.clone().executed_tx.into_iter().map(|t| t.tx.into()).collect();
 
         Ok(FinalizeBlockResult {
             block,

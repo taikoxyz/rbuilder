@@ -199,14 +199,14 @@ impl DummyBuildingAlgorithm {
     fn build_block<P>(
         &self,
         orders: Vec<SimulatedOrder>,
-        provider: HashMap<u64, P>,
+        providers: HashMap<u64, P>,
         ctx: &BlockBuildingContext,
     ) -> eyre::Result<Box<dyn BlockBuildingHelper>>
     where
         P: StateProviderFactory + Clone + 'static,
     {
         let mut block_building_helper = BlockBuildingHelperFromProvider::new(
-            provider.clone(),
+            providers.clone(),
             ctx.clone(),
             None,
             BUILDER_NAME.to_string(),
@@ -234,7 +234,7 @@ where
     fn build_blocks(&self, input: BlockBuildingAlgorithmInput<P>) {
         if let Some(orders) = self.wait_for_orders(&input.cancel, input.input) {
             let block = self
-                .build_block(orders, input.provider.clone(), &input.ctx)
+                .build_block(orders, input.providers.clone(), &input.ctx)
                 .unwrap();
             input.sink.new_block(block);
         }

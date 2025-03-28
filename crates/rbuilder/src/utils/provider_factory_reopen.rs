@@ -42,18 +42,6 @@ pub struct ProviderFactoryReopener<N: NodeTypesWithDB> {
     root_hash_config: Option<RootHashConfig>,
 }
 
-impl<P, N> From<ProviderFactoryReopener<N>> for P 
-where
-    P: StateProviderFactory + Clone + 'static,
-    N: NodeTypesWithDB + Clone,
-    <N as NodeTypes>::ChainSpec: EthereumHardforks,
-{
-    fn from(value: ProviderFactoryReopener<N>) -> Self {
-        let v: Box<dyn StateProviderFactory> = Box::new(value);
-        v.to_owned()
-    }
-}
-
 /// root_hash_config None -> MockRootHasher used
 impl<N: NodeTypesWithDB + ProviderNodeTypes + Clone> ProviderFactoryReopener<N> {
     pub fn new(

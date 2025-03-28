@@ -189,14 +189,14 @@ impl BlockData {
                 .filter(|tx| {
                     !available_accounts
                         .iter()
-                        .any(|x| x.nonce == tx.nonce() && x.address == ChainAddress(tx.chain_id.unwrap(), tx.from))
+                        .any(|x| x.nonce == tx.nonce() && x.address == ChainAddress(tx.chain_id().unwrap(), tx.from))
                 })
                 .map(|tx| {
                     (
                         tx.tx_hash(),
                         AccountNonce {
                             nonce: tx.nonce(),
-                            account: ChainAddress(tx.chain_id.unwrap(), tx.from),
+                            account: ChainAddress(tx.chain_id().unwrap(), tx.from),
                         },
                     )
                 })

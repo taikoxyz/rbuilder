@@ -133,16 +133,17 @@ where
     let mut ctxs = HashMap::default();
     ctxs.insert(input.ctx.parent_chain_id, input.ctx.clone());
 
-    let use_suggested_fee_recipient_as_coinbase = ordering_config.coinbase_payment;
-    let state_providers = input
-        .providers
-        .iter()
-        .map(|(chain_id, provider)| (*chain_id, provider.history_by_block_number(input.ctx.chains[chain_id].block_env.number.to::<u64>() - 1).unwrap()))
-        .collect::<HashMap<_, _>>();
+    let mut state_providers = HashMap::default();
+    state_providers.insert(
+        input.ctx.parent_chain_id, 
+        input.provider.history_by_block_number(input.ctx.chains[&input.ctx.parent_chain_id].block_env.number.to::<u64>() - 1).unwrap()
+    );
+    let mut provider_factories = HashMap::default();
+    provider_factories.insert(input.ctx.parent_chain_id, input.provider.clone());
     let block_orders =
         block_orders_from_sim_orders(input.sim_orders, ordering_config.sorting, &state_providers)?;
     let mut builder = OrderingBuilderContext::new(
-        input.providers.clone(),
+        provider_factories,
         input.builder_name,
         input.ctx.clone(),
         ordering_config,
@@ -150,7 +151,7 @@ where
     .with_cached_reads(input.cached_reads.unwrap_or_default());
     let block_builder = builder.build_block(
         block_orders,
-        use_suggested_fee_recipient_as_coinbase,
+        true,
         CancellationToken::new(),
     )?;
 

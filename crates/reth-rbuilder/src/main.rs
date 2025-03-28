@@ -26,6 +26,7 @@ use reth_provider::{
 use reth_transaction_pool::{blobstore::DiskFileBlobStore, EthTransactionPool};
 use std::{path::PathBuf, process};
 use tokio::task;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 // Prefer jemalloc for performance reasons.
@@ -158,6 +159,7 @@ fn spawn_rbuilder<P>(
                         config.base_config().live_root_hash_config()?,
                     ),
                     Default::default(),
+                    CancellationToken::new(),
                 )
                 .await?;
             builder.connect_to_transaction_pool(pool).await?;

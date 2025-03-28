@@ -89,6 +89,7 @@ where
         Some(builder_signer),
         Arc::from(provider.root_hasher(block_data.winning_bid_trace.parent_hash)),
     );
+    // Backtest only involves one chain
     let mut provider_factories = HashMap::default();
     provider_factories.insert(chain_spec.chain.id(), provider.clone());
     let (sim_orders, sim_errors) =

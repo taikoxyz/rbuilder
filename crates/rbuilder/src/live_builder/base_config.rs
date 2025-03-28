@@ -3,7 +3,7 @@
 use crate::{
     building::builders::UnfinishedBlockBuildingSinkFactory, live_builder::{order_input::OrderInputConfig, LiveBuilder}, provider::StateProviderFactory, roothash::RootHashConfig, telemetry::{setup_reloadable_tracing_subscriber, LoggerConfig}, utils::{http_provider, BoxedProvider, ProviderFactoryReopener, Signer}
 };
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use alloy_primitives::{Address, B256};
 use eyre::{eyre, Context, Result};
 use jsonrpsee::RpcModule;
@@ -17,7 +17,7 @@ use reth_provider::StaticFileProviderFactory;
 use serde::{Deserialize, Deserializer};
 use serde_with::{serde_as, DeserializeAs};
 use std::{
-    collections::HashMap, env::var, fs::read_to_string, net::{Ipv4Addr, SocketAddr, SocketAddrV4}, path::{Path, PathBuf}, str::FromStr, sync::Arc, time::Duration
+    env::var, fs::read_to_string, net::{Ipv4Addr, SocketAddr, SocketAddrV4}, path::{Path, PathBuf}, str::FromStr, sync::Arc, time::Duration
 };
 use tokio::sync::mpsc;
 use tracing::{error, warn};
@@ -181,6 +181,7 @@ impl BaseConfig {
         P: StateProviderFactory + Clone + 'static,
         SlotSourceType: SlotSource,
     {
+
         let order_input_config = OrderInputConfig::from_config(self)?;
         let (orderpool_sender, orderpool_receiver) =
             mpsc::channel(order_input_config.input_channel_buffer_size);

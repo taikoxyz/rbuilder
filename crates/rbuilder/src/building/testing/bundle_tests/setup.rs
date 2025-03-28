@@ -15,6 +15,7 @@ use crate::{
 use alloy_primitives::{Address, TxHash};
 use reth::revm::cached::SyncCachedReads as CachedReads;
 use revm::db::BundleState;
+use revm_primitives::OnChain;
 
 pub enum NonceValue {
     /// Fixed value
@@ -278,8 +279,8 @@ impl TestSetup {
         let chain_id = self.test_chain.block_building_context().parent_chain_id;
         let state_provider = self.test_chain.provider_factory().latest()?;
         let mut block_state = BlockState::new(state_provider, chain_id)
-            .with_bundle_state(self.bundle_state.take().unwrap_or_default())
-            .with_cached_reads(self.cached_reads.take().unwrap_or_default());
+            .with_bundle_state(self.bundle_state.clone().unwrap_or_default())
+            .with_cached_reads(self.cached_reads.clone().unwrap_or_default());
 
         Ok(block_state.nonce(self.test_chain.named_address(named_addr)?.on_chain(chain_id))?)
     }

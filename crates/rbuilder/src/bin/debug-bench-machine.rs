@@ -115,16 +115,11 @@ async fn main() -> eyre::Result<()> {
 
                 let build_time = build_time.elapsed();
 
-                let mut factories = HashMap::default();
-                factories.insert(chain_id, factory);
 
                 let finalize_time = Instant::now();
                 let finalized_block = partial_block.finalize(
                     &mut state,
-                    &ctx,
-                    factories,
-                    root_hash_config.clone(),
-                    config.base_config().root_hash_task_pool()?,
+                    &ctx
                 )?;
                 let finalize_time = finalize_time.elapsed();
 
