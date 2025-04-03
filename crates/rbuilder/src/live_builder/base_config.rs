@@ -182,6 +182,7 @@ impl BaseConfig {
         SlotSourceType: SlotSource,
     {
 
+        println!("🛼 create_builder_with_provider_factory{:?}", l2_providers.len());
         let order_input_config = OrderInputConfig::from_config(self)?;
         let (orderpool_sender, orderpool_receiver) =
             mpsc::channel(order_input_config.input_channel_buffer_size);
@@ -215,6 +216,7 @@ impl BaseConfig {
 
     pub fn chain_spec(&self) -> eyre::Result<Arc<ChainSpec>> {
         chain_value_parser(&self.chain)
+        // chain_value_parser("dev")
     }
 
     pub fn sbundle_mergeable_signers(&self) -> Vec<Address> {

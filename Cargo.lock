@@ -11224,6 +11224,7 @@ dependencies = [
 name = "reth-rbuilder"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "alloy-rlp",
  "clap 4.5.31",
  "eyre",
@@ -11240,6 +11241,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

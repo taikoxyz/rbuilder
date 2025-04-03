@@ -5,6 +5,9 @@ edition.workspace = true
 
 [dependencies]
 rbuilder = { path = "../rbuilder" }
+ahash = "0.8.6"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
+
 
 reth.workspace = true
 reth-node-builder.workspace = true

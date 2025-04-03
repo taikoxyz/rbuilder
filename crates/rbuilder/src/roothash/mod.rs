@@ -94,7 +94,11 @@ pub fn calculate_state_root<P>(
 where
     P: DatabaseProviderFactory<Provider: BlockReader> + Send + Sync + Clone + 'static,
 {
-    let consistent_db_view = match config.mode {
+    println!("🎬 calculate_state_root");
+    // TODO(Cecilia): rbuidler too slow so that db is inconsistent
+    let mut tmp_config = config.clone();
+    tmp_config.mode = RootHashMode::IgnoreParentHash;
+    let consistent_db_view = match tmp_config.mode {
         RootHashMode::CorrectRoot => ConsistentDbView::new(provider, Some(parent_hash)),
         RootHashMode::IgnoreParentHash => ConsistentDbView::new_with_latest_tip(provider)
             .map_err(ParallelStateRootError::Provider)?,

@@ -76,6 +76,7 @@ struct SequentialSealerBidMakerProcess {
 
 impl SequentialSealerBidMakerProcess {
     async fn run(&mut self) {
+        println!("🏡 SequentialSealerBidMakerProcess::run");
         loop {
             tokio::select! {
                 _ = self.pending_bid.wait_for_change() => self.check_for_new_bid().await,
@@ -86,6 +87,7 @@ impl SequentialSealerBidMakerProcess {
 
     /// block.finalize_block + self.sink.new_block inside spawn_blocking.
     async fn check_for_new_bid(&mut self) {
+        println!("🏡 check_for_new_bid");
         if let Some(bid) = self.pending_bid.consume_bid() {
             let payout_tx_val = bid.payout_tx_value();
             let block = bid.block();
@@ -93,8 +95,12 @@ impl SequentialSealerBidMakerProcess {
             let builder_name = block.builder_name().to_string();
             match tokio::task::spawn_blocking(move || block.finalize_block(payout_tx_val)).await {
                 Ok(finalize_res) => match finalize_res {
-                    Ok(res) => self.sink.new_block(res.block),
+                    Ok(res) => {
+                        println!("🎬 after finalize_block bid {}", res.block.trace.bid_value);
+                        self.sink.new_block(res.block)
+                    },
                     Err(error) => {
+                        println!("❌ error {:?}", error);
                         if error.is_critical() {
                             error!(
                                 builder_name,

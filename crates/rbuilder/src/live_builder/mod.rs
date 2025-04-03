@@ -146,6 +146,7 @@ where
     }
 
     pub async fn run(self) -> eyre::Result<()> {
+        println!("🏡 run");
         info!("Builder block list size: {}", self.blocklist.len(),);
         info!(
             "Builder coinbase address: {:?}",
@@ -221,7 +222,7 @@ where
         all_chain_ids.append(&mut providers.keys().cloned().collect::<Vec<_>>());
 
         while let Some(payload) = payload_events_channel.recv().await {
-            println!("Payload_attributes event received: {:?}", payload);
+            println!("Payload_attributes event received for block {:?}", payload.block());
 
             if self.blocklist.contains(&payload.fee_recipient()) {
                 warn!(

@@ -19,7 +19,8 @@ use revm_primitives::{ChainAddress, B256};
 use crate::{
     primitives::{Order, OrderId, SimValue, SimulatedOrder, TransactionSignedEcRecoveredWithBlobs}, provider::RootHasher, roothash::{calculate_state_root, RootHashConfig, RootHashError}, utils::{a2r_withdrawal, calc_gas_limit, timestamp_as_u64, Signer}
 };
-use ahash::{HashMap, HashSet};
+use std::collections::{HashMap as StdHashMap};
+use ahash::HashMap;
 use alloy_consensus::{Header, EMPTY_OMMER_ROOT_HASH};
 use alloy_primitives::{Address, Bytes, Sealable, U256};
 use builders::mock_block_building_helper::MockRootHasher;
@@ -31,7 +32,7 @@ use reth_primitives::BlockBody;
 //     roothash::RootHashError,
 //     utils::{a2r_withdrawal, calc_gas_limit, timestamp_as_u64, Signer},
 // };
-// use ahash::HashSet;
+use ahash::HashSet;
 use alloy_eips::{
     calc_excess_blob_gas, eip4844::BlobTransactionSidecar, eip4895::Withdrawals, eip7685::Requests,
     merge::BEACON_NONCE,
@@ -555,6 +556,15 @@ impl FinalizeError {
     }
 }
 
+use serde_with::serde_as;
+use reth::primitives::serde_bincode_compat;
+#[serde_as]
+#[derive(Serialize, Deserialize)]
+pub(crate)struct SealedBlockWrapper {
+    #[serde_as(as = "serde_bincode_compat::SealedBlock")]
+    pub inner: SealedBlock,
+}
+
 impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
     pub fn with_tracer<NewTracer: SimulationTracer>(
         self,
@@ -723,6 +733,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         ctx: &BlockBuildingContext,
         //provider_factories: HashMap<u64, ProviderFactory<DB>>,
     ) -> Result<FinalizeResult, FinalizeError> {
+        println!("💣 Builds actual block");
         let super_ctx = ctx;
         let chain_id = ctx.parent_chain_id;
         let ctx = &super_ctx.chains[&chain_id];
@@ -850,18 +861,16 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             }
         }
 
-        let mut blocks = HashMap::default();
+        let mut blocks: StdHashMap<u64, SealedBlockWrapper, std::collections::hash_map::RandomState> = StdHashMap::default();
         for chain_id in chain_ids {
             let mut execution_outcome = execution_outcome.filter_chain(chain_id);
 
             let mut state_diff = execution_outcome_to_state_diff(&execution_outcome, B256::ZERO, self.gas_used);
             // Filter out accounts
             state_diff.accounts = state_diff.clone().accounts.into_iter().filter(|account| account.address != alloy_eips::eip4788::BEACON_ROOTS_ADDRESS && account.address != alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS).collect::<Vec<_>>();
+            // Filter out for L1
             if chain_id == super_ctx.parent_chain_id {
                 state_diff.accounts = state_diff.clone().accounts.into_iter().filter(|account| account.address != ctx.block_env.coinbase.1).collect::<Vec<_>>();
-            }
-
-            if chain_id == super_ctx.parent_chain_id {
                 execution_outcome.bundle.state = execution_outcome.bundle.state.into_iter().filter(|account| account.0.1 != ctx.block_env.coinbase.1).collect();
             }
 
@@ -883,7 +892,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
                 //let extra_data = Bytes::from(serde_json::to_string(&state_diff).unwrap().into_bytes());
                 let extra_data = Bytes::from(bincode::serialize(&state_diff).unwrap());
 
-                println!("extra_data: {}", extra_data);
+                println!("L2 extra_data: {} {}", chain_id, state_diff.gas_used);
 
                 let header = Header {
                     parent_hash: ctx.attributes.parent,
@@ -909,7 +918,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
                     requests_hash,
                 };
 
-                println!("chain {} header: {:?}", chain_id, header);
+                println!("chain {} header: {:?}", chain_id, header.mix_hash);
 
                 let block = Block {
                     header,
@@ -927,8 +936,9 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
                 };
 
                 let sealed_block = block.seal_slow();
-
                 println!("chain {} calculated block hash: {:?}", chain_id, sealed_block.hash());
+                let sealed_block = SealedBlockWrapper { inner: sealed_block };
+
 
                 blocks.insert(chain_id, sealed_block);
             }

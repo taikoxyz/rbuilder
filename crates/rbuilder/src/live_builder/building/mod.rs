@@ -112,6 +112,7 @@ where
         input: SlotOrderSimResults,
         cancel: CancellationToken,
     ) {
+        println!("🏡 start_building_job");
         // Brecht: start building
         let builder_sink = self.sink_factory.create_sink(slot_data, cancel.clone());
         let (broadcast_input, _) = broadcast::channel(10_000);

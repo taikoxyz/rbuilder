@@ -111,7 +111,7 @@ alloy-network = { version = "0.6.4" }
 alloy-network-primitives = { version = "0.6.4" }
 alloy-transport = { version = "0.6.4" }
 alloy-node-bindings = { version = "0.6.4" }
-alloy-consensus = { version = "0.6.4", features = ["kzg"] }
+alloy-consensus = { version = "0.6.4", features = ["kzg", "serde", "serde-bincode-compat"] }
 op-alloy-consensus = { version = "0.6.8", features = ["kzg"] }
 alloy-serde = { version = "0.6.4" }
 alloy-rpc-types-beacon = { version = "0.6.4", features = ["ssz"] }

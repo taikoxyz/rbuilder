@@ -2,7 +2,8 @@ use crate::provider::RootHasher;
 use crate::roothash::RootHashConfig;
 use crate::utils::RootHasherImpl;
 use crate::{building::{BlockBuildingContext, ChainBlockBuildingContext}, utils::Signer};
-use ahash::{HashMap, HashSet};
+use std::collections::{HashMap};
+use ahash::HashSet;
 use alloy_consensus::{Header, TxEip1559};
 use alloy_primitives::{
     keccak256, utils::parse_ether, Address, BlockHash, Bytes, TxKind as TransactionKind, B256, B64,

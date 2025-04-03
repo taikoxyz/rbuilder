@@ -88,6 +88,7 @@ where
         slot_data: MevBoostSlotData,
         cancel: tokio_util::sync::CancellationToken,
     ) -> std::sync::Arc<dyn crate::building::builders::UnfinishedBlockBuildingSink> {
+        println!("🚰 create_sink");
         match self
             .wallet_balance_watcher
             .update_to_block(slot_data.block() - 1)
@@ -108,6 +109,7 @@ where
             cancel.clone(),
         );
         let sealer: Box<dyn BidMaker + Send + Sync> = if self.max_concurrent_seals == 1 {
+            println!("🏡 SequentialSealerBidMaker::new");
             Box::new(SequentialSealerBidMaker::new(
                 Arc::from(finished_block_sink),
                 cancel.clone(),

@@ -15,6 +15,7 @@ use reth::chainspec::chain_value_parser;
 use reth_db::{Database, DatabaseEnv};
 use reth_node_api::{NodeTypesWithDB, NodeTypesWithDBAdapter};
 use reth_node_ethereum::EthereumNode;
+use reth_provider::providers::{BlockchainProvider, BlockchainProvider2};
 use tracing::warn;
 
 use crate::provider::StateProviderFactory;
@@ -26,27 +27,76 @@ use super::order_input::OrderInputConfig;
 
 pub fn create_gwyneth_providers(
     chain_ids: Vec<u64>
-) -> Result<HashMap<u64, ProviderFactoryReopener<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>>>
+) -> Result<(BlockchainProvider<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>, HashMap<u64, BlockchainProvider<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>>)>
+{
+    let l1_datadir: &str = "/data/reth/execution-data";
+    let datadir_base = "/data/reth/gwyneth";
+    let chain = chain_value_parser("/network-configs/genesis.json").expect("failed to load gwyneth chain spec");
+    // let l1_datadir = "mainnet";
+    // let datadir_base = "aaa/g";
+    // let chain = chain_value_parser("dev").expect("failed to load gwyneth chain spec");
+
+    let l1_provider = create_provider_factory(
+        Some(Path::new(l1_datadir)),
+        None,
+        None,
+        chain.clone(),
+        None,
+    )?
+    .check_consistency_and_reopen_if_needed()?;
+    let l1_provider = 
+        BlockchainProvider::<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>::new(
+        l1_provider,
+        Arc::new(reth::blockchain_tree::noop::NoopBlockchainTree::default())
+    )?;
+
+    let mut providers = HashMap::default();
+    for chain_id in chain_ids {
+        println!("🏡 chain_id {:?}", format!("{}-{}", datadir_base, chain_id));
+        let provider_factory = create_provider_factory(
+            Some(Path::new(&format!("{}-{}", datadir_base, chain_id).to_owned())),
+            Some(Path::new(&format!("{}-{}/db", datadir_base, chain_id).to_owned())),
+None,
+chain.clone(),
+            None,
+        )?
+        .check_consistency_and_reopen_if_needed()?;
+        let blockchain_provider = 
+            BlockchainProvider::<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>::new(
+                provider_factory, 
+                Arc::new(reth::blockchain_tree::noop::NoopBlockchainTree::default())
+            )?;
+        providers.insert(chain_id, blockchain_provider);
+    }
+
+    Ok((l1_provider, providers))
+}
+
+pub fn create_gwyneth_providers_legacy(
+    chain_ids: Vec<u64>
+) -> Result<HashMap<u64, BlockchainProvider2<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>>>
 {
     let datadir_base = "/data/reth/gwyneth";
     let chain = chain_value_parser("/network-configs/genesis.json").expect("failed to load gwyneth chain spec");
 
-    let mut nodes = HashMap::default();
+    let mut providers = HashMap::default();
     for chain_id in chain_ids {
         let provider_factory = create_provider_factory(
             Some(Path::new(&format!("{}-{}", datadir_base, chain_id).to_owned())),
             Some(Path::new(&format!("{}-{}/db", datadir_base, chain_id).to_owned())),
-            Some(Path::new(&format!("{}-{}/static_files", datadir_base, chain_id).to_owned())),
-            chain.clone(),
+None,
+chain.clone(),
             None,
-        )?;
-        // let provider_factory = provider_factory.check_consistency_and_reopen_if_needed()?;
-        nodes.insert(chain_id, provider_factory);
+        )?
+        .check_consistency_and_reopen_if_needed()?;
+        let blockchain_provider = 
+            BlockchainProvider2::<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>::new(provider_factory)?;
+        providers.insert(chain_id, blockchain_provider);
+
     }
 
-    Ok(nodes)
+    Ok(providers)
 }
-
 
 
 #[derive(Debug)]
@@ -75,25 +125,28 @@ where
     P: StateProviderFactory + Clone + 'static,
 {
     pub async fn new(chain_ids: Vec<u64>, provider_factories: HashMap<u64, P>) -> Result<Self> {
-        let mut providers = HashMap::default();
+        let mut ipc_providers = HashMap::default();
         let mut data_dirs_map = HashMap::default();
 
         let datadir_base = "/data/reth/gwyneth";
-        let ipc_base: &str = "/data/reth/gwyneth.ipc";
+        let ipc_base: &str = "/tmp/reth.ipc";
 
         let chain = chain_value_parser("/network-configs/genesis.json").expect("failed to load gwyneth chain spec");
 
+        println!("🛼 {:?}", chain_ids);
+        println!("🛼 {:?}", provider_factories.keys().collect::<Vec<_>>());
+
         let mut nodes = HashMap::default();
         for (idx, chain_id) in chain_ids.iter().enumerate() {
-            let ipc_path = format!("{}-{}", ipc_base, idx).to_owned();
+            let ipc_path = format!("{}-{}", ipc_base, idx + 2).to_owned();
             let data_dir = format!("{}-{}", datadir_base, chain_id).to_owned();
 
-            let ipc = IpcConnect::new(ipc_path.clone());
-            let provider = ProviderBuilder::new().on_ipc(ipc).await?;
-            //let chain_id = U256::from(provider.get_chain_id().await?);
-            providers.insert(*chain_id, (provider, ipc_path.clone()));
-            data_dirs_map.insert(*chain_id, PathBuf::from(data_dir));
 
+            let ipc = IpcConnect::new(ipc_path.clone());
+            let ipc_provider = ProviderBuilder::new().on_ipc(ipc).await?;
+            //let chain_id = U256::from(provider.get_chain_id().await?);
+            ipc_providers.insert(*chain_id, (ipc_provider, ipc_path.clone()));
+            data_dirs_map.insert(*chain_id, PathBuf::from(data_dir));
 
             nodes.insert(*chain_id, GwynethNode {
                 provider_factory: provider_factories[&chain_id].clone(),
@@ -111,7 +164,7 @@ where
         }
 
         Ok(Self {
-            ipc_providers: Arc::new(RwLock::new(providers)),
+            ipc_providers: Arc::new(RwLock::new(ipc_providers)),
             data_dirs: data_dirs_map,
             nodes,
         })

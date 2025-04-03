@@ -372,12 +372,14 @@ where
         mut self: Box<Self>,
         payout_tx_value: Option<U256>,
     ) -> Result<FinalizeBlockResult, BlockBuildingHelperError> {
-        //println!("finalize_block");
+        println!("finalize_block");
         if payout_tx_value.is_some() && self.building_ctx.chains[&self.origin_chain_id].coinbase_is_suggested_fee_recipient() {
+            println!("❌ Payout tx not allowed for block");
             return Err(BlockBuildingHelperError::PayoutTxNotAllowed);
         }
         let start_time = Instant::now();
 
+        println!("🎬 finalize_block_execution");
         self.finalize_block_execution(payout_tx_value)?;
         // This could be moved outside of this func (pre finalize) since I don´t think the payout tx can change much.
         self.built_block_trace
@@ -397,7 +399,9 @@ where
         {
             Ok(finalized_block) => finalized_block,
             Err(err) => {
+                println!("❌ finalize error {:?}", err);
                 if err.is_consistent_db_view_err() {
+                    println!("❌ consistent db view err");
                     let last_block_number = provider_factory.last_block_number().unwrap_or_default();
                     debug!(
                         block_number,
@@ -412,7 +416,7 @@ where
         self.built_block_trace.root_hash_time = finalized_block.root_hash_time;
 
         self.built_block_trace.finalize_time = start_time.elapsed();
-
+        
         Self::trace_finalized_block(
             &finalized_block,
             &self.builder_name,
@@ -428,6 +432,7 @@ where
             builder_name: self.builder_name.clone(),
             execution_requests: finalized_block.execution_requests,
         };
+        println!("🎬 block created {:?}", block.sealed_block.number);
 
         block.sealed_block.body.transactions = self.partial_block.clone().executed_tx.into_iter().map(|t| t.tx.into()).collect();
 

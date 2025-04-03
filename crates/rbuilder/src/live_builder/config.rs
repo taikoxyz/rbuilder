@@ -279,7 +279,7 @@ impl L1Config {
         } else {
             None
         };
-
+        println!("🏡 optimistic_config {:?}", optimistic_config);
         Ok(SubmissionConfig {
             chain_spec,
             signer,
@@ -316,6 +316,7 @@ impl L1Config {
             eyre::bail!("No relays provided");
         }
 
+        println!("🚰 dyn RelaySubmitSinkFactory::new");
         let sink_factory: Box<dyn BuilderSinkFactory> = Box::new(RelaySubmitSinkFactory::new(
             submission_config,
             relays.clone(),
@@ -337,10 +338,12 @@ impl LiveBuilderConfig for Config {
     where
         P: StateProviderFactory + Clone + 'static,
     {
+        println!("🛼 new_builder {:?}", l2_providers.len());
         let (sink_sealed_factory, relays) = self.l1_config.create_relays_sealed_sink_factory(
             self.base_config.chain_spec()?,
             Box::new(NullBidObserver {}),
         )?;
+        println!("🏡 create_relays_sealed_sink_factory {:?}", relays.len());
 
         let (wallet_balance_watcher, wallet_history) = WalletBalanceWatcher::new(
             provider.clone(),
@@ -349,21 +352,23 @@ impl LiveBuilderConfig for Config {
         )?;
         let bidding_service: Box<dyn BiddingService> =
             Box::new(TrueBlockValueBiddingService::new(&wallet_history));
+        println!("🏡 wallet_balance_watcher");
 
-        let sink_factory = Box::new(BlockSealingBidderFactory::new(
+        let sink_factory: Box<BlockSealingBidderFactory<P>> = Box::new(BlockSealingBidderFactory::new(
             bidding_service,
             sink_sealed_factory,
             Arc::new(NullBidValueSource {}),
             wallet_balance_watcher,
             self.l1_config.max_concurrent_seals as usize,
         ));
-
+        println!("🏡 sink_factory {:?}", sink_factory);
         let payload_event = MevBoostSlotDataGenerator::new(
             self.l1_config.beacon_clients()?,
             relays,
             self.base_config.blocklist()?,
             cancellation_token.clone(),
         );
+        println!("🏡 payload_event");
         let live_builder = self
             .base_config
             .create_builder_with_provider_factory(
@@ -375,7 +380,8 @@ impl LiveBuilderConfig for Config {
                 self.base_config.gwyneth_chain_ids.clone(),
             )
             .await?;
-        let builders = create_builders(self.live_builders()?);
+        let builders: Vec<Arc<dyn BlockBuildingAlgorithm<P>>> = create_builders(self.live_builders()?);
+        println!("🏡 builders {:?}", builders);
 
         let (l2_ipc_paths, l2_data_dirs) = self.base_config.resolve_l2_paths()?;
         println!("Dani debug: l2_el_node_ipc_paths are: {:?}", l2_ipc_paths);
@@ -515,6 +521,7 @@ pub fn create_provider_factory(
     chain_spec: Arc<ChainSpec>,
     root_hash_config: Option<RootHashConfig>,
 ) -> eyre::Result<ProviderFactoryReopener<NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>>> {
+    println!("🛼 create_provider_factory {:?}", reth_datadir);
     let reth_db_path = match (reth_db_path, reth_datadir) {
         (Some(reth_db_path), _) => PathBuf::from(reth_db_path),
         (None, Some(reth_datadir)) => reth_datadir.join("db"),
@@ -600,7 +607,7 @@ fn get_signing_domain(
                 let spec = tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(client.get_spec())
                 })?;
-
+                println!("🏡 spec {:?}", spec);
                 spec.get("GENESIS_FORK_VERSION")
                     .ok_or_else(|| eyre::eyre!("GENESIS_FORK_VERSION not found in spec"))?
                     .clone()
@@ -616,7 +623,7 @@ fn get_signing_domain(
             // there is no default in Context.
             let mut network = ContextEth::for_mainnet();
             network.genesis_fork_version = version;
-
+            println!("🏡 get_signing_domain network");
             network
         }
     };

@@ -35,6 +35,7 @@ impl Client {
     }
 
     pub async fn get_spec(&self) -> Result<HashMap<String, String>, Error> {
+        println!("🏡 beacon_api_client get_spec");
         self.inner.get_spec().await
     }
 

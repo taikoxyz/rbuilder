@@ -44,21 +44,26 @@ pub struct BestBlockCell {
 
 impl BestBlockCell {
     pub fn compare_and_update(&self, block: Block) {
+        println!("🚰 BestBlockCell::compare_and_update");
         let mut best_block = self.block.lock();
         let old_value = best_block
             .as_ref()
             .map(|b| b.trace.bid_value)
             .unwrap_or_default();
-        //println!("compare_and_update: {:?} > {:?}", block.trace.bid_value, old_value);
+        println!("  Current best bid: {}, New bid: {}", old_value, block.trace.bid_value);
         if block.trace.bid_value > old_value {
-            println!("best_block update: {:?} > {:?}", block.trace.bid_value, old_value);
             *best_block = Some(block);
+            println!("  📈 Updated to higher bid");
             self.block_notify.notify_one();
+        } else {
+            println!("  📉 Bid not high enough");
         }
     }
 
     pub fn take_best_block(&self) -> Option<Block> {
-        self.block.lock().take()
+        let block = self.block.lock().take();
+        println!("🚰 BestBlockCell::take_best_block -> {}", block.is_some());
+        block
     }
 
     pub async fn wait_for_change(&self) {
@@ -74,6 +79,7 @@ struct BestBlockCellToBlockBuildingSink {
 
 impl BlockBuildingSink for BestBlockCellToBlockBuildingSink {
     fn new_block(&self, block: Block) {
+        println!("🚰 BestBlockCellToBlockBuildingSink::new_block");
         self.best_block_cell.compare_and_update(block);
     }
 }
@@ -183,9 +189,10 @@ async fn run_submit_to_relays_job(
 
     let mut last_bid_value = U256::from(0);
     'submit: loop {
-        //println!("poll loop");
+        println!("Submit loop iteration"); 
 
         if cancel.is_cancelled() {
+            println!("🚰 cancel.is_cancelled");
             break 'submit res;
         }
 
@@ -195,9 +202,11 @@ async fn run_submit_to_relays_job(
                 last_bid_value = new_block.trace.bid_value;
                 new_block
             } else {
+                println!("🚰 continue 'submit 1");
                 continue 'submit;
             }
         } else {
+            println!("🚰 continue 'submit 2");
             continue 'submit;
         };
 
@@ -589,7 +598,7 @@ impl BuilderSinkFactory for RelaySubmitSinkFactory {
     ) -> Box<dyn BlockBuildingSink> {
         let best_block_cell = Arc::new(BestBlockCell::default());
 
-        //println!("builder relays: {:?}", self.relays);
+        println!("RelaySubmitSinkFactory::create_builder_sink{:?}", self.relays);
 
         let relays = slot_data
             .relays

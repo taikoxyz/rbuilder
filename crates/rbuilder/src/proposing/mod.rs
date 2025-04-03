@@ -1,4 +1,3 @@
-
 use alloy_eips::BlockId;
 use alloy_network::{EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
@@ -23,7 +22,7 @@ use reth_primitives::{GwynethDA, ChainDA};
 
 use alloy_rpc_types::{TransactionInput, TransactionRequest};
 
-use crate::mev_boost::SubmitBlockRequest;
+use crate::{building::SealedBlockWrapper, mev_boost::SubmitBlockRequest};
 
 // Using sol macro to use solidity code here.
 sol! {
@@ -176,7 +175,7 @@ impl BlockProposer {
             }
         };
 
-        println!("Proposed payload: {:?}", execution_payload);
+        println!("Proposed payload: {:?}", execution_payload.block_hash);
         let l1_chain_id = 160010;
 
         let mut transactions = Vec::new();
@@ -190,21 +189,23 @@ impl BlockProposer {
 
         println!("proposing for block: {}", execution_payload.block_number);
         println!("number of transactions: {}", execution_payload.transactions.len());
-        println!("transactions: {:?}", execution_payload.transactions);
-        println!("tx list: {:?}", tx_list);
+        // println!("transactions: {:?}", execution_payload.transactions);
+        // println!("tx list: {:?}", tx_list);
 
-        println!("Block extra data: {:?}", execution_payload.extra_data);
+        // println!("Block extra data: {:?}", execution_payload.extra_data);
         let da = if execution_payload.extra_data.len() > 32 {
             println!("Decoding extra data...");
-            let (execution_outcome, blocks): (ExecutionOutcome, HashMap<u64, SealedBlock>) = bincode::deserialize(&execution_payload.extra_data.to_vec()).unwrap();
+            let (execution_outcome, blocks): (ExecutionOutcome, HashMap<u64, SealedBlockWrapper>) = bincode::deserialize(&execution_payload.extra_data.to_vec()).unwrap();
 
             let mut chain_das = HashMap::default();
             for (&chain_id, block) in blocks.iter() {
+                let block = block.inner.clone();
                 //let execution_outcome = execution_outcome.filter_chain(chain_id);
 
                 //let json_str = String::from_utf8(block.extra_data.to_vec()).unwrap();
                 //let state_diff = serde_json::from_str(&json_str).unwrap_or(None);
 
+                // L2 State Diff
                 let state_diff = bincode::deserialize(&block.extra_data.to_vec()).unwrap();
 
                 // Filter out accounts
@@ -287,7 +288,7 @@ impl BlockProposer {
             l1StateDiff: l1_state_diff,
         };
 
-        println!("meta: {:?}", meta);
+        // println!("meta: {:?}", meta);
 
         Ok((meta, execution_payload.transactions.len()))
     }
@@ -307,4 +308,52 @@ fn decode_transactions(tx_list: &[u8]) -> Vec<TransactionSigned> {
         println!("decode_transactions not successful: {e:?}, use empty tx_list");
         vec![]
     })
+}
+
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::Header;
+    use reth_primitives::{BlockBody, Receipt};
+    // use ahash::HashMap;
+
+    use super::*;
+
+    #[test]
+    fn test_create_propose_block_tx_data() { 
+        let execution_outcome: ExecutionOutcome<Receipt> = ExecutionOutcome::default();
+        // let mut blocks: HashMap<u64, SealedBlock<_, _>> = HashMap::default();
+        let block: SealedBlock<Header, BlockBody> = SealedBlock::default();
+
+        let _execution_outcome = Bytes::from(bincode::serialize(&execution_outcome).unwrap());
+        bincode::deserialize::<ExecutionOutcome<Receipt>>(&_execution_outcome.to_vec()).unwrap();
+        
+
+        // blocks.insert(160010u64, block);
+        // let _blocks = Bytes::from(bincode::serialize(&blocks).unwrap());
+        // bincode::deserialize::<HashMap<u64, SealedBlock<Header, BlockBody>>>(&_blocks.to_vec()).unwrap();
+
+        let mut simple_hashmap: HashMap<u64, &str> = HashMap::default();
+        simple_hashmap.insert(160010u64, "Fuck");
+        let _simple_hashmap = Bytes::from(bincode::serialize(&simple_hashmap).unwrap());
+        bincode::deserialize::<HashMap<u64, String>>(&_simple_hashmap.to_vec()).unwrap();
+
+        // let _block = Bytes::from(bincode::serialize(&block).unwrap());
+        // bincode::deserialize::<SealedBlock<Header, BlockBody>>(&_block.to_vec()).unwrap();
+
+        let header: Header = Header::default();
+        let header_bytes = bincode::serialize(&header).unwrap();
+        let _header = Bytes::from(header_bytes.clone());
+        bincode::deserialize::<Header>(&header_bytes).unwrap();
+
+        // let block_body: BlockBody = BlockBody::default();
+        // let _block_body = Bytes::from(bincode::serialize(&block_body).unwrap());
+        // bincode::deserialize::<BlockBody>(&_block_body.to_vec()).unwrap();
+
+        // let extra_data = Bytes::from(bincode::serialize(&(execution_outcome, blocks)).unwrap());
+        // let (execution_outcome_, blocks_): (ExecutionOutcome<Receipt>, HashMap<u64, SealedBlock<Header, BlockBody>>) = bincode::deserialize(&extra_data.to_vec()).unwrap();
+        // println!("extra_data: {}", extra_data);
+        // println!("execution_outcome: {:?}", execution_outcome_);
+        // println!("blocks: {:?}", blocks_);
+    }
 }
