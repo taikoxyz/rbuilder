@@ -105,6 +105,8 @@ where
         input: HashMap<u64, OrdersForBlock>,
         block_cancellation: CancellationToken,
     ) -> SlotOrderSimResults {
+        println!("spawn_simulation_job on top of {} {}", ctx.block(), ctx.chains.get(&ctx.parent_chain_id).unwrap().attributes.parent);
+
         let (slot_sim_results_sender, slot_sim_results_receiver) = mpsc::channel(10_000);
 
         let ctx = {

@@ -35,6 +35,7 @@ pub fn run_sim_worker<P>(
 {
     loop {
         if global_cancellation.is_cancelled() {
+            println!("simming cancelled");
             return;
         }
         let current_sim_context = loop {
@@ -47,9 +48,10 @@ pub fn run_sim_worker<P>(
                 break ctx;
             } else {
                 // contexts are created for a duration of the slot so this is not a problem
+                println!("waiting on next sim context...");
                 sleep(Duration::from_millis(50));
             }
-            sleep(Duration::from_millis(500));
+            //sleep(Duration::from_millis(500));
         };
 
         let state_providers = providers

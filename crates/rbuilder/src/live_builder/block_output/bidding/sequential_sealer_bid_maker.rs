@@ -37,6 +37,7 @@ impl PendingBid {
         }
     }
     pub async fn wait_for_change(&self) {
+        //println!("wait_for_change bid");
         self.bid_notify.notified().await
     }
     /// Updates bid, replacing  on current (we assume they are always increasing but we don't check it).
@@ -89,6 +90,7 @@ impl SequentialSealerBidMakerProcess {
     async fn check_for_new_bid(&mut self) {
         println!("🏡 check_for_new_bid");
         if let Some(bid) = self.pending_bid.consume_bid() {
+            //println!("there is a bid");
             let payout_tx_val = bid.payout_tx_value();
             let block = bid.block();
             let block_number = block.building_context().block();

@@ -163,7 +163,7 @@ where
                     continue;
                 }
                 Ordering::Greater => {
-                    println!("nonce invalid");
+                    println!("nonce invalid greater");
                     // nonce invalid, maybe its optional
                     if !nonce.optional {
                         // this order will never be valid
@@ -179,8 +179,9 @@ where
                     }
                 }
                 Ordering::Less => {
-                    println!("nonce invalid");
+                    println!("nonce invalid less");
                     if onchain_nonces_incremented.contains(&nonce.address) {
+                        println!("Already seen it");
                         // we already considered this account nonce
                         continue;
                     }
@@ -193,6 +194,7 @@ where
                     };
 
                     if let Some(sim_id) = self.sims_that_update_one_nonce.get(&nonce_key) {
+                        println!("sims_that_update_one_nonce");
                         // we have something that fills this nonce
                         let sim = self.sims.get(sim_id).expect("we never delete sims");
                         parent_orders.extend_from_slice(&sim.previous_orders);
@@ -442,8 +444,9 @@ pub fn simulate_order_using_fork<Tracer: SimulationTracer>(
     // simulate parents
     let mut gas_used = 0;
     let mut blob_gas_used = 0;
+    let mut data_used = 0;
     for parent in parent_orders {
-        let result = fork.commit_order(&parent, ctx, gas_used, 0, blob_gas_used, true)?;
+        let result = fork.commit_order(&parent, ctx, gas_used, 0, blob_gas_used, data_used, true)?;
         match result {
             Ok(res) => {
                 gas_used += res.gas_used;
@@ -461,7 +464,7 @@ pub fn simulate_order_using_fork<Tracer: SimulationTracer>(
     }
 
     // simulate
-    let result = fork.commit_order(&order, ctx, gas_used, 0, blob_gas_used, true)?;
+    let result = fork.commit_order(&order, ctx, gas_used, 0, blob_gas_used, data_used, true)?;
     match result {
         Ok(res) => {
             let sim_value = SimValue::new(

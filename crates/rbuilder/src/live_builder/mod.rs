@@ -29,7 +29,6 @@ use crate::{
 use ahash::{HashMap, HashSet};
 use alloy_consensus::Header;
 use alloy_chains::{Chain, ChainKind};
-use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, U256};
 use building::BlockBuildingPool;
 use eyre::Context;
@@ -42,6 +41,8 @@ use reth::transaction_pool::{
 };
 use reth_chainspec::ChainSpec;
 use reth_evm::provider;
+use reth_provider::StageCheckpointReader;
+use reth_stages::StageId;
 use revm_primitives::ChainAddress;
 use reth_primitives::TransactionSignedEcRecovered;
 use std::{cmp::min, fmt::Debug, path::PathBuf, sync::Arc, thread::sleep, time::Duration};
@@ -248,6 +249,7 @@ where
 
             let time_until_slot_end = time_to_slot + timings.slot_proposal_duration;
             if time_until_slot_end.is_negative() {
+                println!("bailing slot");
                 warn!(
                     slot = payload.slot(),
                     parent_hash = ?payload.parent_block_hash(),
@@ -272,6 +274,42 @@ where
                     }
                 }
             };
+
+            loop {
+                let provider_factory = self.provider_factory.clone().provider_factory_unchecked();
+                if let Some(latest_block_number_synced) = provider_factory.get_stage_checkpoint(StageId::Finish).expect("failed to get header") {
+                    if latest_block_number_synced.block_number >= parent_header.number {
+                        println!("Waiting for {} to pipeline done.", parent_header.number);
+                        break;
+                    }
+                }
+                println!("waiting on L1 block {} to pipeline...", parent_header.number);
+                sleep(Duration::from_millis(100));
+            }
+
+            {
+                let provider_factory = self.provider_factory.clone();
+                // let block = payload.block();
+                match spawn_blocking(move || {
+                    provider_factory.check_consistency_and_reopen_if_needed(/*block*/)
+                })
+                .await
+                {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        error!(?err, "Failed to check historical block hashes");
+                        // This error is unrecoverable so we restart.
+                        break;
+                    }
+                    Err(err) => {
+                        error!(?err, "Failed to join historical block hashes task");
+                        continue;
+                    }
+                }
+            }
+
+            // Wait until L2 is synced as well
+            self.layer2_info.wait_until_synced(parent_header.number).await;
 
             debug!(
                 slot = payload.slot(),
@@ -307,18 +345,36 @@ where
             all_block_ctxs.insert(self.chain_spec.chain.id(), l1_block_ctx.clone());
 
             // TODO(Brecht): hack to wait until latest L2 block is also created, which is later then when we get the payload build event
-            sleep(Duration::from_millis(4000));
+            //sleep(Duration::from_millis(4000));
 
-            println!("payload: {:?}", payload);
+            //println!("payload: {:?}", payload);
 
             // TODO: Brecht
             for (&chain_id, provider) in providers.iter() {
+                match spawn_blocking(move || {
+                    provider_factory.check_consistency_and_reopen_if_needed(/*block*/)
+                })
+                .await
+                {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        error!(?err, "Failed to check historical block hashes");
+                        // This error is unrecoverable so we restart.
+                        break;
+                    }
+                    Err(err) => {
+                        error!(?err, "Failed to join historical block hashes task");
+                        continue;
+                    }
+                }
+
                 println!("setting up {}", chain_id);
                 let mut block_ctx = l1_block_ctx.clone();
                 let mut chain_spec = (*block_ctx.chain_spec).clone();
                 println!("chain spec chain id: {}", chain_spec.chain.id());
                 if chain_spec.chain.id() != chain_id {
                     println!("updating ctx for {}", chain_id);
+                    // TODO(Brecht): wait on latest L2 block to be available
                     let root_hasher = Arc::from(provider.root_hasher(payload.parent_block_hash()));
                     let latest_block = self.layer2_info.get_latest_block(chain_id, BlockId::Number(BlockNumberOrTag::Latest)).await?;
                     if let Some(latest_block) = latest_block {
@@ -342,6 +398,7 @@ where
                         //block_ctx.block_env.difficulty = U256::ZERO;
                         //block_ctx.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(0));
                         block_ctx.block_env.coinbase = ChainAddress(chain_id, block_ctx.block_env.coinbase.1);
+                        block_ctx.initialized_cfg.parent_chain_id = Some(parent_block_ctx.chain_spec.chain().id());
                     } else {
                         println!("failed to get latest block for {}", chain_id);
                     }
@@ -479,6 +536,7 @@ where
             tokio::time::sleep(time_to_sleep.try_into().unwrap()).await;
         }
     }
+    println!("Waiting failed: {}", block);
     Err(eyre::eyre!("Block header not found"))
 }
 

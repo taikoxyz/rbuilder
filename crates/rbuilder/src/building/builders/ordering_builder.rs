@@ -79,7 +79,7 @@ where
     let mut removed_orders = Vec::new();
     let mut use_suggested_fee_recipient_as_coinbase = config.coinbase_payment;
     'building: loop {
-        sleep(Duration::from_millis(1000));
+        //sleep(Duration::from_millis(1000));
 
         if input.cancel.is_cancelled() {
             break 'building;
@@ -93,7 +93,8 @@ where
             }
             Err(err) => {
                 error!(?err, "Error consuming next order batch");
-                continue;
+                //continue;
+                break;
             }
         }
 
@@ -111,9 +112,10 @@ where
                 input.sink.new_block(block);
             }
             Err(err) => {
-                if !handle_building_error(err) {
-                    break 'building;
-                }
+                println!("Error while building block: {:?}", err);
+                // if !handle_building_error(err) {
+                //     break 'building;
+                // }
             }
         }
         if config.drop_failed_orders {
@@ -292,9 +294,9 @@ where
         mut block_orders: PrioritizedOrderStore,
         build_start: Instant,
     ) -> eyre::Result<()> {
-        if block_orders.get_all_orders().len() > 0 {
-            println!("fill_orders: {:?}", block_orders);
-        }
+        // if block_orders.get_all_orders().len() > 0 {
+        //     println!("fill_orders: {:?}", block_orders);
+        // }
         let mut order_attempts: HashMap<OrderId, usize> = HashMap::default();
         // @Perf when gas left is too low we should break.
         while let Some(sim_order) = block_orders.pop_order() {

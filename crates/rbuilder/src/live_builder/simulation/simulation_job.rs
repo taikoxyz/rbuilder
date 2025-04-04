@@ -1,4 +1,5 @@
 use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt};
 
 use crate::{
     building::sim::{SimTree, SimulatedResult, SimulationRequest},
@@ -10,6 +11,7 @@ use ahash::HashSet;
 use alloy_primitives::utils::format_ether;
 use futures::stream::{select_all, SelectAll};
 use tokio::sync::mpsc;
+use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
 use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
@@ -106,8 +108,12 @@ where
     async fn run_no_trace(&mut self) {
         // let mut new_commands: Vec<&OrderPoolCommand> = Vec::new();
         let mut new_sim_results = Vec::new();
+
+
+
         loop {
             self.send_new_tasks_for_simulation();
+
             // tokio::select appears to be fair so no channel will be polled more than the other
             tokio::select! {
                 maybe_cmd = self.order_stream.next() => {

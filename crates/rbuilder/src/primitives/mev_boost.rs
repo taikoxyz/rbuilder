@@ -130,9 +130,11 @@ impl MevBoostRelay {
             println!("No L1 block proposer configured");
         }
 
-        self.client
-            .submit_block(data, self.use_ssz_for_submit, self.use_gzip_for_submit)
-            .await
+        Ok(())
+
+        // self.client
+        //     .submit_block(data, self.use_ssz_for_submit, self.use_gzip_for_submit)
+        //     .await
     }
 }
 

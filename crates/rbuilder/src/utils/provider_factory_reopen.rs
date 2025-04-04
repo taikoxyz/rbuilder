@@ -24,6 +24,7 @@ use std::{path::PathBuf, sync::Arc};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
+use parking_lot::RwLock;
 
 /// This struct is used as a workaround for https://github.com/paradigmxyz/reth/issues/7836
 /// it shares one instance of the provider factory that is recreated when inconsistency is detected.
@@ -110,6 +111,9 @@ impl<N: NodeTypesWithDB + ProviderNodeTypes + Clone> ProviderFactoryReopener<N> 
                     debug!(?err, "Provider factory is inconsistent, reopening");
                     inc_provider_reopen_counter();
 
+                    // // sleep a bit to recover
+                    // sleep(Duration::from_millis(100));
+
                     *provider_factory = ProviderFactory::new(
                         provider_factory.db_ref().clone(),
                         self.chain_spec.clone(),
@@ -135,6 +139,54 @@ impl<N: NodeTypesWithDB + ProviderNodeTypes + Clone> ProviderFactoryReopener<N> 
         }
         Ok(provider_factory.clone())
     }
+
+    // This will check if historical block hashes for the given block is correct and if not it will reopen
+    // provider fatory.
+    // This should be used when consistency is required: e.g. building blocks.
+    // pub fn check_consistency_and_reopen_if_needed(
+    //     &self,
+    //     current_block_number: u64,
+    // ) -> eyre::Result<ProviderFactory<DB>> {
+    //     let best_block_number = self
+    //         .provider_factory_unchecked()
+    //         .last_block_number()
+    //         .map_err(|err| eyre::eyre!("Error getting best block number: {:?}", err))?;
+    //     let mut provider_factory = self.provider_factory.lock();
+
+    //     // Don't need to check consistency for the block that was just checked.
+    //     let last_consistent_block = *self.last_consistent_block.read();
+
+    //     //tory.lock().unwrap();
+    //     if !self.testing_mode {
+    //         match check_provider_factory_health(current_block_number, &provider_factory) {
+    //             Ok(()) => {}
+    //             Err(err) => {
+    //                 println!("Reopening DB!");
+    //                 debug!(?err, "Provider factory is inconsistent, reopening");
+    //                 inc_provider_reopen_counter();
+
+    //                 *provider_factory = ProviderFactory::new(
+    //                     provider_factory.db_ref().clone(),
+    //                     self.chain_spec.clone(),
+    //                     StaticFileProvider::read_only(self.static_files_path.as_path()).unwrap(),
+    //                 );
+    //             }
+    //         }
+
+    //         match check_provider_factory_health(current_block_number, &provider_factory) {
+    //             Ok(()) => {}
+    //             Err(err) => {
+    //                 inc_provider_bad_reopen_counter();
+
+    //                 eyre::bail!(
+    //                     "Provider factory is inconsistent after reopening: {:?}",
+    //                     err
+    //                 );
+    //             }
+    //         }
+    //     }
+    //     Ok(provider_factory.clone())
+    // }
 }
 
 /// Really ugly, should refactor with the string bellow or use better errors.

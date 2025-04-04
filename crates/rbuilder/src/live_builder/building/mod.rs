@@ -117,6 +117,17 @@ where
         let builder_sink = self.sink_factory.create_sink(slot_data, cancel.clone());
         let (broadcast_input, _) = broadcast::channel(10_000);
 
+        // let provider_factories: HashMap<u64, ProviderFactory<DB>> = self
+        //     .provider_factory.iter().map(|(chain_id, provider_factory)| {
+        //         let block_number = ctx.chains[chain_id].block_env.number.to::<u64>();
+        //         match provider_factory.check_consistency_and_reopen_if_needed(block_number)
+        //         {
+        //             Ok(provider_factory) => (*chain_id, provider_factory),
+        //             Err(err) => {
+        //                 panic!("Error while reopening provider factory");
+        //             }
+        //         }
+        //     }).collect();
 
         for builder in self.builders.iter() {
             let builder_name = builder.name();

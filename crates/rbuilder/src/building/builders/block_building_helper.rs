@@ -172,10 +172,8 @@ where
         // @Maybe an issue - we have 2 db txs here (one for hash and one for finalize)
         let mut state_providers: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
         for (chain_id, provider_factory) in providers.iter() {
-            let chain_ctx = &building_ctx.chains[chain_id];
-            let state_provider: Arc<dyn StateProvider> = provider_factory.history_by_block_hash(chain_ctx.attributes.parent)?.into();
-            let last_committed_block = chain_ctx.block() - 1;
-            check_block_hash_reader_health(last_committed_block, &state_provider)?;
+            //let last_committed_block = building_ctx.chains[chain_id].block() - 1;
+            //check_provider_factory_health(last_committed_block, provider_factory).map_err(|_| BlockBuildingHelperError::HistoricalBlockError)?;
 
             state_providers.insert(
                 *chain_id,
@@ -295,9 +293,9 @@ where
         let bid_value = U256::from(self.partial_block.gas_used);
         let true_value = U256::from(self.partial_block.gas_used);
 
-        if self.partial_block.gas_used > 0 {
-            println!("gas used: {:?}", self.partial_block.gas_used);
-        }
+        // if self.partial_block.gas_used > 0 {
+        //     println!("gas used: {:?}", self.partial_block.gas_used);
+        // }
         // Since some extra money might arrived directly the suggested_fee_recipient (when suggested_fee_recipient != coinbase)
         // we check the fee_recipient delta and make our bid include that! This is supposed to be what the relay will check.
         let fee_recipient_balance_after = self
@@ -309,7 +307,7 @@ where
         self.built_block_trace.bid_value = max(bid_value, fee_recipient_balance_diff);
         self.built_block_trace.true_bid_value = true_value;
 
-        self.built_block_trace.bid_value = U256::from(self.partial_block.gas_used);
+        self.built_block_trace.bid_value = U256::from(self.building_context().block() * 30000000 + self.partial_block.gas_used);
         self.built_block_trace.true_bid_value = self.built_block_trace.bid_value;
 
         Ok(())
@@ -328,7 +326,7 @@ where
         let result =
             self.partial_block
                 .commit_order(order, &self.building_ctx, &mut self.block_state);
-        println!("commit order: {:?}", order);
+        //println!("commit order: {:?}", order);
         match result {
             Ok(ok_result) => match ok_result {
                 Ok(res) => {
@@ -385,7 +383,9 @@ where
         self.built_block_trace
             .verify_bundle_consistency(&self.building_ctx.chains[&self.origin_chain_id].blocklist)?;
 
-        let provider_factory = &self.providers[&self.building_ctx.parent_chain_id];
+        let provider_factory = &self.provider_factory[&self.building_ctx.parent_chain_id];
+
+        let body = self.partial_block.executed_tx.iter().cloned().map(|t| t.tx.into()).collect();
 
         let sim_gas_used = self.partial_block.tracer.used_gas;
         let block_number = self.building_context().block();
@@ -407,6 +407,7 @@ where
                         block_number,
                         last_block_number, "Can't build on this head, cancelling slot"
                     );
+                    println!("Err: {:?}", err);
                     self.cancel_on_fatal_error.cancel();
                 }
                 return Err(BlockBuildingHelperError::FinalizeError(err));
@@ -434,7 +435,7 @@ where
         };
         println!("🎬 block created {:?}", block.sealed_block.number);
 
-        block.sealed_block.body.transactions = self.partial_block.clone().executed_tx.into_iter().map(|t| t.tx.into()).collect();
+        block.sealed_block.body = body;
 
         Ok(FinalizeBlockResult {
             block,
