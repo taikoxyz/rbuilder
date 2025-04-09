@@ -12,10 +12,9 @@ pub mod testing;
 pub mod tracers;
 //pub use block_orders::BlockOrders;
 use eth_sparse_mpt::SparseTrieSharedCache;
-use reth_primitives::{proofs::calculate_requests_root, Requests};
 use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_provider::{execution_outcome_to_state_diff, ProviderFactory};
-use revm_primitives::{create_state_diff, ChainAddress, B256};
+use revm_primitives::{create_state_diff, ChainAddress, StateChanges, B256};
 
 use crate::{
     primitives::{Order, OrderId, SimValue, SimulatedOrder, TransactionSignedEcRecoveredWithBlobs}, provider::RootHasher, roothash::{calculate_state_root, RootHashConfig, RootHashError}, utils::{a2r_withdrawal, calc_gas_limit, timestamp_as_u64, Signer}
@@ -56,7 +55,6 @@ use reth_node_api::{EngineApiMessageVersion, PayloadBuilderAttributes};
 use revm::{
     db::states::{bundle_state::BundleRetention::{self, PlainState}, reverts::Reverts},
     primitives::{BlobExcessGasAndPrice, BlockEnv, CfgEnvWithHandlerCfg, SpecId}, TransitionState,
-    interpreter::primitives::StateChanges,
 };
 use revm_primitives::InvalidTransaction;
 use serde::Deserialize;
@@ -166,6 +164,7 @@ impl BlockBuildingContext {
             Default::default(),
             Default::default(),
             Default::default(),
+            Arc::new(MockRootHasher {}),
         );
         let chain_id = chain.chain_spec.chain.id();
         let mut chains = HashMap::default();
@@ -748,7 +747,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         ctx: &BlockBuildingContext,
         //provider_factories: HashMap<u64, ProviderFactory<DB>>,
     ) -> Result<FinalizeResult, FinalizeError> {
-        println!("💣 Builds actual block");
+        println!("💣 finalize inner L2s");
         let super_ctx = ctx;
         let chain_id = ctx.parent_chain_id;
         let ctx = &super_ctx.chains[&chain_id];
@@ -880,7 +879,7 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
         //println!("l1_state_diff: {:?}", l1_state_diff);
 
         // Collect latest block hashes to calculate the previous and current ULTRA hash
-        let mut latest_block_hashes = HashMap::<u64, (B256, B256)>::default();
+        let mut latest_block_hashes = StdHashMap::<u64, (B256, B256)>::default();
 
         let mut blocks: StdHashMap<u64, SealedBlockWrapper, std::collections::hash_map::RandomState> = StdHashMap::default();
         for &chain_id in super_ctx.chains.keys() {
@@ -898,66 +897,74 @@ impl<Tracer: SimulationTracer> PartialBlock<Tracer> {
             let state_root = ctx.root_hasher.state_root(&execution_outcome)?;
 
 
-                state_diff.state_root = state_root;
-                state_diff.transactions_root = transactions_root;
-                state_diff.bundle.reverts = reth_provider::merge_reverts(&state_diff.bundle.reverts);
+            state_diff.state_root = state_root;
+            state_diff.transactions_root = transactions_root;
+            state_diff.bundle.reverts = reth_provider::merge_reverts(&state_diff.bundle.reverts);
 
-                //println!("state diff {}: {:?}", chain_id, state_diff.bundle.state);
+            //println!("state diff {}: {:?}", chain_id, state_diff.bundle.state);
 
-                let extra_data = Bytes::from(bincode::serialize(&state_diff).unwrap());
-                // println!("extra_data: {}", extra_data);
+            let extra_data = Bytes::from(bincode::serialize(&state_diff).unwrap());
+            // println!("extra_data: {}", extra_data);
 
-                let header = Header {
-                    parent_hash: ctx.attributes.parent,
-                    ommers_hash: EMPTY_OMMER_ROOT_HASH,
-                    beneficiary: ctx.block_env.coinbase.1,
-                    state_root,
-                    transactions_root,
-                    receipts_root,
-                    withdrawals_root,
-                    logs_bloom,
-                    timestamp: ctx.attributes.timestamp,
-                    mix_hash: ctx.attributes.prev_randao,
-                    nonce: BEACON_NONCE.into(),
-                    base_fee_per_gas: Some(ctx.block_env.basefee.to()),
-                    number: ctx.block_env.number.to::<u64>(),
-                    gas_limit: ctx.block_env.gas_limit.to(),
-                    difficulty: U256::ZERO,
-                    gas_used: self.gas_used,
-                    extra_data,
-                    parent_beacon_block_root: ctx.attributes.parent_beacon_block_root,
-                    blob_gas_used,
-                    excess_blob_gas,
-                    requests_hash,
-                };
+            let header = Header {
+                parent_hash: ctx.attributes.parent,
+                ommers_hash: EMPTY_OMMER_ROOT_HASH,
+                beneficiary: ctx.block_env.coinbase.1,
+                state_root,
+                transactions_root,
+                receipts_root,
+                withdrawals_root,
+                logs_bloom,
+                timestamp: ctx.attributes.timestamp,
+                mix_hash: ctx.attributes.prev_randao,
+                nonce: BEACON_NONCE.into(),
+                base_fee_per_gas: Some(ctx.block_env.basefee.to()),
+                number: ctx.block_env.number.to::<u64>(),
+                gas_limit: ctx.block_env.gas_limit.to(),
+                difficulty: U256::ZERO,
+                gas_used: self.gas_used,
+                extra_data,
+                parent_beacon_block_root: ctx.attributes.parent_beacon_block_root,
+                blob_gas_used,
+                excess_blob_gas,
+                requests_hash,
+            };
 
-                //println!("chain {} header: {:?}", chain_id, header);
+            //println!("chain {} header: {:?}", chain_id, header);
 
-                let block = Block {
-                    header,
-                    body: BlockBody {
-                        transactions: self
-                            .executed_tx
-                            .clone()
-                            .into_iter()
-                            .map(|t| t.into_internal_tx_unsecure().into())
-                            .collect(),
-                        ommers: vec![],
-                        withdrawals: Some(Withdrawals::default()),
-                    },
-                    //requests: Some(Requests::default()),
-                };
+            let block = Block {
+                header,
+                body: BlockBody {
+                    transactions: self
+                        .executed_tx
+                        .clone()
+                        .into_iter()
+                        .map(|t| t.into_internal_tx_unsecure().into())
+                        .collect(),
+                    ommers: vec![],
+                    withdrawals: Some(Withdrawals::default()),
+                },
+                //requests: Some(Requests::default()),
+            };
 
-                let sealed_block = block.seal_slow();
-                println!("[{}] chain {} calculated block hash: {:?}", super_ctx.block(), chain_id, sealed_block.hash());
-                latest_block_hashes.get_mut(&chain_id).unwrap().1 = sealed_block.hash();
-                let sealed_block = SealedBlockWrapper { inner: sealed_block };
+            let sealed_block = block.seal_slow();
+            println!("[{}] chain {} at block {} calculated block hash: {:?} ", super_ctx.block(), chain_id, sealed_block.header.number, sealed_block.hash());
+            latest_block_hashes.get_mut(&chain_id).unwrap().1 = sealed_block.hash();
+            let sealed_block = SealedBlockWrapper { inner: sealed_block };
 
-                blocks.insert(chain_id, sealed_block);
-            }
+            blocks.insert(chain_id, sealed_block);
         }
+            
+        
 
-        let extra_data = Bytes::from(bincode::serialize(&(execution_outcome, l1_state_diff, blocks, latest_block_hashes)).unwrap());
+        let extra_data = Bytes::from(bincode::serialize(
+            &(
+                execution_outcome, 
+                l1_state_diff, 
+                blocks, 
+                latest_block_hashes
+            )
+        ).unwrap());
 
         let header = Header {
             parent_hash: ctx.attributes.parent,

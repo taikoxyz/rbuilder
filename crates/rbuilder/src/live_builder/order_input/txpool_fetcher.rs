@@ -25,6 +25,7 @@ pub async fn subscribe_to_txpool_with_blobs(
     results: mpsc::Sender<ReplaceableOrderPoolCommand>,
     global_cancel: CancellationToken,
 ) -> eyre::Result<JoinHandle<()>> {
+    println!("😈: subscribe_to_txpool_with_blobs {:?}", config.ipc_path);
     let ipc_path = config
         .ipc_path
         .clone()
@@ -49,11 +50,11 @@ pub async fn subscribe_to_txpool_with_blobs(
         while let Some(tx_hash) = stream.next().await {
             println!("New tx arrived on {:?}!", config.ipc_path);
 
-            // TODO: Skip L1 transactions for now because circular
-            if ipc_path.to_str().unwrap() == "/tmp/reth.ipc" {
-                println!("skipping!");
-                continue;
-            }
+            // // TODO: Skip L1 transactions for now because circular
+            // if ipc_path.to_str().unwrap() == "/tmp/reth.ipc" {
+            //     println!("skipping!");
+            //     continue;
+            // }
 
             let start = Instant::now();
 
@@ -75,7 +76,7 @@ pub async fn subscribe_to_txpool_with_blobs(
             };
 
             // TODO: Skip propose transactions from the proposer
-            if config.ipc_path.to_str().unwrap() == "/tmp/reth.ipc" &&
+            if config.ipc_path.clone().unwrap().to_str().unwrap() == "/tmp/reth.ipc" &&
                 tx_with_blobs.signer() == address!("E25583099BA105D9ec0A67f5Ae86D90e50036425") &&
                 tx_with_blobs.to().unwrap_or_default() == address!("9fCF7D13d10dEdF17d0f24C62f0cf4ED462f65b7") {
                 println!("skipping! {:?} from {:?}", tx_hash, tx_with_blobs.signer());

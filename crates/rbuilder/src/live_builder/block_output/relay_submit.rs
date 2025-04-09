@@ -197,13 +197,13 @@ async fn run_submit_to_relays_job(
         }
 
         best_bid.wait_for_change().await;
+        let mut submitted_any_block = false;
         let block = if let Some(new_block) = best_bid.take_best_block() {
             if new_block.trace.included_orders.len() == 0 {
                 continue 'submit;
             }
             if new_block.trace.bid_value > last_bid_value || !submitted_any_block {
                 last_bid_value = new_block.trace.bid_value;
-                submitted_any_block = true;
                 new_block
             } else {
                 println!("🚰 continue 'submit 1");

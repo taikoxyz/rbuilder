@@ -6,7 +6,8 @@
 use core::fmt;
 use std::{fmt::Formatter, sync::Arc, time::Duration};
 
-use alloy_primitives::U256;
+use ahash::HashMap;
+use alloy_primitives::{U256};
 use alloy_rpc_types_beacon::events::PayloadAttributesEvent;
 use derive_more::From;
 use rbuilder::{
@@ -144,6 +145,8 @@ impl BundlePoolOps {
                 Box::new(sink_factory),
                 slot_source,
                 provider,
+                HashMap::new(),
+                vec![],
             )
             .await
             .unwrap()

@@ -3,6 +3,7 @@ use std::net::Ipv4Addr;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
+use std::thread::sleep;
 use std::time::Duration;
 use ahash::HashMap;
 use alloy_primitives::U256;
@@ -16,8 +17,7 @@ use reth_db::{Database, DatabaseEnv};
 use reth_node_api::{NodeTypesWithDB, NodeTypesWithDBAdapter};
 use reth_node_ethereum::EthereumNode;
 use reth_provider::providers::{BlockchainProvider, BlockchainProvider2};
-use tracing::warn;
-use reth_stages::StageId;
+// use reth_stages::StageId;
 
 use crate::provider::StateProviderFactory;
 use crate::utils::ProviderFactoryReopener;
@@ -214,7 +214,7 @@ where
     }
 
     pub async fn wait_until_synced(&self, target_block: u64) {
-        let providers = self.ipc_providers.lock().unwrap();
+        let providers = self.ipc_providers.read().unwrap();
         for (chain_id, (ipc_provider, _)) in providers.iter() {
             println!("waiting on L2: {}", chain_id);
 
@@ -245,11 +245,9 @@ where
             println!("l2_block: {:?}", l2_block);
 
             let node = self.nodes.get(chain_id).unwrap();
-            let provider_factory = node.provider_factory.clone().provider_factory_unchecked();
-
             loop {
-                if let Some(latest_block_number_synced) = provider_factory.get_stage_checkpoint(StageId::Finish).expect("failed to get header") {
-                    if latest_block_number_synced.block_number >= l2_block {
+                if let Ok(latest_block_number_synced) = node.provider_factory.last_block_number() {
+                    if latest_block_number_synced >= l2_block {
                         println!("Waiting for {} to pipeline done.", l2_block);
                         break;
                     }
@@ -257,16 +255,29 @@ where
                 println!("waiting on L2 block {} to pipeline...", l2_block);
                 sleep(Duration::from_millis(100));
             }
+            
+            // let provider_factory = node.provider_factory.clone().provider_factory_unchecked();
 
-            loop {
-                if let Some(_) = provider_factory.header_by_number(l2_block.into()).expect("failed to get header") {
-                    println!("Waiting for {} done.", l2_block);
-                    break;
-                } else {
-                    println!("waiting on L2 block {} to process...", l2_block);
-                    sleep(Duration::from_millis(100));
-                }
-            }
+            // loop {
+            //     if let Some(latest_block_number_synced) = provider_factory.get_stage_checkpoint(StageId::Finish).expect("failed to get header") {
+            //         if latest_block_number_synced.block_number >= l2_block {
+            //             println!("Waiting for {} to pipeline done.", l2_block);
+            //             break;
+            //         }
+            //     }
+            //     println!("waiting on L2 block {} to pipeline...", l2_block);
+            //     sleep(Duration::from_millis(100));
+            // }
+
+            // loop {
+            //     if let Some(_) = provider_factory.header_by_number(l2_block.into()).expect("failed to get header") {
+            //         println!("Waiting for {} done.", l2_block);
+            //         break;
+            //     } else {
+            //         println!("waiting on L2 block {} to process...", l2_block);
+            //         sleep(Duration::from_millis(100));
+            //     }
+            // }
         }
     }
 

@@ -24,7 +24,6 @@ use std::{path::PathBuf, sync::Arc};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
-use parking_lot::RwLock;
 
 /// This struct is used as a workaround for https://github.com/paradigmxyz/reth/issues/7836
 /// it shares one instance of the provider factory that is recreated when inconsistency is detected.
@@ -96,6 +95,7 @@ impl<N: NodeTypesWithDB + ProviderNodeTypes + Clone> ProviderFactoryReopener<N> 
     /// If the current block number is already known at the time of calling this method, you may pass it to
     /// avoid an additional DB lookup for the latest block number.
     pub fn check_consistency_and_reopen_if_needed(&self) -> eyre::Result<ProviderFactory<N>> {
+        println!("ProviderFactoryReopener::check_consistency_and_reopen_if_needed");
         let best_block_number = self
             .provider_factory_unchecked()
             .last_block_number()
@@ -104,6 +104,7 @@ impl<N: NodeTypesWithDB + ProviderNodeTypes + Clone> ProviderFactoryReopener<N> 
 
         // Don't need to check consistency for the block that was just checked.
         let last_consistent_block = *self.last_consistent_block.read();
+        println!("  last_consistent_block: {:?}", last_consistent_block);
         if !self.testing_mode && last_consistent_block != Some(best_block_number) {
             match check_block_hash_reader_health(best_block_number, provider_factory.deref_mut()) {
                 Ok(()) => {}
@@ -283,6 +284,7 @@ impl<N: NodeTypesWithDB + ProviderNodeTypes + Clone> StateProviderFactory
     }
 
     fn last_block_number(&self) -> ProviderResult<BlockNumber> {
+        println!("ProviderFactoryReopener::last_block_number");
         let provider = self
             .check_consistency_and_reopen_if_needed()
             .map_err(|e| ProviderError::Database(DatabaseError::Other(e.to_string())))?;

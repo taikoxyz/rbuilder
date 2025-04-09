@@ -29,6 +29,7 @@ use crate::{
 use ahash::{HashMap, HashSet};
 use alloy_consensus::Header;
 use alloy_chains::{Chain, ChainKind};
+use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, U256};
 use building::BlockBuildingPool;
 use eyre::Context;
@@ -42,7 +43,6 @@ use reth::transaction_pool::{
 use reth_chainspec::ChainSpec;
 use reth_evm::provider;
 use reth_provider::StageCheckpointReader;
-use reth_stages::StageId;
 use revm_primitives::ChainAddress;
 use reth_primitives::TransactionSignedEcRecovered;
 use std::{cmp::min, fmt::Debug, path::PathBuf, sync::Arc, thread::sleep, time::Duration};
@@ -174,6 +174,7 @@ where
             let (header_sender, header_receiver) = mpsc::channel(CLEAN_TASKS_CHANNEL_SIZE);
             let (orderpool_sender, orderpool_receiver) = mpsc::channel(self.order_input_config.input_channel_buffer_size);
             let orderpool_subscriber = {
+                println!("🏡 start_orderpool_jobs for chain {} {:?}", chain_id, node.order_input_config);
                 let (handle, sub) = start_orderpool_jobs(
                     node.order_input_config.clone(),
                     node.provider_factory.clone(),
@@ -191,6 +192,31 @@ where
             providers.insert(*chain_id, node.provider_factory.clone());
             header_senders.push(header_sender);
         }
+
+        // L1 orderpool and header sender that init building process
+        let (header_sender, header_receiver) = mpsc::channel(CLEAN_TASKS_CHANNEL_SIZE);
+        let (orderpool_sender, orderpool_receiver) = mpsc::channel(self.order_input_config.input_channel_buffer_size);
+        let orderpool_subscriber = {
+            println!("🏡 start_orderpool_jobs for L1");
+            let (handle, sub) = start_orderpool_jobs(
+                self.order_input_config.clone(),
+                self.provider.clone(),
+                RpcModule::new(()),
+                self.global_cancellation.clone(),
+                orderpool_sender,
+                orderpool_receiver,
+                header_receiver,
+            )
+            .await?;
+            inner_jobs_handles.push(handle);
+            sub
+        };
+        orderpool_subscribers.insert(160010, orderpool_subscriber);
+        providers.insert(160010, self.provider.clone());
+        header_senders.push(header_sender);
+
+
+
 
         let order_simulation_pool = OrderSimulationPool::new(
                 providers.clone(),
@@ -276,34 +302,14 @@ where
             };
 
             loop {
-                let provider_factory = self.provider_factory.clone().provider_factory_unchecked();
-                if let Some(latest_block_number_synced) = provider_factory.get_stage_checkpoint(StageId::Finish).expect("failed to get header") {
-                    if latest_block_number_synced.block_number >= parent_header.number {
-                        println!("Waiting for {} to pipeline done.", parent_header.number);
+                let file_db_block_hash = self.provider.block_hash(parent_header.number).unwrap();
+                println!("block_hash get from file DB: {:?}", file_db_block_hash);
+                if let Ok(latest_block_number_synced) = self.provider.last_block_number() {
+                    if latest_block_number_synced < parent_header.number {
+                        println!("waiting on L1 block {} to pipeline...", parent_header.number);
+                        sleep(Duration::from_millis(100));
+                    } else {
                         break;
-                    }
-                }
-                println!("waiting on L1 block {} to pipeline...", parent_header.number);
-                sleep(Duration::from_millis(100));
-            }
-
-            {
-                let provider_factory = self.provider_factory.clone();
-                // let block = payload.block();
-                match spawn_blocking(move || {
-                    provider_factory.check_consistency_and_reopen_if_needed(/*block*/)
-                })
-                .await
-                {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(err)) => {
-                        error!(?err, "Failed to check historical block hashes");
-                        // This error is unrecoverable so we restart.
-                        break;
-                    }
-                    Err(err) => {
-                        error!(?err, "Failed to join historical block hashes task");
-                        continue;
                     }
                 }
             }
@@ -351,22 +357,6 @@ where
 
             // TODO: Brecht
             for (&chain_id, provider) in providers.iter() {
-                match spawn_blocking(move || {
-                    provider_factory.check_consistency_and_reopen_if_needed(/*block*/)
-                })
-                .await
-                {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(err)) => {
-                        error!(?err, "Failed to check historical block hashes");
-                        // This error is unrecoverable so we restart.
-                        break;
-                    }
-                    Err(err) => {
-                        error!(?err, "Failed to join historical block hashes task");
-                        continue;
-                    }
-                }
 
                 println!("setting up {}", chain_id);
                 let mut block_ctx = l1_block_ctx.clone();
@@ -398,7 +388,7 @@ where
                         //block_ctx.block_env.difficulty = U256::ZERO;
                         //block_ctx.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(0));
                         block_ctx.block_env.coinbase = ChainAddress(chain_id, block_ctx.block_env.coinbase.1);
-                        block_ctx.initialized_cfg.parent_chain_id = Some(parent_block_ctx.chain_spec.chain().id());
+                        block_ctx.initialized_cfg.parent_chain_id = Some(l1_block_ctx.chain_spec.chain().id());
                     } else {
                         println!("failed to get latest block for {}", chain_id);
                     }

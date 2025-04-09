@@ -1,5 +1,6 @@
 use alloy_primitives::{utils::format_ether, U256};
 use reth::revm::cached::SyncCachedReads as CachedReads;
+use reth_primitives::BlockBody;
 use std::{
     cmp::max, sync::Arc, time::{Duration, Instant}
 };
@@ -171,13 +172,14 @@ where
 
         // @Maybe an issue - we have 2 db txs here (one for hash and one for finalize)
         let mut state_providers: HashMap<u64, Arc<dyn StateProvider>> = HashMap::default();
-        for (chain_id, provider_factory) in providers.iter() {
+        for (chain_id, provider) in providers.iter() {
             //let last_committed_block = building_ctx.chains[chain_id].block() - 1;
             //check_provider_factory_health(last_committed_block, provider_factory).map_err(|_| BlockBuildingHelperError::HistoricalBlockError)?;
 
+
             state_providers.insert(
                 *chain_id,
-                state_provider,
+                Arc::new(provider.latest().unwrap()),
             );
             if *chain_id > origin_chain_id {
                 origin_chain_id = *chain_id;
@@ -383,9 +385,9 @@ where
         self.built_block_trace
             .verify_bundle_consistency(&self.building_ctx.chains[&self.origin_chain_id].blocklist)?;
 
-        let provider_factory = &self.provider_factory[&self.building_ctx.parent_chain_id];
+        let provider_factory = &self.providers[&self.building_ctx.parent_chain_id];
 
-        let body = self.partial_block.executed_tx.iter().cloned().map(|t| t.tx.into()).collect();
+        // let body = self.partial_block.executed_tx.iter().cloned().map(|t| t.tx.into()).collect();
 
         let sim_gas_used = self.partial_block.tracer.used_gas;
         let block_number = self.building_context().block();
@@ -435,7 +437,7 @@ where
         };
         println!("🎬 block created {:?}", block.sealed_block.number);
 
-        block.sealed_block.body = body;
+        // block.sealed_block.body = body;
 
         Ok(FinalizeBlockResult {
             block,

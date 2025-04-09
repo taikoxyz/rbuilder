@@ -1,3 +1,4 @@
+use alloy_consensus::{BlobTransactionSidecar, SidecarBuilder, SimpleCoder};
 use alloy_eips::BlockId;
 use alloy_network::{EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
@@ -25,7 +26,7 @@ use alloy_sol_types::SolValue;
 use alloy_primitives::keccak256;
 use alloy_signer::{Signature, Signer, SignerSync};
 use alloy_rpc_types::{TransactionInput, TransactionRequest};
-
+use alloy_consensus::SidecarCoder;
 use crate::{building::SealedBlockWrapper, mev_boost::SubmitBlockRequest};
 
 // Using sol macro to use solidity code here.
@@ -152,7 +153,7 @@ impl BlockProposer {
         let wallet = EthereumWallet::from(signer.clone());
 
         let input_hash = keccak256(ultra_block.abi_encode());
-        let signature: Signature = signer.sign_hash_sync(&input_hash).expect("failed to sign input");
+        let signature = signer.sign_hash_sync(&input_hash).expect("failed to sign input");
 
         let proof = Proof {
             proof: signature.as_bytes().into(),
@@ -292,12 +293,19 @@ impl BlockProposer {
         //println!("Block extra data: {:?}", execution_payload.extra_data);
         let (da, l1_block, ultra_hash) = if execution_payload.extra_data.len() > 32 {
             //println!("Decoding extra data...");
-            let (_, l1_state_diff, blocks, block_hashes): (ExecutionOutcome, StateDiff, HashMap<u64, SealedBlock>, HashMap::<u64, (B256, B256)>) = bincode::deserialize(&execution_payload.extra_data.to_vec()).unwrap();
+            let (
+                _, 
+                l1_state_diff, 
+                blocks, 
+                block_hashes
+            ): (ExecutionOutcome, StateDiff, HashMap<u64, SealedBlockWrapper>, HashMap::<u64, (B256, B256)>) 
+            = bincode::deserialize(&execution_payload.extra_data.to_vec()).unwrap();
 
             println!("l1 state diff: {:?}", l1_state_diff);
 
             let mut chain_das = HashMap::default();
             for (&chain_id, block) in blocks.iter() {
+                let block = block.inner.clone();
                 if chain_id == l1_chain_id {
                     continue;
                 }

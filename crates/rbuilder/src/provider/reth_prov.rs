@@ -58,6 +58,7 @@ where
     }
 
     fn last_block_number(&self) -> ProviderResult<BlockNumber> {
+        println!("StateProviderFactoryFromRethProvider::last_block_number");
         self.provider.last_block_number()
     }
 

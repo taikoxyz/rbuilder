@@ -118,6 +118,7 @@ alloy-rpc-types-beacon = { version = "0.6.4", features = ["ssz"] }
 alloy-rpc-types-engine = { version = "0.6.4", features = ["ssz"] }
 alloy-rpc-types-eth = { version = "0.6.4" }
 alloy-signer-local = { version = "0.6.4" }
+alloy-signer = { version = "0.6.4" }
 alloy-genesis = { version = "0.6.4" }
 alloy-trie = { version = "0.7", default-features = false }
 alloy-sol-types = "0.8.11"

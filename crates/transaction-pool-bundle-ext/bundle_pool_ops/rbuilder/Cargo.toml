@@ -7,6 +7,7 @@ edition = "2021"
 transaction-pool-bundle-ext = { path = "../.." }
 rbuilder = { path = "../../../rbuilder" }
 
+
 alloy-primitives.workspace = true
 alloy-rpc-types-beacon.workspace = true
 reth-primitives = { workspace = true }
@@ -18,6 +19,7 @@ eyre = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
+ahash = "0.8.6"
 
 [features]
 optimism = [

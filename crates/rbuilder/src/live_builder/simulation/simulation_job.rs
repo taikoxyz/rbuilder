@@ -1,6 +1,4 @@
 use std::{collections::HashMap, fmt};
-use std::{collections::HashMap, fmt};
-
 use crate::{
     building::sim::{SimTree, SimulatedResult, SimulationRequest},
     live_builder::order_input::order_sink::OrderPoolCommand,
@@ -11,7 +9,6 @@ use ahash::HashSet;
 use alloy_primitives::utils::format_ether;
 use futures::stream::{select_all, SelectAll};
 use tokio::sync::mpsc;
-use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
 use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};

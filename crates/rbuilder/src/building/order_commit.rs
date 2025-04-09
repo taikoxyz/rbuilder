@@ -14,12 +14,11 @@ use alloy_chains::Chain;
 use alloy_primitives::{Address, B256, U256};
 
 use alloy_consensus::{constants::KECCAK_EMPTY, Transaction};
-use alloy_eips::eip4844::{DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK};
+use alloy_eips::{eip4844::{DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK}, eip7685::Requests};
 use reth::revm::{cached::SyncCachedReads as CachedReads, database::{StateProviderDatabase, SyncStateProviderDatabase}};
 use reth_errors::ProviderError;
-use reth_payload_builder::database::SyncCachedReads as CachedReads;
 use reth_primitives::{
-    constants::eip4844::{DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK}, transaction::FillTxEnv, Receipt, Receipts, Requests, KECCAK_EMPTY
+    transaction::FillTxEnv, Receipt, Receipts
 };
 use reth_provider::{ExecutionOutcome, StateProvider, StateProviderBox};
 use revm::{
@@ -512,7 +511,7 @@ impl<'a, 'b, Tracer: SimulationTracer> PartialBlockFork<'a, 'b, Tracer> {
                 bundle,
                 Receipts::from(vec![vec![]]),
                 ctx.block_env.number.to::<u64>(),
-                vec![Requests(Vec::new())],
+                vec![Requests::new(Vec::new())],
             );
 
             let mut chain_ids = Vec::new();

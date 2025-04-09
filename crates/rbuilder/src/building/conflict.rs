@@ -37,7 +37,7 @@ pub fn find_conflict_slow(
         for order in orders {
             let mut state = BlockState::new_arc_single(state_provider, chain_id);
             let mut fork = PartialBlockFork::new(&mut state);
-            if let Ok(res) = fork.commit_order(order, ctx, 0, 0, 0, true)? {
+            if let Ok(res) = fork.commit_order(order, ctx, 0, 0, 0, 0, true)? {
                 profits_alone.insert(order.id(), res.coinbase_profit);
             };
             state_provider = state.into_provider(chain_id);
@@ -77,16 +77,18 @@ pub fn find_conflict_slow(
         let mut fork = PartialBlockFork::new(&mut state);
         let mut gas_used = 0;
         let mut blob_gas_used = 0;
-        match fork.commit_order(order1, ctx, gas_used, 0, blob_gas_used, true)? {
+        let mut data_used = 0;
+        match fork.commit_order(order1, ctx, gas_used, 0, blob_gas_used, data_used, true)? {
             Ok(res) => {
                 gas_used += res.gas_used;
                 blob_gas_used += res.blob_gas_used;
+                data_used += res.cumulative_data_used;
             }
             Err(_) => {
                 results.insert(pair, Conflict::Fatal);
             }
         };
-        match fork.commit_order(order2, ctx, gas_used, 0, blob_gas_used, true)? {
+        match fork.commit_order(order2, ctx, gas_used, 0, blob_gas_used, data_used, true)? {
             Ok(re) => {
                 let profit_alone = *profits_alone.get(&order2.id()).unwrap();
                 let profit_with_conflict = re.coinbase_profit;
